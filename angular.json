@@ -2,7 +2,8 @@
   "$schema": "./node_modules/@angular/cli/lib/config/schema.json",
   "version": 1,
   "cli": {
-    "packageManager": "npm"
+    "packageManager": "npm",
+    "analytics": false
   },
   "newProjectRoot": "projects",
   "projects": {
@@ -27,10 +28,18 @@
               {
                 "glob": "**/*",
                 "input": "public"
+              },
+              {
+                "glob": "**/*",
+                "input": "src/assets",
+                "output": "/assets"
               }
             ],
             "styles": [
               "src/styles.scss"
+            ],
+            "polyfills": [
+              "@angular/localize/init"
             ]
           },
           "configurations": {
@@ -64,7 +73,9 @@
               "buildTarget": "fe-interview-guide:build:production"
             },
             "development": {
-              "buildTarget": "fe-interview-guide:build:development"
+              "buildTarget": "fe-interview-guide:build:development",
+              "hmr": true,
+              "liveReload": true
             }
           },
           "defaultConfiguration": "development"

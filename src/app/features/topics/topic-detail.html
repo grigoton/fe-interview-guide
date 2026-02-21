@@ -1,0 +1,18 @@
+<div class="topic-detail">
+  @if (content(); as topic) {
+    <h2>{{ topic.titleKey | translate }}</h2>
+    <p class="topic-desc">{{ topic.descriptionKey | translate }}</p>
+    @if (topic.codeSnippets?.length) {
+      @for (snippet of topic.codeSnippets; track $index) {
+        <div class="code-block">
+          <div class="code-lang">{{ snippet.language }}</div>
+          <pre><code [class]="'language-' + snippet.language">{{ snippet.code }}</code></pre>
+        </div>
+      }
+    }
+  } @else {
+    <h2>{{ 'TOPIC_NOT_FOUND' | translate }}</h2>
+    <p>{{ 'TOPIC_NOT_FOUND_HINT' | translate }}</p>
+  }
+  <a routerLink="/topics">{{ 'NAV_BACK_TO_TOPICS' | translate }}</a>
+</div>

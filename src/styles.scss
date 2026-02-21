@@ -1,1 +1,172 @@
-/* You can add global styles to this file, and also import other style files */
+// Angular Material theming: light and dark themes via data-theme attribute.
+@use '@angular/material' as mat;
+
+// Light theme: violet + orange (unusual, distinctive)
+html {
+  height: 100%;
+  min-height: 100vh;
+  @include mat.theme((
+    color: (
+      primary: mat.$violet-palette,
+      tertiary: mat.$orange-palette,
+      theme-type: light,
+    ),
+    typography: Roboto,
+    density: 0,
+  ));
+}
+
+// Dark theme: yellow + black (surfaces dark, accents yellow)
+html[data-theme='dark'] {
+  @include mat.theme((
+    color: (
+      primary: mat.$yellow-palette,
+      tertiary: mat.$orange-palette,
+      theme-type: dark,
+    ),
+    typography: Roboto,
+    density: 0,
+  ));
+}
+
+body {
+  color-scheme: light dark;
+  background-color: transparent;
+  color: var(--mat-sys-on-surface);
+  font: var(--mat-sys-body-medium);
+  margin: 0;
+  height: 100%;
+  min-height: 100vh;
+}
+
+// Outer layer: Topics panel and Practice link only
+.mat-sidenav.sidenav .sidenav-content {
+  .sidenav-accordion {
+    .mat-expansion-panel {
+      background: transparent !important;
+      box-shadow: none !important;
+      border: none;
+
+      &::before {
+        display: none;
+      }
+    }
+
+    .mat-expansion-panel-header {
+      background: transparent !important;
+      border: none;
+      min-height: 48px;
+
+      &:hover {
+        background: rgba(0, 0, 0, 0.04) !important;
+      }
+    }
+
+    .mat-expansion-panel-body {
+      background: transparent !important;
+      border: none;
+    }
+  }
+
+  > .mat-mdc-nav-list .mat-mdc-list-item:hover {
+    background: rgba(0, 0, 0, 0.04) !important;
+  }
+}
+
+// Nested accordion (JavaScript, Angular, etc.): just text, no panel styling
+.mat-sidenav.sidenav .sidenav-content .topics-accordion {
+  .mat-expansion-panel {
+    background: transparent !important;
+    box-shadow: none !important;
+    border: none;
+
+    &::before {
+      display: none;
+    }
+  }
+
+  .mat-expansion-panel-header {
+    padding-inline: 0.5rem;
+    padding-block: 0.25rem;
+    min-height: unset;
+    height: auto;
+    background: transparent !important;
+    border: none;
+    box-shadow: none !important;
+
+    &:hover {
+      background: rgba(0, 0, 0, 0.04) !important;
+    }
+
+    .mat-content {
+      align-items: center;
+    }
+
+    .mat-expansion-indicator {
+      margin-inline-start: 0.25rem;
+    }
+  }
+
+  .mat-expansion-panel-body {
+    padding-inline: 0.5rem 1rem;
+    padding-block: 0;
+    padding-bottom: 0.25rem;
+    background: transparent !important;
+    border: none;
+    box-shadow: none !important;
+  }
+
+  .mat-mdc-nav-list {
+    padding-inline: 0;
+    background: transparent;
+  }
+
+  .mat-mdc-list-item {
+    background: transparent !important;
+    min-height: 2rem;
+    padding-inline: 0.5rem;
+
+    &:hover {
+      background: rgba(0, 0, 0, 0.04) !important;
+    }
+
+    &.nav-sublink {
+      color: var(--mat-sys-on-surface-variant);
+    }
+  }
+}
+
+html[data-theme='dark'] .mat-sidenav.sidenav .sidenav-content {
+  .sidenav-accordion .mat-expansion-panel-header:hover {
+    background: rgba(255, 255, 255, 0.06) !important;
+  }
+
+  > .mat-mdc-nav-list .mat-mdc-list-item:hover {
+    background: rgba(255, 255, 255, 0.06) !important;
+  }
+
+  .topics-accordion .mat-expansion-panel-header:hover,
+  .topics-accordion .mat-mdc-list-item:hover {
+    background: rgba(255, 255, 255, 0.06) !important;
+  }
+}
+
+// Video background: force sidenav and main content area to be semi-transparent
+// so the video is visible across the full height (Material theme applies opaque surface otherwise)
+mat-sidenav-container,
+.mat-sidenav-container.mat-drawer-container,
+.mat-drawer-container {
+  background: transparent !important;
+}
+
+.mat-sidenav-container .mat-drawer,
+.mat-sidenav-container .mat-sidenav,
+.mat-sidenav-container mat-sidenav,
+.mat-sidenav-container .mat-drawer-inner-container {
+  background: color-mix(in srgb, var(--mat-sys-surface) 72%, transparent) !important;
+}
+
+.mat-sidenav-container .mat-drawer-content,
+.mat-sidenav-container .mat-sidenav-content {
+  background: transparent !important;
+}

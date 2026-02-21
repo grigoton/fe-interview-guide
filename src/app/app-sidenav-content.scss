@@ -1,0 +1,28 @@
+.sidenav-content {
+  padding-bottom: 1rem;
+
+  .nav-topic-header {
+    padding-inline-start: 0.5rem;
+  }
+
+  .nav-topic-link {
+    text-decoration: none;
+    color: var(--mat-sys-on-surface);
+    font: inherit;
+    font-weight: 500;
+    padding: 0;
+    margin: 0 -0.5rem;
+    padding-inline: 0.5rem;
+    width: 100%;
+    text-align: start;
+    display: block;
+
+    &:hover {
+      background: transparent;
+    }
+  }
+
+  .nav-sublink {
+    padding-inline-start: 1.5rem;
+  }
+}

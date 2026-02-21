@@ -1,0 +1,50 @@
+<div class="sidenav-content">
+  <mat-accordion class="sidenav-accordion" displayMode="flat">
+    <mat-expansion-panel [expanded]="isOnTopicsRoute()">
+      <mat-expansion-panel-header>
+        <span>{{ 'NAV_TOPICS' | translate }}</span>
+      </mat-expansion-panel-header>
+      <mat-accordion class="topics-accordion" displayMode="flat">
+        @for (topic of topics(); track topic.id) {
+          <mat-expansion-panel [expanded]="currentTopicId() === topic.id">
+            <mat-expansion-panel-header class="nav-topic-header">
+              <a
+                class="nav-topic-link"
+                [routerLink]="['/topics', topic.id]"
+                routerLinkActive="active"
+                [routerLinkActiveOptions]="{ exact: false }"
+                (click)="$event.stopPropagation(); onNavClick()">
+                {{ topic.labelKey | translate }}
+              </a>
+            </mat-expansion-panel-header>
+            @if (topic.children?.length) {
+              <mat-nav-list>
+                @for (sub of topic.children; track sub.id) {
+                  <a
+                    mat-list-item
+                    class="nav-sublink"
+                    [routerLink]="['/topics', topic.id]"
+                    [queryParams]="{ sub: sub.id }"
+                    routerLinkActive="active"
+                    [routerLinkActiveOptions]="{ exact: false }"
+                    (click)="onNavClick()">
+                    {{ sub.labelKey | translate }}
+                  </a>
+                }
+              </mat-nav-list>
+            }
+          </mat-expansion-panel>
+        }
+      </mat-accordion>
+    </mat-expansion-panel>
+  </mat-accordion>
+  <mat-nav-list>
+    <a
+      mat-list-item
+      routerLink="/practice"
+      routerLinkActive="active"
+      (click)="onNavClick()">
+      {{ 'NAV_PRACTICE' | translate }}
+    </a>
+  </mat-nav-list>
+</div>

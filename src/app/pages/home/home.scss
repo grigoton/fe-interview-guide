@@ -1,0 +1,28 @@
+.home {
+  padding: 2rem;
+  text-align: center;
+
+  h1 {
+    margin-bottom: 0.5rem;
+    color: var(--mat-sys-on-surface);
+  }
+
+  .nav-links {
+    display: flex;
+    gap: 1rem;
+    justify-content: center;
+    margin-top: 2rem;
+
+    a {
+      padding: 0.5rem 1rem;
+      border-radius: 4px;
+      text-decoration: none;
+      background-color: var(--mat-sys-primary);
+      color: var(--mat-sys-on-primary);
+
+      &:hover {
+        opacity: 0.9;
+      }
+    }
+  }
+}

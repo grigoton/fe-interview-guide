@@ -1,0 +1,127 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2">
+  <file source-language="en-US" datatype="plaintext" original="ng2.template">
+    <body>
+      <trans-unit id="1510122058951132508" datatype="html">
+        <source>Toggle sidenav</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.html</context>
+          <context context-type="linenumber">6,8</context>
+        </context-group>
+        <note priority="1" from="description">Toggle sidenav button</note>
+      </trans-unit>
+      <trans-unit id="7393914715288002972" datatype="html">
+        <source>FE Interview Guide</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.html</context>
+          <context context-type="linenumber">12,13</context>
+        </context-group>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/pages/home/home.html</context>
+          <context context-type="linenumber">2,3</context>
+        </context-group>
+      </trans-unit>
+      <trans-unit id="358635692190524549" datatype="html">
+        <source>Главная</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.html</context>
+          <context context-type="linenumber">15,16</context>
+        </context-group>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.html</context>
+          <context context-type="linenumber">32,33</context>
+        </context-group>
+      </trans-unit>
+      <trans-unit id="4869656048237611054" datatype="html">
+        <source>Темы</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.html</context>
+          <context context-type="linenumber">17</context>
+        </context-group>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.html</context>
+          <context context-type="linenumber">34</context>
+        </context-group>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/features/topics/topics-shell.html</context>
+          <context context-type="linenumber">3,4</context>
+        </context-group>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/pages/home/home.html</context>
+          <context context-type="linenumber">6</context>
+        </context-group>
+      </trans-unit>
+      <trans-unit id="7261482220832273051" datatype="html">
+        <source>Практика</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.html</context>
+          <context context-type="linenumber">17,18</context>
+        </context-group>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.html</context>
+          <context context-type="linenumber">34,35</context>
+        </context-group>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/pages/home/home.html</context>
+          <context context-type="linenumber">6,7</context>
+        </context-group>
+      </trans-unit>
+      <trans-unit id="4479460076197066920" datatype="html">
+        <source>Меню</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.html</context>
+          <context context-type="linenumber">30</context>
+        </context-group>
+      </trans-unit>
+      <trans-unit id="1345500718524483752" datatype="html">
+        <source>Практика / Квизы</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/features/practice/practice.ts</context>
+          <context context-type="linenumber">11,12</context>
+        </context-group>
+      </trans-unit>
+      <trans-unit id="7423748961029050563" datatype="html">
+        <source>Раздел практики и квизов будет добавлен позже.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/features/practice/practice.ts</context>
+          <context context-type="linenumber">12,13</context>
+        </context-group>
+      </trans-unit>
+      <trans-unit id="6444475543232955679" datatype="html">
+        <source>На главную</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/features/practice/practice.ts</context>
+          <context context-type="linenumber">13,14</context>
+        </context-group>
+      </trans-unit>
+      <trans-unit id="5474501471025209274" datatype="html">
+        <source>Тема: <x id="INTERPOLATION" equiv-text="{{ topicId() }}"/></source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/features/topics/topic-detail.ts</context>
+          <context context-type="linenumber">11,12</context>
+        </context-group>
+      </trans-unit>
+      <trans-unit id="4855433267574927497" datatype="html">
+        <source>Контент по теме будет добавлен позже.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/features/topics/topic-detail.ts</context>
+          <context context-type="linenumber">12,13</context>
+        </context-group>
+      </trans-unit>
+      <trans-unit id="3164837209745975498" datatype="html">
+        <source>К списку тем</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/features/topics/topic-detail.ts</context>
+          <context context-type="linenumber">13,14</context>
+        </context-group>
+      </trans-unit>
+      <trans-unit id="7525880307280300810" datatype="html">
+        <source>Подготовка к собеседованиям для фронтенд-разработчиков</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/pages/home/home.html</context>
+          <context context-type="linenumber">3,4</context>
+        </context-group>
+      </trans-unit>
+    </body>
+  </file>
+</xliff>

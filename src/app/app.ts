@@ -1,12 +1,73 @@
-import { Component, signal } from '@angular/core';
-import { RouterOutlet } from '@angular/router';
+import { ChangeDetectionStrategy, Component, effect, inject, OnInit, signal } from '@angular/core';
+import { toSignal } from '@angular/core/rxjs-interop';
+import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
+import { BreakpointObserver, Breakpoints } from '@angular/cdk/layout';
+import { MatToolbarModule } from '@angular/material/toolbar';
+import { MatButtonModule } from '@angular/material/button';
+import { MatSidenavModule } from '@angular/material/sidenav';
+import { MatListModule } from '@angular/material/list';
+import { MatIconModule } from '@angular/material/icon';
+import { map, shareReplay } from 'rxjs';
+import { ThemeService } from './core/services/theme.service';
+import { LocaleService } from './core/services/locale.service';
+import { AppSidenavContent } from './app-sidenav-content';
+import { TranslateModule } from '@ngx-translate/core';
 
 @Component({
   selector: 'app-root',
-  imports: [RouterOutlet],
+  standalone: true,
+  imports: [
+    RouterLink,
+    RouterLinkActive,
+    RouterOutlet,
+    MatToolbarModule,
+    MatButtonModule,
+    MatSidenavModule,
+    MatListModule,
+    MatIconModule,
+    TranslateModule,
+    AppSidenavContent
+  ],
   templateUrl: './app.html',
-  styleUrl: './app.scss'
+  styleUrl: './app.scss',
+  changeDetection: ChangeDetectionStrategy.OnPush
 })
-export class App {
-  protected readonly title = signal('fe-interview-guide');
+export class App implements OnInit {
+  private readonly breakpointObserver = inject(BreakpointObserver);
+  private readonly themeService = inject(ThemeService);
+  protected readonly locale = inject(LocaleService);
+
+  protected readonly isHandset = toSignal(
+    this.breakpointObserver.observe(Breakpoints.Handset).pipe(
+      map((result) => result.matches),
+      shareReplay(1)
+    ),
+    { initialValue: false }
+  );
+
+  protected readonly theme = signal<'light' | 'dark'>(this.themeService.getTheme());
+
+  protected readonly sidenavOpen = signal(true);
+
+  constructor() {
+    effect(() => {
+      if (this.isHandset()) {
+        this.sidenavOpen.set(false);
+      }
+    });
+  }
+
+  protected toggleSidenav(): void {
+    this.sidenavOpen.update((v) => !v);
+  }
+
+  ngOnInit(): void {
+    this.themeService.applyTheme(this.themeService.getTheme());
+  }
+
+  protected toggleTheme(): void {
+    const next = this.theme() === 'dark' ? 'light' : 'dark';
+    this.themeService.setTheme(next);
+    this.theme.set(next);
+  }
 }
