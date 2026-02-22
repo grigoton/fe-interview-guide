@@ -12,7 +12,7 @@ export interface SettingsStateModel {
   theme: ThemeId;
 }
 
-const DEFAULT_THEME: ThemeId = 'light';
+const DEFAULT_THEME: ThemeId = 'dark';
 
 @State<SettingsStateModel>({
   name: 'settings',

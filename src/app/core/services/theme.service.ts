@@ -23,6 +23,6 @@ export class ThemeService {
   }
 
   getTheme(): ThemeId {
-    return this.store.selectSnapshot((state) => state.settings?.theme) ?? 'light';
+    return this.store.selectSnapshot((state) => state.settings?.theme) ?? 'dark';
   }
 }

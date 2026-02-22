@@ -1,44 +1,54 @@
 <div class="video-background" aria-hidden="true">
-  <iframe
-    src="https://www.youtube.com/embed/8bkUCXbjfFs?autoplay=1&mute=1&loop=1&playlist=8bkUCXbjfFs&start=60&end=180&controls=0&showinfo=0&rel=0"
-    title="Background video"
-    allow="autoplay; encrypted-media"
-    allowfullscreen>
-  </iframe>
+  <video
+    #bgVideo
+    autoplay
+    [muted]="true"
+    loop
+    playsinline
+    aria-label="Background video"
+    (loadeddata)="bgVideo.muted = true"
+  >
+    <source src="assets/video/main_bg.mp4" type="video/mp4" />
+  </video>
 </div>
-<div class="app-shell">
-  <mat-toolbar color="primary">
-    <button
-      type="button"
-      [attr.aria-label]="'ARIA_TOGGLE_SIDENAV' | translate"
-      mat-icon-button
-      (click)="toggleSidenav()">
-      <mat-icon>menu</mat-icon>
-    </button>
-    <span>{{ 'APP_TITLE' | translate }}</span>
-    @if (!isHandset()) {
-      <nav class="toolbar-nav">
-        <a mat-button routerLink="/topics" routerLinkActive="active">{{ 'NAV_TOPICS' | translate }}</a>
-      </nav>
-    }
-    <span class="spacer"></span>
-    <button mat-icon-button (click)="locale.toggleLocale()" [attr.aria-label]="'ARIA_TOGGLE_LANG' | translate" [attr.title]="'ARIA_TOGGLE_LANG' | translate">
-      <span class="lang-btn">{{ locale.currentLocale() === 'ru' ? 'EN' : 'RU' }}</span>
-    </button>
-    <button mat-icon-button (click)="toggleTheme()" [attr.aria-label]="(theme() === 'dark' ? 'ARIA_TOGGLE_THEME' : 'ARIA_TOGGLE_THEME_DARK') | translate">
-      <mat-icon>{{ theme() === 'dark' ? 'light_mode' : 'dark_mode' }}</mat-icon>
-    </button>
-  </mat-toolbar>
-  <mat-sidenav-container class="sidenav-container">
-    <mat-sidenav #drawer class="sidenav" fixedInViewport
-      [attr.role]="isHandset() ? 'dialog' : 'navigation'"
-      [mode]="isHandset() ? 'over' : 'side'"
-      [opened]="sidenavOpen()">
-      <mat-toolbar>{{ 'NAV_MENU' | translate }}</mat-toolbar>
+<div class="app-wrapper" [class.is-resizing]="isResizing()">
+  <header class="app-header">
+    <mat-toolbar color="primary" class="main-toolbar">
+      <button
+        type="button"
+        [attr.aria-label]="'ARIA_TOGGLE_SIDENAV' | translate"
+        mat-icon-button
+        (click)="toggleSidenav()"
+      >
+        <mat-icon>menu</mat-icon>
+      </button>
+      <span>{{ 'APP_TITLE' | translate }}</span>
+      <span class="spacer"></span>
+      <button
+        mat-icon-button
+        (click)="locale.toggleLocale()"
+        [attr.aria-label]="'ARIA_TOGGLE_LANG' | translate"
+        [attr.title]="'ARIA_TOGGLE_LANG' | translate"
+      >
+        <span class="lang-btn">{{ locale.currentLocale() === 'ru' ? 'EN' : 'RU' }}</span>
+      </button>
+      <button
+        mat-icon-button
+        (click)="toggleTheme()"
+        [attr.aria-label]="
+          (theme() === 'dark' ? 'ARIA_TOGGLE_THEME' : 'ARIA_TOGGLE_THEME_DARK') | translate
+        "
+      >
+        <mat-icon>{{ theme() === 'dark' ? 'light_mode' : 'dark_mode' }}</mat-icon>
+      </button>
+    </mat-toolbar>
+  </header>
+  <div class="main-container">
+    <aside class="app-sidebar" [class.sidebar-open]="sidenavOpen()" [class.sidebar-closed]="!sidenavOpen()">
       <app-sidenav-content (navClick)="isHandset() && sidenavOpen.set(false)" />
-    </mat-sidenav>
-    <mat-sidenav-content>
+    </aside>
+    <main class="app-content">
       <router-outlet />
-    </mat-sidenav-content>
-  </mat-sidenav-container>
+    </main>
+  </div>
 </div>

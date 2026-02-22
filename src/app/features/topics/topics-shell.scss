@@ -1,7 +1,16 @@
+// Fill content area (viewport minus toolbar); use vh so height works without parent chain
+:host {
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100vh - 64px);
+}
+
 .topics-content {
   flex: 1;
   padding: 1.5rem 2rem;
   min-width: 0;
-  min-height: 60vh;
-  background: color-mix(in srgb, var(--mat-sys-surface) 70%, transparent);
+  min-height: calc(100vh - 64px); // at least full content area height
+  background: transparent; // .app-content already uses --bg-overlay; avoid double layer
+  color: var(--text-secondary);
+  transition: color 0.3s ease;
 }

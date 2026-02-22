@@ -1,6 +1,26 @@
 // Angular Material theming: light and dark themes via data-theme attribute.
 @use '@angular/material' as mat;
 
+// --- App palette (CSS variables): light (default) and dark ---
+// WCAG 2.1 AA: text-primary and text-secondary meet 4.5:1 (normal) on --background.
+:root,
+html {
+  --background: #f8f9fa;
+  --text-primary: #1a1d23;
+  --text-secondary: #64748b;
+  --sidebar-border: rgba(0, 0, 0, 0.05);
+  --sidebar-shadow: 4px 0 15px -3px rgba(0, 0, 0, 0.15);
+}
+
+html[data-theme='dark'],
+html.dark {
+  --background: #0f172a;
+  --text-primary: #f1f5f9;
+  --text-secondary: #94a3b8;
+  --sidebar-border: rgba(255, 255, 255, 0.1);
+  --sidebar-shadow: 4px 0 15px -3px rgba(0, 0, 0, 0.35);
+}
+
 // Light theme: violet + orange (unusual, distinctive)
 html {
   height: 100%;
@@ -29,18 +49,33 @@ html[data-theme='dark'] {
   ));
 }
 
+// Global typography and background: use app palette + smooth theme transition
 body {
   color-scheme: light dark;
-  background-color: transparent;
-  color: var(--mat-sys-on-surface);
+  background-color: var(--background);
+  color: var(--text-secondary);
   font: var(--mat-sys-body-medium);
   margin: 0;
   height: 100%;
   min-height: 100vh;
+  transition: background-color 0.3s ease, color 0.3s ease;
 }
 
-// Outer layer: Topics panel and Practice link only
-.mat-sidenav.sidenav .sidenav-content {
+h1, h2, h3, h4, h5, h6 {
+  color: var(--text-primary);
+  transition: color 0.3s ease;
+}
+
+p {
+  color: var(--text-secondary);
+  transition: color 0.3s ease;
+}
+
+// Outer layer: Topics panel and Practice link only (use app palette)
+.app-sidebar .sidenav-content {
+  color: var(--text-primary);
+  transition: color 0.3s ease;
+
   .sidenav-accordion {
     .mat-expansion-panel {
       background: transparent !important;
@@ -74,7 +109,7 @@ body {
 }
 
 // Nested accordion (JavaScript, Angular, etc.): just text, no panel styling
-.mat-sidenav.sidenav .sidenav-content .topics-accordion {
+.app-sidebar .sidenav-content .topics-accordion {
   .mat-expansion-panel {
     background: transparent !important;
     box-shadow: none !important;
@@ -86,7 +121,6 @@ body {
   }
 
   .mat-expansion-panel-header {
-    padding-inline: 0.5rem;
     padding-block: 0.25rem;
     min-height: unset;
     height: auto;
@@ -124,19 +158,18 @@ body {
   .mat-mdc-list-item {
     background: transparent !important;
     min-height: 2rem;
-    padding-inline: 0.5rem;
 
     &:hover {
       background: rgba(0, 0, 0, 0.04) !important;
     }
 
     &.nav-sublink {
-      color: var(--mat-sys-on-surface-variant);
+      color: var(--text-secondary);
     }
   }
 }
 
-html[data-theme='dark'] .mat-sidenav.sidenav .sidenav-content {
+html[data-theme='dark'] .app-sidebar .sidenav-content {
   .sidenav-accordion .mat-expansion-panel-header:hover {
     background: rgba(255, 255, 255, 0.06) !important;
   }
@@ -151,22 +184,3 @@ html[data-theme='dark'] .mat-sidenav.sidenav .sidenav-content {
   }
 }
 
-// Video background: force sidenav and main content area to be semi-transparent
-// so the video is visible across the full height (Material theme applies opaque surface otherwise)
-mat-sidenav-container,
-.mat-sidenav-container.mat-drawer-container,
-.mat-drawer-container {
-  background: transparent !important;
-}
-
-.mat-sidenav-container .mat-drawer,
-.mat-sidenav-container .mat-sidenav,
-.mat-sidenav-container mat-sidenav,
-.mat-sidenav-container .mat-drawer-inner-container {
-  background: color-mix(in srgb, var(--mat-sys-surface) 72%, transparent) !important;
-}
-
-.mat-sidenav-container .mat-drawer-content,
-.mat-sidenav-container .mat-sidenav-content {
-  background: transparent !important;
-}

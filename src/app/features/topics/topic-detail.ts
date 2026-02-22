@@ -14,14 +14,14 @@ import { TOPICS } from './topic-nav.data';
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './topic-detail.html',
   styles: [`
-    .topic-detail { padding: 2rem; }
-    .topic-detail h2 { margin-top: 0; color: var(--mat-sys-on-surface); }
-    .topic-detail p { color: var(--mat-sys-on-surface-variant); }
-    .topic-detail a { color: var(--mat-sys-primary); }
+    .topic-detail { padding: 2rem; color: var(--text-secondary); transition: color 0.3s ease; }
+    .topic-detail h2 { margin-top: 0; color: var(--text-primary); transition: color 0.3s ease; }
+    .topic-detail p { color: var(--text-secondary); transition: color 0.3s ease; }
+    .topic-detail a { color: var(--text-primary); }
     .topic-detail .code-block { margin: 1rem 0; }
-    .topic-detail .code-block pre { margin: 0; padding: 1rem; overflow-x: auto; background: var(--mat-sys-surface-container-high); border-radius: 8px; font-family: ui-monospace, monospace; font-size: 0.875rem; }
-    .topic-detail .code-block code { white-space: pre; }
-    .topic-detail .code-block .code-lang { font-size: 0.75rem; color: var(--mat-sys-on-surface-variant); margin-bottom: 0.25rem; }
+    .topic-detail .code-block pre { margin: 0; padding: 1rem; overflow-x: auto; background: color-mix(in srgb, var(--background) 95%, transparent); border-radius: 8px; font-family: ui-monospace, monospace; font-size: 0.875rem; }
+    .topic-detail .code-block code { white-space: pre; color: var(--text-primary); }
+    .topic-detail .code-block .code-lang { font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 0.25rem; }
   `]
 })
 export class TopicDetail {

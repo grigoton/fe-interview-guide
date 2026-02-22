@@ -1,13 +1,21 @@
-import { ChangeDetectionStrategy, Component, effect, inject, OnInit, signal } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  DestroyRef,
+  effect,
+  inject,
+  OnInit,
+  signal,
+} from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { toSignal } from '@angular/core/rxjs-interop';
-import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
+import { RouterOutlet } from '@angular/router';
 import { BreakpointObserver, Breakpoints } from '@angular/cdk/layout';
 import { MatToolbarModule } from '@angular/material/toolbar';
 import { MatButtonModule } from '@angular/material/button';
-import { MatSidenavModule } from '@angular/material/sidenav';
 import { MatListModule } from '@angular/material/list';
 import { MatIconModule } from '@angular/material/icon';
-import { map, shareReplay } from 'rxjs';
+import { fromEvent, debounceTime, map, shareReplay, tap } from 'rxjs';
 import { ThemeService } from './core/services/theme.service';
 import { LocaleService } from './core/services/locale.service';
 import { AppSidenavContent } from './app-sidenav-content';
@@ -17,20 +25,17 @@ import { TranslateModule } from '@ngx-translate/core';
   selector: 'app-root',
   standalone: true,
   imports: [
-    RouterLink,
-    RouterLinkActive,
     RouterOutlet,
     MatToolbarModule,
     MatButtonModule,
-    MatSidenavModule,
     MatListModule,
     MatIconModule,
     TranslateModule,
-    AppSidenavContent
+    AppSidenavContent,
   ],
   templateUrl: './app.html',
   styleUrl: './app.scss',
-  changeDetection: ChangeDetectionStrategy.OnPush
+  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class App implements OnInit {
   private readonly breakpointObserver = inject(BreakpointObserver);
@@ -40,14 +45,19 @@ export class App implements OnInit {
   protected readonly isHandset = toSignal(
     this.breakpointObserver.observe(Breakpoints.Handset).pipe(
       map((result) => result.matches),
-      shareReplay(1)
+      shareReplay(1),
     ),
-    { initialValue: false }
+    { initialValue: false },
   );
 
   protected readonly theme = signal<'light' | 'dark'>(this.themeService.getTheme());
 
   protected readonly sidenavOpen = signal(true);
+
+  /** Set while window is being resized; disables sidebar transition to avoid jump at 600px breakpoint */
+  protected readonly isResizing = signal(false);
+
+  private readonly destroyRef = inject(DestroyRef);
 
   constructor() {
     effect(() => {
@@ -55,6 +65,15 @@ export class App implements OnInit {
         this.sidenavOpen.set(false);
       }
     });
+
+    fromEvent(window, 'resize')
+      .pipe(
+        tap(() => this.isResizing.set(true)),
+        debounceTime(150),
+        tap(() => this.isResizing.set(false)),
+        takeUntilDestroyed(this.destroyRef),
+      )
+      .subscribe();
   }
 
   protected toggleSidenav(): void {

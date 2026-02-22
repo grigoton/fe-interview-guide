@@ -1,5 +1,26 @@
+// Content padding: desktop 24px, mobile 16px; single place to change later
+// Item padding: unified left alignment for list items and expansion headers
+:host {
+  --content-padding: 24px;
+  --sidenav-item-padding: 16px;
+  box-sizing: border-box;
+  display: block;
+
+  @media (max-width: 600px) {
+    --content-padding: 16px;
+  }
+}
+
 .sidenav-content {
-  padding-bottom: 1rem;
+  box-sizing: border-box;
+  padding: var(--content-padding);
+
+  // All descendants use border-box so padding never adds to width
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
 
   .nav-topic-header {
     padding-inline-start: 0.5rem;
@@ -7,7 +28,7 @@
 
   .nav-topic-link {
     text-decoration: none;
-    color: var(--mat-sys-on-surface);
+    color: var(--text-primary);
     font: inherit;
     font-weight: 500;
     padding: 0;
@@ -24,5 +45,29 @@
 
   .nav-sublink {
     padding-inline-start: 1.5rem;
+  }
+}
+
+// Unify padding-left for list items and expansion headers so text aligns on one vertical line.
+// Override Material internals: .mat-content (header) and list item padding.
+:host ::ng-deep {
+  .mat-expansion-panel-header {
+    padding-inline-start: var(--sidenav-item-padding) !important;
+    padding-inline-end: var(--sidenav-item-padding) !important;
+
+    .mat-content {
+      padding-inline-start: 0 !important;
+      padding-inline-end: 0 !important;
+    }
+  }
+
+  .mat-mdc-list-item {
+    padding-inline-start: var(--sidenav-item-padding) !important;
+    padding-inline-end: var(--sidenav-item-padding) !important;
+  }
+
+  .mat-mdc-list-item-content {
+    padding-inline-start: 0 !important;
+    padding-inline-end: 0 !important;
   }
 }
