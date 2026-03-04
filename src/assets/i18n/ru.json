@@ -79,5 +79,20 @@
 
   "PRACTICE_TITLE": "Практика / Квизы",
   "PRACTICE_DESC": "Раздел практики и квизов будет добавлен позже.",
-  "PRACTICE_LINK_TOPICS": "К темам"
+  "PRACTICE_LINK_TOPICS": "К темам",
+
+  "NAV_FLASHCARDS": "AI Карточки",
+  "FLASHCARDS_TITLE": "AI Карточки",
+  "FLASHCARDS_TOPIC": "Тема",
+  "FLASHCARDS_GENERATE": "Создать 3 карточки",
+  "FLASHCARDS_GENERATING": "Генерация…",
+  "FLASHCARDS_EMPTY": "Выберите тему и нажмите «Создать», чтобы сгенерировать 3 карточки для интервью.",
+  "FLASHCARDS_COUNT": "Карточек",
+  "FLASHCARDS_ERROR": "Не удалось сгенерировать карточки. Проверьте API-ключ и попробуйте снова.",
+  "FLASHCARDS_ERROR_429": "Слишком много запросов. Пожалуйста, подождите около 1 минуты и попробуйте снова.",
+  "FLASHCARDS_REMAINING_REQUESTS": "Доступно запросов",
+  "FLASHCARD_QUESTION": "Вопрос",
+  "FLASHCARD_ANSWER": "Ответ",
+  "FLASHCARD_FLIP": "Перевернуть карточку",
+  "FLASHCARD_TAP_TO_FLIP": "Нажмите, чтобы увидеть ответ"
 }

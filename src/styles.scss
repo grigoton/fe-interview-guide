@@ -1,5 +1,7 @@
-// Angular Material theming: light and dark themes via data-theme attribute.
+// Angular Material theming: @use must be first (Sass rule)
 @use '@angular/material' as mat;
+
+// Tailwind is loaded via src/tailwind.css in angular.json (avoids Sass @import deprecation)
 
 // --- App palette (CSS variables): light (default) and dark ---
 // WCAG 2.1 AA: text-primary and text-secondary meet 4.5:1 (normal) on --background.

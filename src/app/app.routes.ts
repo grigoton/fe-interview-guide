@@ -9,5 +9,10 @@ export const routes: Routes = [
   {
     path: 'practice',
     loadChildren: () => import('./features/practice/practice.routes').then(m => m.practiceRoutes)
+  },
+  {
+    path: 'flashcards',
+    loadChildren: () =>
+      import('./features/flashcards/flashcards.routes').then(m => m.flashcardsRoutes)
   }
 ];

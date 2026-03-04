@@ -79,5 +79,20 @@
 
   "PRACTICE_TITLE": "Practice / Quizzes",
   "PRACTICE_DESC": "Practice and quizzes section will be added later.",
-  "PRACTICE_LINK_TOPICS": "To topics"
+  "PRACTICE_LINK_TOPICS": "To topics",
+
+  "NAV_FLASHCARDS": "AI Flashcards",
+  "FLASHCARDS_TITLE": "AI Flashcards",
+  "FLASHCARDS_TOPIC": "Topic",
+  "FLASHCARDS_GENERATE": "Generate 3 cards",
+  "FLASHCARDS_GENERATING": "Generating…",
+  "FLASHCARDS_EMPTY": "Choose a topic and click Generate to create 3 interview flashcards.",
+  "FLASHCARDS_COUNT": "Cards",
+  "FLASHCARDS_ERROR": "Failed to generate cards. Check your API key and try again.",
+  "FLASHCARDS_ERROR_429": "Too many requests. Please wait about 1 minute before trying again.",
+  "FLASHCARDS_REMAINING_REQUESTS": "Available requests",
+  "FLASHCARD_QUESTION": "Question",
+  "FLASHCARD_ANSWER": "Answer",
+  "FLASHCARD_FLIP": "Flip card",
+  "FLASHCARD_TAP_TO_FLIP": "Tap to see answer"
 }
