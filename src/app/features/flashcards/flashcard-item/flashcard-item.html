@@ -1,0 +1,25 @@
+<div
+  class="flip-container cursor-pointer min-h-[200px]"
+  (click)="toggle()"
+  [class.flipped]="flipped()"
+  role="button"
+  [attr.aria-label]="'FLASHCARD_FLIP' | translate">
+  <div class="flip-inner relative w-full h-full">
+    <div
+      class="flip-front absolute inset-0 flex flex-col justify-center p-6 rounded-xl shadow-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600">
+      <span class="text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wide">
+        {{ 'FLASHCARD_QUESTION' | translate }} · {{ card().topic }}
+      </span>
+      <p class="mt-2 text-slate-800 dark:text-slate-200 font-medium">{{ card().question }}</p>
+      <span class="mt-2 text-xs text-slate-400">{{ 'FLASHCARD_TAP_TO_FLIP' | translate }}</span>
+    </div>
+    <div
+      class="flip-back absolute inset-0 flex flex-col justify-center p-6 rounded-xl shadow-lg bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600">
+      <span class="text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wide">
+        {{ 'FLASHCARD_ANSWER' | translate }}
+      </span>
+      <p class="mt-2 text-slate-800 dark:text-slate-200">{{ card().answer }}</p>
+      <span class="mt-2 text-xs text-slate-400">{{ card().difficulty }}</span>
+    </div>
+  </div>
+</div>
