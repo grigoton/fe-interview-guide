@@ -1,0 +1,182 @@
+/* Scoped: all styles apply only inside app-daily-habits */
+:host {
+  display: block;
+}
+
+.habits-tracker {
+  color: var(--text-primary);
+}
+
+.habits-tracker-table-section {
+  background-color: color-mix(in srgb, var(--background) 95%, transparent);
+}
+
+.habits-tracker-tab-input {
+  color: var(--text-primary);
+}
+
+/* Wrapper: almost full width; each row = scrollable tabs + add button always visible */
+:host .habits-tabs-wrapper {
+  width: 100%;
+}
+
+:host .habits-tabs-row {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: 0;
+}
+
+/* Scrollable tab group takes remaining width */
+:host .habits-tab-group-scroll {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+:host .habits-tab-group .mat-mdc-tab-header {
+  width: 100%;
+  max-width: 100%;
+  display: flex;
+  overflow: hidden;
+}
+
+/* Scrollable area (middle part) bounded so 3+ tabs overflow and pagination works */
+:host .habits-tab-group .mat-mdc-tab-header > *:not(.mat-mdc-tab-header-pagination) {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* Add button outside scroll: always visible at the end of the row */
+:host .habits-tab-add-btn {
+  flex-shrink: 0;
+  margin-left: 0.25rem;
+}
+
+/* Tab labels must not shrink so overflow is detected */
+:host .habits-tab-group .mat-mdc-tab-label {
+  flex-shrink: 0;
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+/* Tab label inner: single flexbox row, everything vertically centered */
+:host .habits-tab-group .mat-mdc-tab-label .habits-tab-label-inner,
+:host .habits-tab-group .mat-mdc-tab-label .flex {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.25rem;
+  min-width: 100px;
+  flex-shrink: 0;
+  height: 40px;
+}
+
+/* Text: flex item, centered in row (no extra line-height) */
+:host .habits-tab-group .mat-mdc-tab-label .habits-tab-label-text {
+  display: flex;
+  align-items: center;
+  line-height: 1;
+  padding: 0 0.25rem;
+  height: 40px;
+  box-sizing: border-box;
+}
+
+/* Icon buttons: same row height, flex center */
+:host .habits-tab-group .mat-mdc-tab-label .habits-tab-close,
+:host .habits-tab-group .mat-mdc-tab-label button[mat-icon-button] {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+}
+
+:host .habits-tab-group .mat-mdc-tab-label .mat-icon {
+  line-height: 1;
+}
+
+:host .habits-tab-group .habits-tracker-tab-input {
+  height: 32px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  box-sizing: border-box;
+}
+
+/* Add Habit button: ensure visible text in both light and dark theme */
+:host .habits-add-habit-btn.mat-mdc-raised-button {
+  background-color: #7c3aed;
+  color: #fff;
+  &:hover {
+    background-color: #6d28d9;
+  }
+}
+
+/* Time sidebar: blocks with consistent sizing and centered content */
+.time-sidebar {
+  align-items: stretch;
+}
+
+.time-block {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+
+  span {
+    display: block;
+    width: 100%;
+  }
+}
+
+.time-block-seconds span:last-child {
+  word-break: break-word;
+  line-height: 1.2;
+  max-width: 100%;
+}
+
+.daily-habits-table {
+  th,
+  td {
+    white-space: nowrap;
+    vertical-align: middle;
+  }
+
+  th {
+    padding-top: 0.75rem;
+    padding-bottom: 0.75rem;
+  }
+
+  td {
+    padding-top: 0.75rem;
+    padding-bottom: 0.75rem;
+  }
+
+  td .flex {
+    align-items: center;
+  }
+}
+
+.daily-habits-droplist {
+  .cdk-drag-preview {
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    opacity: 0.95;
+  }
+
+  .cdk-drag-placeholder {
+    opacity: 0.3;
+  }
+
+  .cdk-drag-animating {
+    transition: transform 0.2s ease;
+  }
+}
+

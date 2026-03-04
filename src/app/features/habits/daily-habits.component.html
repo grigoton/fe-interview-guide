@@ -1,0 +1,227 @@
+<div class="habits-tracker mt-6 flex min-h-screen flex-col bg-transparent text-slate-900 dark:text-slate-100 md:grid md:min-h-screen md:grid-cols-[minmax(0,20%)_minmax(0,1fr)]">
+  <!-- Time block: 100% width on mobile, 20% column on desktop -->
+  <aside
+    class="time-sidebar w-full flex-shrink-0 flex h-[140px] flex-row gap-3 p-4 backdrop-blur-sm bg-slate-900/80 text-slate-50 md:static md:h-[140px] md:w-auto md:self-start md:gap-4 md:bg-slate-900/60">
+    <div class="time-block flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-2xl bg-slate-800 px-4 py-3 shadow-lg">
+      <span class="text-center text-xs font-medium uppercase tracking-wider text-slate-400">Hours</span>
+      <span class="text-center text-3xl font-semibold tabular-nums leading-none md:text-4xl">{{ hours() }}</span>
+    </div>
+    <div class="time-block flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-2xl bg-slate-800 px-4 py-3 shadow-lg">
+      <span class="text-center text-xs font-medium uppercase tracking-wider text-slate-400">Minutes</span>
+      <span class="text-center text-3xl font-semibold tabular-nums leading-none md:text-4xl">{{ minutes() }}</span>
+    </div>
+    <div class="time-block time-block-seconds flex min-w-0 flex-1 flex-col items-center justify-center gap-1 rounded-2xl bg-slate-800 px-4 py-3 shadow-lg">
+      <span class="text-center text-xs font-medium uppercase tracking-wider text-slate-400">Seconds</span>
+      <span class="text-center text-3xl font-semibold tabular-nums leading-none md:text-4xl">{{ seconds() }}</span>
+      <span class="text-center text-xs leading-snug text-slate-300">{{ weekday() }}</span>
+    </div>
+  </aside>
+
+  <!-- Main content -->
+  <main class="habits-tracker-content flex min-h-0 flex-1 flex-col pt-4 px-4 md:pt-8 md:px-8 pb-8 md:pb-10 md:overflow-y-auto">
+    <div class="habits-tabs-wrapper">
+      <!-- User tabs row: scrollable area + add user button always visible -->
+      <div class="habits-tabs-row">
+        <mat-tab-group
+          class="habits-tab-group habits-tab-group-scroll"
+          [selectedIndex]="selectedTabIndex()"
+          (selectedIndexChange)="onUserTabChange($event)">
+          @for (user of users(); track user.id) {
+            <mat-tab>
+              <ng-template mat-tab-label>
+                <div class="habits-tab-label-inner flex items-center gap-2">
+                  @if (editingUserId() === user.id) {
+                    <input
+                      type="text"
+                      class="habits-tracker-tab-input min-w-[80px] rounded border border-slate-300 bg-transparent px-2 py-0.5 text-sm focus:outline-none focus:ring-2 dark:border-slate-600"
+                      [value]="user.name"
+                      (blur)="saveUserName(user.id, $any($event.target).value)"
+                      (keydown.enter)="saveUserName(user.id, $any($event.target).value); $event.preventDefault()"
+                      (keydown.escape)="editingUserId.set(null)"
+                      (click)="$event.stopPropagation()" />
+                  } @else {
+                    <span
+                      class="habits-tab-label-text cursor-default px-1"
+                      (dblclick)="startEditUser(user.id, $event)">
+                      {{ user.name }}
+                    </span>
+                  }
+                  <button
+                    mat-icon-button
+                    type="button"
+                    (click)="deleteUser(user.id); $event.stopPropagation()"
+                    [disabled]="users().length === 1">
+                    <mat-icon>close</mat-icon>
+                  </button>
+                </div>
+              </ng-template>
+            </mat-tab>
+          }
+        </mat-tab-group>
+        @if (users().length < maxUsers) {
+          <button
+            mat-icon-button
+            type="button"
+            class="habits-tab-add-btn"
+            (click)="addUser()"
+            [attr.aria-label]="'HABITS_ADD_USER' | translate">
+            <mat-icon>add</mat-icon>
+          </button>
+        }
+      </div>
+
+      <!-- Section (tracker) tabs row: scrollable area + add tracker button always visible -->
+      <div class="habits-tabs-row">
+        <mat-tab-group
+          class="habits-tab-group habits-tracker-tabs habits-tab-group-scroll"
+          [selectedIndex]="selectedSectionTabIndex()"
+          (selectedIndexChange)="onSectionTabChange($event)">
+          @for (section of currentSections(); track section.id) {
+            <mat-tab>
+              <ng-template mat-tab-label>
+                <div class="habits-tab-label-inner flex items-center gap-1">
+                  @if (editingSectionId() === section.id) {
+                    <input
+                      type="text"
+                      class="habits-tracker-tab-input min-w-[120px] rounded border border-slate-300 bg-transparent px-2 py-0.5 text-sm focus:outline-none focus:ring-2 dark:border-slate-600"
+                      [value]="section.title"
+                      (blur)="saveSectionTitle(section.id, $any($event.target).value)"
+                      (keydown.enter)="saveSectionTitle(section.id, $any($event.target).value); $event.preventDefault()"
+                      (keydown.escape)="editingSectionId.set(null)"
+                      (click)="$event.stopPropagation()" />
+                  } @else {
+                    <span
+                      class="habits-tab-label-text cursor-default px-1"
+                      (dblclick)="startEditSection(section.id, $event)">
+                      {{ section.title }}
+                    </span>
+                  }
+                  <button
+                    type="button"
+                    mat-icon-button
+                    (click)="deleteSection(section.id, $event)"
+                    [disabled]="currentSections().length === 1"
+                    [attr.aria-label]="'HABITS_DELETE_TRACKER' | translate"
+                    class="habits-tab-close !min-w-0 !w-8 !h-8 opacity-70 hover:opacity-100 disabled:pointer-events-none disabled:opacity-40">
+                    <mat-icon>close</mat-icon>
+                  </button>
+                </div>
+              </ng-template>
+            </mat-tab>
+          }
+        </mat-tab-group>
+        @if (currentSections().length < maxSections) {
+          <button
+            mat-icon-button
+            type="button"
+            class="habits-tab-add-btn"
+            (click)="addSection()"
+            [attr.aria-label]="'HABITS_ADD_TRACKER' | translate">
+            <mat-icon>add</mat-icon>
+          </button>
+        }
+      </div>
+    </div>
+
+    <header class="habits-content-start mb-6 mt-6 flex items-center justify-between gap-4">
+      <h1 class="text-2xl font-semibold md:text-3xl">{{ 'HABITS_TITLE' | translate }}</h1>
+      <button
+        type="button"
+        mat-raised-button
+        class="habits-add-habit-btn shadow-md"
+        (click)="addHabit()">
+        {{ 'HABITS_ADD_HABIT' | translate }}
+      </button>
+    </header>
+
+    <section class="habits-tracker-table-section rounded-2xl shadow-sm border border-slate-200/60 dark:border-slate-700 bg-slate-50/80 dark:bg-slate-800/70">
+      <div class="overflow-x-auto">
+        <table class="daily-habits-table min-w-full border-collapse">
+          <thead>
+            <tr class="border-b border-slate-200 dark:border-slate-700">
+              <th class="w-10 px-2 py-2"></th>
+              <th class="px-3 py-2 text-left text-xs font-semibold text-slate-500 dark:text-slate-400">
+                Habit
+              </th>
+              @for (dayKey of weekDaysShortKeys; track dayKey) {
+                <th class="px-2 py-2 text-center text-xs font-semibold text-slate-500 dark:text-slate-400">
+                  {{ dayKey | translate }}
+                </th>
+              }
+              <th class="px-3 py-2 text-left text-xs font-semibold text-slate-500 dark:text-slate-400">
+                {{ 'HABITS_PROGRESS' | translate }}
+              </th>
+            </tr>
+          </thead>
+          <tbody
+            cdkDropList
+            [cdkDropListData]="habits()"
+            (cdkDropListDropped)="reorderHabits($event)"
+            class="daily-habits-droplist">
+            @for (habit of habits(); track habit.id) {
+              <tr
+                cdkDrag
+                class="border-b border-slate-100 dark:border-slate-700/60 hover:bg-slate-100/60 dark:hover:bg-slate-700/40">
+                <td class="w-10 px-2 py-3 align-middle">
+                  <button
+                    type="button"
+                    mat-icon-button
+                    cdkDragHandle
+                    class="cursor-grab active:cursor-grabbing text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
+                    [attr.aria-label]="'HABITS_DRAG_LABEL' | translate">
+                    <mat-icon>drag_indicator</mat-icon>
+                  </button>
+                </td>
+                <td class="px-3 py-3 align-middle">
+                  <div class="flex items-center gap-2">
+                    <input
+                      matInput
+                      class="flex-1 min-w-0 bg-transparent border-b border-slate-300/60 dark:border-slate-600/80 focus:outline-none focus:border-violet-500 text-sm"
+                      [placeholder]="'HABITS_NEW_HABIT_PLACEHOLDER' | translate"
+                      [(ngModel)]="habit.name"
+                      (blur)="onNameChange(habit.id, habit.name)" />
+                    <button
+                      mat-icon-button
+                      type="button"
+                      color="warn"
+                      (click)="deleteHabit(habit.id)">
+                      <mat-icon>delete</mat-icon>
+                    </button>
+                  </div>
+                </td>
+                @for (day of weekDaysShort; track day; let i = $index) {
+                  <td class="px-2 py-3 text-center align-middle">
+                    <mat-checkbox
+                      color="primary"
+                      [checked]="habit.days[i]"
+                      (change)="onToggleDay(habit.id, i, $event.checked)">
+                    </mat-checkbox>
+                  </td>
+                }
+                <td class="px-3 py-3 align-middle min-w-[140px]">
+                  <div class="flex items-center gap-3">
+                    <mat-progress-bar
+                      class="flex-1"
+                      mode="determinate"
+                      [value]="habit.progress">
+                    </mat-progress-bar>
+                    <span class="text-xs font-medium w-10 text-right">{{ habit.progress }}%</span>
+                  </div>
+                </td>
+              </tr>
+            }
+            @if (habits().length === 0) {
+              <tr>
+                <td
+                  class="px-3 py-6 text-center text-sm text-slate-500 dark:text-slate-400"
+                  colspan="11">
+                  {{ 'HABITS_EMPTY_HINT' | translate }}
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</div>
