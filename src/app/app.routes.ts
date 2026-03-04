@@ -7,6 +7,10 @@ export const routes: Routes = [
     loadChildren: () => import('./features/topics/topics.routes').then(m => m.topicsRoutes)
   },
   {
+    path: 'habits',
+    loadChildren: () => import('./features/habits/habits.routes').then(m => m.habitsRoutes)
+  },
+  {
     path: 'practice',
     loadChildren: () => import('./features/practice/practice.routes').then(m => m.practiceRoutes)
   },

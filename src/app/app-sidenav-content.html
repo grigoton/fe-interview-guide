@@ -48,6 +48,13 @@
     </a>
     <a
       mat-list-item
+      routerLink="/habits"
+      routerLinkActive="active"
+      (click)="onNavClick()">
+      {{ 'NAV_HABITS' | translate }}
+    </a>
+    <a
+      mat-list-item
       routerLink="/flashcards"
       routerLinkActive="active"
       (click)="onNavClick()">
