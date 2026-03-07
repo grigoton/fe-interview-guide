@@ -1,68 +1,108 @@
-<div class="habits-tracker mt-6 flex min-h-screen flex-col bg-transparent text-slate-900 dark:text-slate-100 md:grid md:min-h-screen md:grid-cols-[minmax(0,20%)_minmax(0,1fr)]">
-  <!-- Time block: 100% width on mobile, 20% column on desktop -->
+<div class="habits-tracker flex h-full flex-col bg-transparent text-slate-900 dark:text-slate-100 md:grid md:grid-cols-[minmax(0,20%)_minmax(0,1fr)] md:grid-rows-1">
+  <!-- Time block: parent with 3 blocks in a row (H/M/S) + full-width date row below -->
   <aside
-    class="time-sidebar w-full flex-shrink-0 flex h-[140px] flex-row gap-3 p-4 backdrop-blur-sm bg-slate-900/80 text-slate-50 md:static md:h-[140px] md:w-auto md:self-start md:gap-4 md:bg-slate-900/60">
-    <div class="time-block flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-2xl bg-slate-800 px-4 py-3 shadow-lg">
-      <span class="text-center text-xs font-medium uppercase tracking-wider text-slate-400">Hours</span>
-      <span class="text-center text-3xl font-semibold tabular-nums leading-none md:text-4xl">{{ hours() }}</span>
+    class="time-sidebar w-full flex-shrink-0 flex flex-col gap-3 p-4 backdrop-blur-sm bg-slate-900/80 text-slate-50 md:static md:w-auto md:self-start md:gap-4 md:bg-slate-900/60">
+    <div class="flex flex-row gap-3 md:gap-4">
+      <div class="time-block flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-2xl bg-slate-800 px-4 py-3 shadow-lg">
+        <span class="text-center text-xs font-medium uppercase tracking-wider text-slate-400">Hours</span>
+        <span class="text-center text-3xl font-semibold tabular-nums leading-none md:text-4xl">{{ hours() }}</span>
+      </div>
+      <div class="time-block flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-2xl bg-slate-800 px-4 py-3 shadow-lg">
+        <span class="text-center text-xs font-medium uppercase tracking-wider text-slate-400">Minutes</span>
+        <span class="text-center text-3xl font-semibold tabular-nums leading-none md:text-4xl">{{ minutes() }}</span>
+      </div>
+      <div class="time-block flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-2xl bg-slate-800 px-4 py-3 shadow-lg">
+        <span class="text-center text-xs font-medium uppercase tracking-wider text-slate-400">Seconds</span>
+        <span class="text-center text-3xl font-semibold tabular-nums leading-none md:text-4xl">{{ seconds() }}</span>
+      </div>
     </div>
-    <div class="time-block flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-2xl bg-slate-800 px-4 py-3 shadow-lg">
-      <span class="text-center text-xs font-medium uppercase tracking-wider text-slate-400">Minutes</span>
-      <span class="text-center text-3xl font-semibold tabular-nums leading-none md:text-4xl">{{ minutes() }}</span>
+    <div class="time-date-row w-full rounded-2xl bg-slate-800 px-4 py-3 shadow-lg flex items-center justify-center gap-2 text-slate-200">
+      <span class="text-lg font-semibold tabular-nums md:text-xl">{{ formattedDate() }}</span>
+      <span class="text-sm md:text-base text-slate-400">{{ weekday() }}</span>
     </div>
-    <div class="time-block time-block-seconds flex min-w-0 flex-1 flex-col items-center justify-center gap-1 rounded-2xl bg-slate-800 px-4 py-3 shadow-lg">
-      <span class="text-center text-xs font-medium uppercase tracking-wider text-slate-400">Seconds</span>
-      <span class="text-center text-3xl font-semibold tabular-nums leading-none md:text-4xl">{{ seconds() }}</span>
-      <span class="text-center text-xs leading-snug text-slate-300">{{ weekday() }}</span>
+    <div class="time-week-row w-full rounded-2xl bg-slate-800 px-4 py-3 shadow-lg flex items-center justify-center text-slate-400 text-sm md:text-base">
+      {{ 'HABITS_WEEK' | translate }} {{ weekNumber() }} {{ 'HABITS_WEEK_OF' | translate }} {{ totalWeeksInYear() }}
     </div>
   </aside>
 
-  <!-- Main content -->
-  <main class="habits-tracker-content flex min-h-0 flex-1 flex-col pt-4 px-4 md:pt-8 md:px-8 pb-8 md:pb-10 md:overflow-y-auto">
-    <div class="habits-tabs-wrapper">
-      <!-- User tabs row: scrollable area + add user button always visible -->
-      <div class="habits-tabs-row">
-        <mat-tab-group
-          class="habits-tab-group habits-tab-group-scroll"
-          [selectedIndex]="selectedTabIndex()"
-          (selectedIndexChange)="onUserTabChange($event)">
-          @for (user of users(); track user.id) {
-            <mat-tab>
-              <ng-template mat-tab-label>
-                <div class="habits-tab-label-inner flex items-center gap-2">
-                  @if (editingUserId() === user.id) {
-                    <input
-                      type="text"
-                      class="habits-tracker-tab-input min-w-[80px] rounded border border-slate-300 bg-transparent px-2 py-0.5 text-sm focus:outline-none focus:ring-2 dark:border-slate-600"
-                      [value]="user.name"
-                      (blur)="saveUserName(user.id, $any($event.target).value)"
-                      (keydown.enter)="saveUserName(user.id, $any($event.target).value); $event.preventDefault()"
-                      (keydown.escape)="editingUserId.set(null)"
-                      (click)="$event.stopPropagation()" />
-                  } @else {
-                    <span
-                      class="habits-tab-label-text cursor-default px-1"
-                      (dblclick)="startEditUser(user.id, $event)">
-                      {{ user.name }}
-                    </span>
-                  }
-                  <button
-                    mat-icon-button
-                    type="button"
-                    (click)="deleteUser(user.id); $event.stopPropagation()"
-                    [disabled]="users().length === 1">
-                    <mat-icon>close</mat-icon>
-                  </button>
+  <!-- Main content: tabs fixed at top, only the area below scrolls -->
+  <main class="habits-tracker-content flex min-h-0 flex-1 flex-col overflow-hidden">
+    <div class="habits-tabs-wrapper flex-shrink-0 pt-4 px-4 md:pt-8 md:px-8">
+      <!-- Users row: scroll container (arrows + viewport) + add button, space-between -->
+      <div class="habits-tabs-row habits-tabs-row-main">
+        <div class="habits-tabs-scroll-container">
+          <button
+            type="button"
+            class="habits-scroll-arrow habits-scroll-arrow-left"
+            [class.habits-scroll-arrow-hidden]="users().length <= 2"
+            [disabled]="users().length > 2 && !canScrollUsersLeft()"
+            (click)="scrollUsersLeft()"
+            [attr.aria-label]="'Previous'">
+            <mat-icon>chevron_left</mat-icon>
+          </button>
+          <div
+            #userScrollViewport
+            class="habits-tabs-viewport"
+            [style.width.px]="viewportWidth"
+            (scroll)="onUserViewportScroll()">
+            <div
+              class="habits-tabs-list"
+              [style.width.px]="users().length * tabItemWidth">
+              @for (user of users(); track user.id) {
+                <div
+                  class="habits-tab-item"
+                  role="tab"
+                  tabindex="0"
+                  [class.habits-tab-item-active]="activeUserId() === user.id"
+                  (click)="setActiveUser(user.id)"
+                  (keydown.enter)="setActiveUser(user.id)"
+                  (keydown.space)="setActiveUser(user.id); $event.preventDefault()">
+                  <div class="habits-tab-label-inner flex items-center gap-1">
+                    @if (editingUserId() === user.id) {
+                      <input
+                        type="text"
+                        class="habits-tracker-tab-input flex-1 min-w-0 rounded border border-slate-300 bg-transparent px-1 py-0.5 text-sm focus:outline-none focus:ring-2 dark:border-slate-600"
+                        [value]="user.name"
+                        (blur)="saveUserName(user.id, $any($event.target).value)"
+                        (keydown.enter)="saveUserName(user.id, $any($event.target).value); $event.preventDefault()"
+                        (keydown.escape)="editingUserId.set(null)"
+                        (click)="$event.stopPropagation()" />
+                    } @else {
+                      <span
+                        class="habits-tab-label-text truncate cursor-default px-0.5"
+                        (dblclick)="startEditUser(user.id, $event)">
+                        {{ user.name }}
+                      </span>
+                    }
+                    <button
+                      mat-icon-button
+                      type="button"
+                      (click)="deleteUser(user.id); $event.stopPropagation()"
+                      [disabled]="users().length === 1"
+                      class="!flex !items-center !justify-center !min-w-0 !w-7 !h-7">
+                      <mat-icon>close</mat-icon>
+                    </button>
+                  </div>
                 </div>
-              </ng-template>
-            </mat-tab>
-          }
-        </mat-tab-group>
+              }
+            </div>
+          </div>
+          <button
+            type="button"
+            class="habits-scroll-arrow habits-scroll-arrow-right"
+            [class.habits-scroll-arrow-hidden]="users().length <= 2"
+            [disabled]="users().length > 2 && !canScrollUsersRight()"
+            (click)="scrollUsersRight()"
+            [attr.aria-label]="'Next'">
+            <mat-icon>chevron_right</mat-icon>
+          </button>
+        </div>
         @if (users().length < maxUsers) {
           <button
             mat-icon-button
             type="button"
             class="habits-tab-add-btn"
+            [disabled]="!canAddUser()"
             (click)="addUser()"
             [attr.aria-label]="'HABITS_ADD_USER' | translate">
             <mat-icon>add</mat-icon>
@@ -70,51 +110,82 @@
         }
       </div>
 
-      <!-- Section (tracker) tabs row: scrollable area + add tracker button always visible -->
-      <div class="habits-tabs-row">
-        <mat-tab-group
-          class="habits-tab-group habits-tracker-tabs habits-tab-group-scroll"
-          [selectedIndex]="selectedSectionTabIndex()"
-          (selectedIndexChange)="onSectionTabChange($event)">
-          @for (section of currentSections(); track section.id) {
-            <mat-tab>
-              <ng-template mat-tab-label>
-                <div class="habits-tab-label-inner flex items-center gap-1">
-                  @if (editingSectionId() === section.id) {
-                    <input
-                      type="text"
-                      class="habits-tracker-tab-input min-w-[120px] rounded border border-slate-300 bg-transparent px-2 py-0.5 text-sm focus:outline-none focus:ring-2 dark:border-slate-600"
-                      [value]="section.title"
-                      (blur)="saveSectionTitle(section.id, $any($event.target).value)"
-                      (keydown.enter)="saveSectionTitle(section.id, $any($event.target).value); $event.preventDefault()"
-                      (keydown.escape)="editingSectionId.set(null)"
-                      (click)="$event.stopPropagation()" />
-                  } @else {
-                    <span
-                      class="habits-tab-label-text cursor-default px-1"
-                      (dblclick)="startEditSection(section.id, $event)">
-                      {{ section.title }}
-                    </span>
-                  }
-                  <button
-                    type="button"
-                    mat-icon-button
-                    (click)="deleteSection(section.id, $event)"
-                    [disabled]="currentSections().length === 1"
-                    [attr.aria-label]="'HABITS_DELETE_TRACKER' | translate"
-                    class="habits-tab-close !min-w-0 !w-8 !h-8 opacity-70 hover:opacity-100 disabled:pointer-events-none disabled:opacity-40">
-                    <mat-icon>close</mat-icon>
-                  </button>
+      <!-- Sections (trackers) row: same layout -->
+      <div class="habits-tabs-row habits-tabs-row-main">
+        <div class="habits-tabs-scroll-container">
+          <button
+            type="button"
+            class="habits-scroll-arrow habits-scroll-arrow-left"
+            [class.habits-scroll-arrow-hidden]="currentSections().length <= 2"
+            [disabled]="currentSections().length > 2 && !canScrollSectionsLeft()"
+            (click)="scrollSectionsLeft()"
+            [attr.aria-label]="'Previous'">
+            <mat-icon>chevron_left</mat-icon>
+          </button>
+          <div
+            #sectionScrollViewport
+            class="habits-tabs-viewport"
+            [style.width.px]="viewportWidth"
+            (scroll)="onSectionViewportScroll()">
+            <div
+              class="habits-tabs-list"
+              [style.width.px]="currentSections().length * tabItemWidth">
+              @for (section of currentSections(); track section.id) {
+                <div
+                  class="habits-tab-item"
+                  role="tab"
+                  tabindex="0"
+                  [class.habits-tab-item-active]="activeSectionId() === section.id"
+                  (click)="setActiveSection(section.id)"
+                  (keydown.enter)="setActiveSection(section.id)"
+                  (keydown.space)="setActiveSection(section.id); $event.preventDefault()">
+                  <div class="habits-tab-label-inner flex items-center gap-1">
+                    @if (editingSectionId() === section.id) {
+                      <input
+                        type="text"
+                        class="habits-tracker-tab-input flex-1 min-w-0 rounded border border-slate-300 bg-transparent px-1 py-0.5 text-sm focus:outline-none focus:ring-2 dark:border-slate-600"
+                        [value]="section.title"
+                        (blur)="saveSectionTitle(section.id, $any($event.target).value)"
+                        (keydown.enter)="saveSectionTitle(section.id, $any($event.target).value); $event.preventDefault()"
+                        (keydown.escape)="editingSectionId.set(null)"
+                        (click)="$event.stopPropagation()" />
+                    } @else {
+                      <span
+                        class="habits-tab-label-text truncate cursor-default px-0.5"
+                        (dblclick)="startEditSection(section.id, $event)">
+                        {{ section.title }}
+                      </span>
+                    }
+                    <button
+                      type="button"
+                      mat-icon-button
+                      (click)="deleteSection(section.id, $event)"
+                      [disabled]="currentSections().length === 1"
+                      [attr.aria-label]="'HABITS_DELETE_TRACKER' | translate"
+                      class="habits-tab-close !flex !min-w-0 !w-7 !h-7 !items-center !justify-center opacity-70 hover:opacity-100 disabled:pointer-events-none disabled:opacity-40">
+                      <mat-icon>close</mat-icon>
+                    </button>
+                  </div>
                 </div>
-              </ng-template>
-            </mat-tab>
-          }
-        </mat-tab-group>
+              }
+            </div>
+          </div>
+          <button
+            type="button"
+            class="habits-scroll-arrow habits-scroll-arrow-right"
+            [class.habits-scroll-arrow-hidden]="currentSections().length <= 2"
+            [disabled]="currentSections().length > 2 && !canScrollSectionsRight()"
+            (click)="scrollSectionsRight()"
+            [attr.aria-label]="'Next'">
+            <mat-icon>chevron_right</mat-icon>
+          </button>
+        </div>
         @if (currentSections().length < maxSections) {
           <button
             mat-icon-button
             type="button"
             class="habits-tab-add-btn"
+            [disabled]="!canAddSection()"
             (click)="addSection()"
             [attr.aria-label]="'HABITS_ADD_TRACKER' | translate">
             <mat-icon>add</mat-icon>
@@ -123,8 +194,35 @@
       </div>
     </div>
 
-    <header class="habits-content-start mb-6 mt-6 flex items-center justify-between gap-4">
-      <h1 class="text-2xl font-semibold md:text-3xl">{{ 'HABITS_TITLE' | translate }}</h1>
+    <div class="habits-scrollable-content flex min-h-0 flex-1 flex-col overflow-y-auto pt-4 px-4 pb-8 md:pt-4 md:px-8 md:pb-10">
+    <header class="habits-content-start mb-6 mt-6 flex flex-wrap items-center justify-between gap-4">
+      <div class="flex flex-wrap items-center gap-3">
+        <h1 class="text-2xl font-semibold md:text-3xl">
+          {{ 'HABITS_TITLE' | translate }} / {{ selectedMonthName() }}
+        </h1>
+        <div class="flex items-center gap-2">
+          <label for="habits-year-select" class="text-sm font-medium text-slate-500 dark:text-slate-400">{{ 'HABITS_YEAR' | translate }}</label>
+          <select
+            id="habits-year-select"
+            [ngModel]="selectedYear()"
+            (ngModelChange)="selectedYear.set(+$event)"
+            class="habits-year-month-select rounded border border-slate-300 bg-white px-2 py-1.5 text-sm dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200">
+            @for (y of years(); track y) {
+              <option [value]="y">{{ y }}</option>
+            }
+          </select>
+          <label for="habits-month-select" class="text-sm font-medium text-slate-500 dark:text-slate-400">{{ 'HABITS_MONTH' | translate }}</label>
+          <select
+            id="habits-month-select"
+            [ngModel]="selectedMonth()"
+            (ngModelChange)="selectedMonth.set(+$event)"
+            class="habits-year-month-select rounded border border-slate-300 bg-white px-2 py-1.5 text-sm dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200">
+            @for (m of monthNumbers; track m) {
+              <option [value]="m">{{ 'HABITS_MONTH_' + m | translate }}</option>
+            }
+          </select>
+        </div>
+      </div>
       <button
         type="button"
         mat-raised-button
@@ -139,16 +237,16 @@
         <table class="daily-habits-table min-w-full border-collapse">
           <thead>
             <tr class="border-b border-slate-200 dark:border-slate-700">
-              <th class="w-10 px-2 py-2"></th>
-              <th class="px-3 py-2 text-left text-xs font-semibold text-slate-500 dark:text-slate-400">
+              <th class="habits-table-col-drag w-10 px-2 py-2"></th>
+              <th class="habits-table-col-habit px-3 py-2 text-left text-xs font-semibold text-slate-500 dark:text-slate-400">
                 Habit
               </th>
-              @for (dayKey of weekDaysShortKeys; track dayKey) {
-                <th class="px-2 py-2 text-center text-xs font-semibold text-slate-500 dark:text-slate-400">
-                  {{ dayKey | translate }}
+              @for (day of daysInMonthArray(); track day) {
+                <th class="habits-table-col-day px-1 py-2 text-center text-xs font-semibold text-slate-500 dark:text-slate-400 min-w-[2.25rem]">
+                  {{ day }}
                 </th>
               }
-              <th class="px-3 py-2 text-left text-xs font-semibold text-slate-500 dark:text-slate-400">
+              <th class="habits-table-col-progress px-3 py-2 text-left text-xs font-semibold text-slate-500 dark:text-slate-400 min-w-[140px]">
                 {{ 'HABITS_PROGRESS' | translate }}
               </th>
             </tr>
@@ -162,7 +260,7 @@
               <tr
                 cdkDrag
                 class="border-b border-slate-100 dark:border-slate-700/60 hover:bg-slate-100/60 dark:hover:bg-slate-700/40">
-                <td class="w-10 px-2 py-3 align-middle">
+                <td class="habits-table-col-drag w-10 px-2 py-3 align-middle">
                   <button
                     type="button"
                     mat-icon-button
@@ -172,7 +270,7 @@
                     <mat-icon>drag_indicator</mat-icon>
                   </button>
                 </td>
-                <td class="px-3 py-3 align-middle">
+                <td class="habits-table-col-habit px-3 py-3 align-middle">
                   <div class="flex items-center gap-2">
                     <input
                       matInput
@@ -189,23 +287,23 @@
                     </button>
                   </div>
                 </td>
-                @for (day of weekDaysShort; track day; let i = $index) {
-                  <td class="px-2 py-3 text-center align-middle">
+                @for (day of daysInMonthArray(); track day) {
+                  <td class="habits-table-col-day px-1 py-3 text-center align-middle">
                     <mat-checkbox
                       color="primary"
-                      [checked]="habit.days[i]"
-                      (change)="onToggleDay(habit.id, i, $event.checked)">
+                      [checked]="getCheck(habit, day)"
+                      (change)="onToggleDate(habit.id, day, $event.checked)">
                     </mat-checkbox>
                   </td>
                 }
-                <td class="px-3 py-3 align-middle min-w-[140px]">
+                <td class="habits-table-col-progress px-3 py-3 align-middle min-w-[140px]">
                   <div class="flex items-center gap-3">
                     <mat-progress-bar
                       class="flex-1"
                       mode="determinate"
-                      [value]="habit.progress">
+                      [value]="getProgressForMonth(habit)">
                     </mat-progress-bar>
-                    <span class="text-xs font-medium w-10 text-right">{{ habit.progress }}%</span>
+                    <span class="text-xs font-medium w-10 text-right">{{ getProgressForMonth(habit) }}%</span>
                   </div>
                 </td>
               </tr>
@@ -214,7 +312,7 @@
               <tr>
                 <td
                   class="px-3 py-6 text-center text-sm text-slate-500 dark:text-slate-400"
-                  colspan="11">
+                  [attr.colspan]="4 + daysInSelectedMonth()">
                   {{ 'HABITS_EMPTY_HINT' | translate }}
                 </td>
               </tr>
@@ -223,5 +321,38 @@
         </table>
       </div>
     </section>
+
+    <!-- Progress diagram: X of Y and % with color (red -> green) by progress so far (up to today) -->
+    @if (habits().length > 0 && possibleDaysInSelectedMonth() > 0) {
+      <section class="progress-diagram-section mt-4 rounded-2xl border border-slate-200/60 dark:border-slate-700 bg-slate-50/80 dark:bg-slate-800/70 p-4 shadow-sm">
+        <h2 class="progress-diagram-title text-sm font-semibold text-slate-600 dark:text-slate-400 mb-2">
+          {{ 'HABITS_PROGRESS_CHART' | translate }}
+        </h2>
+        <ul class="progress-diagram-list flex flex-col gap-2">
+          @for (habit of habits(); track habit.id) {
+            @let soFar = getProgressSoFar(habit);
+            <li class="progress-diagram-row flex items-center gap-3">
+              <span class="progress-diagram-name truncate text-sm text-slate-700 dark:text-slate-300 text-center">{{ habit.name || ('HABITS_NEW_HABIT_PLACEHOLDER' | translate) }}</span>
+              <div
+                class="progress-diagram-bar flex-1 min-w-0 h-6 rounded overflow-hidden bg-slate-200 dark:bg-slate-700 flex items-center justify-center"
+                [attr.aria-label]="soFar.percent + '%'">
+                <div
+                  class="progress-diagram-fill h-full rounded transition-[width] duration-300 absolute left-0 top-0"
+                  [class]="getProgressColorClass(soFar.percent)"
+                  [style.width.%]="soFar.percent">
+                </div>
+                <span class="progress-diagram-bar-label relative z-10 text-sm font-semibold tabular-nums">
+                  {{ soFar.percent }}%
+                </span>
+              </div>
+              <span class="progress-diagram-count shrink-0 text-sm font-medium text-slate-600 dark:text-slate-400 tabular-nums text-center min-w-[7rem]">
+                {{ soFar.checked }} / {{ soFar.possible }} {{ 'HABITS_POSSIBLE_DAYS' | translate }}
+              </span>
+            </li>
+          }
+        </ul>
+      </section>
+    }
+    </div>
   </main>
 </div>

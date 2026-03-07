@@ -1,8 +1,11 @@
 import {
+  AfterViewInit,
   ChangeDetectionStrategy,
   Component,
   DestroyRef,
+  ElementRef,
   HostListener,
+  ViewChild,
   computed,
   effect,
   inject,
@@ -13,7 +16,6 @@ import { MatCheckboxModule } from '@angular/material/checkbox';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { MatButtonModule } from '@angular/material/button';
 import { MatInputModule } from '@angular/material/input';
-import { MatTabsModule } from '@angular/material/tabs';
 import { MatIconModule } from '@angular/material/icon';
 import { FormsModule } from '@angular/forms';
 import { DragDropModule, CdkDragDrop, moveItemInArray } from '@angular/cdk/drag-drop';
@@ -24,6 +26,8 @@ export interface Habit {
   name: string;
   days: boolean[];
   progress: number;
+  /** Checked by date key YYYY-MM-DD for calendar view */
+  checks: Record<string, boolean>;
 }
 
 export interface HabitSection {
@@ -68,6 +72,10 @@ const WEEKDAYS = [
 const MORNING_SECTION_ID = 'morning';
 const MAX_USERS = 5;
 const MAX_SECTIONS = 5;
+const TAB_ITEM_WIDTH_PX = 300;
+const HABITS_VIEWPORT_WIDTH_PX = 600;
+const HABITS_SCROLL_STEP_PX = 600;
+const HABITS_SCROLL_EDGE_THRESHOLD_PX = 2;
 
 @Component({
   selector: 'app-daily-habits',
@@ -77,7 +85,6 @@ const MAX_SECTIONS = 5;
     MatProgressBarModule,
     MatButtonModule,
     MatInputModule,
-    MatTabsModule,
     MatIconModule,
     FormsModule,
     DragDropModule,
@@ -87,10 +94,24 @@ const MAX_SECTIONS = 5;
   styleUrls: ['./daily-habits.component.scss'],
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
-export class DailyHabitsComponent {
+export class DailyHabitsComponent implements AfterViewInit {
   readonly maxUsers = MAX_USERS;
   readonly maxSections = MAX_SECTIONS;
+  readonly tabItemWidth = TAB_ITEM_WIDTH_PX;
+  readonly viewportWidth = HABITS_VIEWPORT_WIDTH_PX;
   readonly users = signal<HabitUser[]>([]);
+
+  @ViewChild('userScrollViewport') userScrollViewport?: ElementRef<HTMLDivElement>;
+  @ViewChild('sectionScrollViewport') sectionScrollViewport?: ElementRef<HTMLDivElement>;
+
+  readonly canScrollUsersLeft = signal(false);
+  readonly canScrollUsersRight = signal(false);
+  readonly canScrollSectionsLeft = signal(false);
+  readonly canScrollSectionsRight = signal(false);
+
+  readonly selectedYear = signal<number>(new Date().getFullYear());
+  readonly selectedMonth = signal<number>(new Date().getMonth() + 1);
+
   readonly activeUserId = signal<HabitUserId | null>(null);
   readonly activeSectionId = signal<string | null>(null);
   readonly editingSectionId = signal<string | null>(null);
@@ -107,6 +128,18 @@ export class DailyHabitsComponent {
   readonly minutes = computed(() => this.now().getMinutes().toString().padStart(2, '0'));
   readonly seconds = computed(() => this.now().getSeconds().toString().padStart(2, '0'));
   readonly weekday = computed(() => WEEKDAYS[this.now().getDay()]);
+  readonly formattedDate = computed(() => {
+    const d = this.now();
+    const day = d.getDate().toString().padStart(2, '0');
+    const month = (d.getMonth() + 1).toString().padStart(2, '0');
+    return `${day}.${month}.${d.getFullYear()}`;
+  });
+  readonly weekNumber = computed(() => this.getISOWeek(this.now()));
+  readonly totalWeeksInYear = computed(() => {
+    const d = this.now();
+    const dec31 = new Date(d.getFullYear(), 11, 31);
+    return this.getISOWeek(dec31);
+  });
 
   readonly activeUser = computed(
     () => this.users().find((u) => u.id === this.activeUserId()) ?? null,
@@ -126,16 +159,23 @@ export class DailyHabitsComponent {
   });
   readonly habits = computed(() => this.currentSection().habits);
 
-  readonly weekDaysShort = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-  readonly weekDaysShortKeys = [
-    'HABITS_DAY_MON',
-    'HABITS_DAY_TUE',
-    'HABITS_DAY_WED',
-    'HABITS_DAY_THU',
-    'HABITS_DAY_FRI',
-    'HABITS_DAY_SAT',
-    'HABITS_DAY_SUN',
-  ];
+  readonly years = computed(() => {
+    const current = new Date().getFullYear();
+    return [current - 2, current - 1, current, current + 1, current + 2];
+  });
+  readonly monthNumbers = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+  readonly selectedMonthName = computed(() =>
+    this.translate.instant('HABITS_MONTH_' + this.selectedMonth()),
+  );
+  readonly daysInSelectedMonth = computed(() => {
+    const y = this.selectedYear();
+    const m = this.selectedMonth();
+    return new Date(y, m, 0).getDate();
+  });
+  readonly daysInMonthArray = computed(() => {
+    const n = this.daysInSelectedMonth();
+    return Array.from({ length: n }, (_, i) => i + 1);
+  });
 
   private readonly translate = inject(TranslateService);
   private timerId: ReturnType<typeof setInterval> | null = null;
@@ -190,14 +230,130 @@ export class DailyHabitsComponent {
     event.preventDefault();
   }
 
-  onUserTabChange(index: number): void {
-    const u = this.users();
-    const user = u[index];
+  setActiveUser(userId: HabitUserId): void {
+    const user = this.users().find((u) => u.id === userId);
     if (user) {
       this.activeUserId.set(user.id);
       const firstSection = user.store.sections[0];
       this.activeSectionId.set(firstSection?.id ?? null);
     }
+  }
+
+  setActiveSection(sectionId: string): void {
+    this.activeSectionId.set(sectionId);
+  }
+
+  lastUserHasDefaultName(): boolean {
+    const u = this.users();
+    if (u.length === 0) return false;
+    const last = u[u.length - 1];
+    return last.name === `Пользователь ${u.length}`;
+  }
+
+  lastSectionHasDefaultTitle(): boolean {
+    const sections = this.currentSections();
+    if (sections.length === 0) return false;
+    const last = sections[sections.length - 1];
+    return last.title === this.translate.instant('HABITS_ADD_TRACKER');
+  }
+
+  canAddUser(): boolean {
+    return this.users().length < MAX_USERS && !this.lastUserHasDefaultName();
+  }
+
+  canAddSection(): boolean {
+    return this.currentSections().length < MAX_SECTIONS && !this.lastSectionHasDefaultTitle();
+  }
+
+  updateUsersScrollState(): void {
+    const el = this.userScrollViewport?.nativeElement;
+    if (!el) return;
+    const { scrollLeft, scrollWidth, clientWidth } = el;
+    const maxScroll = scrollWidth - clientWidth;
+    this.canScrollUsersLeft.set(scrollLeft > HABITS_SCROLL_EDGE_THRESHOLD_PX);
+    this.canScrollUsersRight.set(maxScroll > HABITS_SCROLL_EDGE_THRESHOLD_PX && scrollLeft < maxScroll - HABITS_SCROLL_EDGE_THRESHOLD_PX);
+  }
+
+  updateSectionsScrollState(): void {
+    const el = this.sectionScrollViewport?.nativeElement;
+    if (!el) return;
+    const { scrollLeft, scrollWidth, clientWidth } = el;
+    const maxScroll = scrollWidth - clientWidth;
+    this.canScrollSectionsLeft.set(scrollLeft > HABITS_SCROLL_EDGE_THRESHOLD_PX);
+    this.canScrollSectionsRight.set(maxScroll > HABITS_SCROLL_EDGE_THRESHOLD_PX && scrollLeft < maxScroll - HABITS_SCROLL_EDGE_THRESHOLD_PX);
+  }
+
+  onUserViewportScroll(): void {
+    this.updateUsersScrollState();
+  }
+
+  onSectionViewportScroll(): void {
+    this.updateSectionsScrollState();
+  }
+
+  scrollUsersLeft(): void {
+    if (!this.canScrollUsersLeft()) return;
+    const el = this.userScrollViewport?.nativeElement;
+    if (!el) return;
+    const target = Math.max(0, el.scrollLeft - HABITS_SCROLL_STEP_PX);
+    el.scrollTo({ left: target, behavior: 'smooth' });
+    setTimeout(() => this.updateUsersScrollState(), 350);
+  }
+
+  scrollUsersRight(): void {
+    if (!this.canScrollUsersRight()) return;
+    const el = this.userScrollViewport?.nativeElement;
+    if (!el) return;
+    const maxScroll = el.scrollWidth - el.clientWidth;
+    const target = Math.min(maxScroll, el.scrollLeft + HABITS_SCROLL_STEP_PX);
+    el.scrollTo({ left: target, behavior: 'smooth' });
+    setTimeout(() => this.updateUsersScrollState(), 350);
+  }
+
+  scrollSectionsLeft(): void {
+    if (!this.canScrollSectionsLeft()) return;
+    const el = this.sectionScrollViewport?.nativeElement;
+    if (!el) return;
+    const target = Math.max(0, el.scrollLeft - HABITS_SCROLL_STEP_PX);
+    el.scrollTo({ left: target, behavior: 'smooth' });
+    setTimeout(() => this.updateSectionsScrollState(), 350);
+  }
+
+  scrollSectionsRight(): void {
+    if (!this.canScrollSectionsRight()) return;
+    const el = this.sectionScrollViewport?.nativeElement;
+    if (!el) return;
+    const maxScroll = el.scrollWidth - el.clientWidth;
+    const target = Math.min(maxScroll, el.scrollLeft + HABITS_SCROLL_STEP_PX);
+    el.scrollTo({ left: target, behavior: 'smooth' });
+    setTimeout(() => this.updateSectionsScrollState(), 350);
+  }
+
+  ngAfterViewInit(): void {
+    setTimeout(() => {
+      this.updateUsersScrollState();
+      this.updateSectionsScrollState();
+    }, 0);
+  }
+
+  private scrollUserViewportToEnd(): void {
+    setTimeout(() => {
+      const el = this.userScrollViewport?.nativeElement;
+      if (el) {
+        el.scrollTo({ left: el.scrollWidth - el.clientWidth, behavior: 'smooth' });
+        setTimeout(() => this.updateUsersScrollState(), 350);
+      }
+    }, 0);
+  }
+
+  private scrollSectionViewportToEnd(): void {
+    setTimeout(() => {
+      const el = this.sectionScrollViewport?.nativeElement;
+      if (el) {
+        el.scrollTo({ left: el.scrollWidth - el.clientWidth, behavior: 'smooth' });
+        setTimeout(() => this.updateSectionsScrollState(), 350);
+      }
+    }, 0);
   }
 
   addUser(): void {
@@ -209,6 +365,7 @@ export class DailyHabitsComponent {
     this.activeUserId.set(id);
     const firstSection = store.sections[0];
     this.activeSectionId.set(firstSection?.id ?? null);
+    this.scrollUserViewportToEnd();
   }
 
   deleteUser(userId: HabitUserId): void {
@@ -220,6 +377,7 @@ export class DailyHabitsComponent {
     const nextId = list[nextIndex]?.id ?? null;
     this.users.update((l) => l.filter((u) => u.id !== userId));
     this.activeUserId.set(nextId);
+    setTimeout(() => this.updateUsersScrollState(), 0);
   }
 
   addHabit(): void {
@@ -228,6 +386,7 @@ export class DailyHabitsComponent {
       name: '',
       days: Array(DAYS_IN_WEEK).fill(false),
       progress: 0,
+      checks: {},
     };
     const sectionId = this.currentSection().id;
     const uid = this.activeUserId();
@@ -267,10 +426,62 @@ export class DailyHabitsComponent {
     );
   }
 
-  onToggleDay(habitId: string, dayIndex: number, checked: boolean): void {
+  getDateKey(day: number): string {
+    const y = this.selectedYear();
+    const m = this.selectedMonth();
+    return `${y}-${String(m).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  }
+
+  getCheck(habit: Habit, day: number): boolean {
+    const key = this.getDateKey(day);
+    return !!habit.checks?.[key];
+  }
+
+  getProgressForMonth(habit: Habit): number {
+    const daysInMonth = this.daysInSelectedMonth();
+    let checked = 0;
+    for (let d = 1; d <= daysInMonth; d++) {
+      if (this.getCheck(habit, d)) checked++;
+    }
+    return daysInMonth === 0 ? 0 : Math.round((checked / daysInMonth) * 100);
+  }
+
+  /** Number of days that count for "progress so far": up to today in current month, or full month in the past. */
+  possibleDaysInSelectedMonth(): number {
+    const y = this.selectedYear();
+    const m = this.selectedMonth();
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    const currentMonth = now.getMonth() + 1;
+    const daysInMonth = this.daysInSelectedMonth();
+    if (y > currentYear || (y === currentYear && m > currentMonth)) return 0;
+    if (y < currentYear || (y === currentYear && m < currentMonth)) return daysInMonth;
+    return now.getDate();
+  }
+
+  /** Progress so far: checked count in 1..possibleDays, and percent. Used for the diagram below the table. */
+  getProgressSoFar(habit: Habit): { checked: number; possible: number; percent: number } {
+    const possible = this.possibleDaysInSelectedMonth();
+    let checked = 0;
+    for (let d = 1; d <= possible; d++) {
+      if (this.getCheck(habit, d)) checked++;
+    }
+    const percent = possible === 0 ? 0 : Math.round((checked / possible) * 100);
+    return { checked, possible, percent };
+  }
+
+  /** CSS class for progress color: red (low) -> yellow (mid) -> green (high). */
+  getProgressColorClass(percent: number): string {
+    if (percent >= 67) return 'progress-diagram-color-high';
+    if (percent >= 34) return 'progress-diagram-color-mid';
+    return 'progress-diagram-color-low';
+  }
+
+  onToggleDate(habitId: string, day: number, checked: boolean): void {
     const uid = this.activeUserId();
     const sectionId = this.currentSection().id;
     if (!uid) return;
+    const dateKey = this.getDateKey(day);
     this.users.update((users) =>
       users.map((u) => {
         if (u.id !== uid) return u;
@@ -278,10 +489,9 @@ export class DailyHabitsComponent {
           if (s.id !== sectionId) return s;
           const habits = s.habits.map((h) => {
             if (h.id !== habitId) return h;
-            const days = [...h.days];
-            days[dayIndex] = checked;
-            const progress = this.recalcProgress(days);
-            return { ...h, days, progress };
+            const checks = { ...(h.checks ?? {}), [dateKey]: checked };
+            const progress = this.getProgressForMonth({ ...h, checks });
+            return { ...h, checks, progress };
           });
           return { ...s, habits };
         });
@@ -350,11 +560,6 @@ export class DailyHabitsComponent {
     return idx < 0 ? 0 : idx;
   }
 
-  onSectionTabChange(index: number): void {
-    const sections = this.currentSections();
-    const section = sections[index];
-    if (section) this.activeSectionId.set(section.id);
-  }
 
   startEditSection(sectionId: string, event: Event): void {
     event.stopPropagation();
@@ -410,6 +615,7 @@ export class DailyHabitsComponent {
       }),
     );
     this.activeSectionId.set(id);
+    this.scrollSectionViewportToEnd();
   }
 
   deleteSection(sectionId: string, event: Event): void {
@@ -430,6 +636,17 @@ export class DailyHabitsComponent {
       }),
     );
     if (this.activeSectionId() === sectionId) this.activeSectionId.set(nextSectionId);
+    setTimeout(() => this.updateSectionsScrollState(), 0);
+  }
+
+  /** ISO week number (1–52 or 1–53) for the given date */
+  private getISOWeek(date: Date): number {
+    const d = new Date(date.getTime());
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() + 4 - (d.getDay() || 7));
+    const jan1 = new Date(d.getFullYear(), 0, 1);
+    const diff = d.getTime() - jan1.getTime();
+    return 1 + Math.round(diff / (7 * 24 * 60 * 60 * 1000));
   }
 
   private startClock(): void {
@@ -491,11 +708,14 @@ export class DailyHabitsComponent {
           Array.isArray(h.days) && h.days.length === DAYS_IN_WEEK
             ? h.days.map((d) => !!d)
             : Array(DAYS_IN_WEEK).fill(false);
+        const checks =
+          h.checks && typeof h.checks === 'object' && !Array.isArray(h.checks) ? { ...h.checks } : {};
         return {
           id: typeof h.id === 'string' ? h.id : `habit-${i}`,
           name: typeof h.name === 'string' ? h.name : '',
           days,
           progress: this.recalcProgress(days),
+          checks,
         };
       }),
     }));
@@ -540,6 +760,7 @@ export class DailyHabitsComponent {
         name,
         days,
         progress: this.recalcProgress(days),
+        checks: {},
       };
     });
     return {
