@@ -1,0 +1,50 @@
+<article class="q-card" [class]="'status-' + status()" [class.expanded]="expanded()">
+  <header class="q-head">
+    <div class="q-meta">
+      <span class="badge" [class]="levelClass()">{{ question().level }}</span>
+      @for (tag of question().tags; track tag) {
+        <span class="tag">#{{ tag }}</span>
+      }
+      <span class="q-id">{{ question().id }}</span>
+    </div>
+
+    <button
+      type="button"
+      class="q-row"
+      (click)="toggle()"
+      [attr.aria-expanded]="expanded()">
+      <span class="q-text">{{ question().question[locale()] }}</span>
+      <span class="q-toggle" aria-hidden="true">{{ expanded() ? '−' : '+' }}</span>
+    </button>
+
+    <div class="q-progress">
+      <button
+        type="button"
+        class="status-btn learning"
+        [class.active]="status() === 'learning'"
+        (click)="setStatus('learning', $event)">
+        {{ 'INT_STATUS_LEARNING' | translate }}
+      </button>
+      <button
+        type="button"
+        class="status-btn known"
+        [class.active]="status() === 'known'"
+        (click)="setStatus('known', $event)">
+        {{ 'INT_STATUS_KNOWN' | translate }}
+      </button>
+    </div>
+  </header>
+
+  @if (expanded()) {
+    <div class="q-body">
+      <div class="q-answer" [innerHTML]="question().answer[locale()] | markdown"></div>
+
+      @if (question().codeSnippet; as snippet) {
+        <div class="q-snippet">
+          <div class="q-snippet-label">{{ 'INT_CODE_EXAMPLE' | translate }}</div>
+          <pre><code>{{ snippet }}</code></pre>
+        </div>
+      }
+    </div>
+  }
+</article>

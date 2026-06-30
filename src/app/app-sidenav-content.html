@@ -1,4 +1,5 @@
 <div class="sidenav-content">
+  @if (!interviewOnly) {
   <mat-accordion class="sidenav-accordion" displayMode="flat">
     <mat-expansion-panel [expanded]="isOnTopicsRoute()">
       <mat-expansion-panel-header>
@@ -38,7 +39,16 @@
       </mat-accordion>
     </mat-expansion-panel>
   </mat-accordion>
+  }
   <mat-nav-list>
+    <a
+      mat-list-item
+      routerLink="/interview"
+      routerLinkActive="active"
+      (click)="onNavClick()">
+      {{ 'NAV_INTERVIEW' | translate }}
+    </a>
+    @if (!interviewOnly) {
     <a
       mat-list-item
       routerLink="/practice"
@@ -60,5 +70,6 @@
       (click)="onNavClick()">
       {{ 'NAV_FLASHCARDS' | translate }}
     </a>
+    }
   </mat-nav-list>
 </div>

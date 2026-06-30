@@ -1,6 +1,14 @@
 import { Routes } from '@angular/router';
+import { environment } from '../environments/environment';
 
-export const routes: Routes = [
+const interviewRoute = {
+  path: 'interview',
+  loadChildren: () =>
+    import('./features/interview/interview.routes').then(m => m.interviewRoutes)
+};
+
+/** Full app — all features (used locally / non-deployed builds). */
+const fullRoutes: Routes = [
   { path: '', redirectTo: 'topics', pathMatch: 'full' },
   {
     path: 'topics',
@@ -10,6 +18,7 @@ export const routes: Routes = [
     path: 'habits',
     loadChildren: () => import('./features/habits/habits.routes').then(m => m.habitsRoutes)
   },
+  interviewRoute,
   {
     path: 'practice',
     loadChildren: () => import('./features/practice/practice.routes').then(m => m.practiceRoutes)
@@ -20,3 +29,12 @@ export const routes: Routes = [
       import('./features/flashcards/flashcards.routes').then(m => m.flashcardsRoutes)
   }
 ];
+
+/** Deployed build — only the Interview feature is reachable. */
+const interviewOnlyRoutes: Routes = [
+  { path: '', redirectTo: 'interview', pathMatch: 'full' },
+  interviewRoute,
+  { path: '**', redirectTo: 'interview' }
+];
+
+export const routes: Routes = environment.interviewOnly ? interviewOnlyRoutes : fullRoutes;

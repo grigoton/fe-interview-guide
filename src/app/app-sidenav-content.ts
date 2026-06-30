@@ -7,6 +7,7 @@ import { MatListModule } from '@angular/material/list';
 import { MatExpansionModule } from '@angular/material/expansion';
 import { TranslateModule } from '@ngx-translate/core';
 import { TOPICS } from './features/topics/topic-nav.data';
+import { environment } from '../environments/environment';
 
 @Component({
   selector: 'app-sidenav-content',
@@ -20,6 +21,9 @@ export class AppSidenavContent {
   private readonly router = inject(Router);
 
   navClick = output<void>();
+
+  /** Deployed build hides every nav entry except Interview. */
+  protected readonly interviewOnly = environment.interviewOnly;
 
   protected readonly topics = signal(TOPICS);
 
