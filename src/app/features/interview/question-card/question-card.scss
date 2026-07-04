@@ -147,62 +147,102 @@
 }
 
 .q-answer {
-  color: var(--text-secondary);
-  line-height: 1.6;
-  font-size: 0.95rem;
+  color: var(--text-primary);
+  line-height: 1.75;
+  font-size: 1.02rem;
+  max-width: 72ch;
 
-  :where(h2, h3, h4) {
+  // Section headings (## ) — the primary structure markers. A soft divider
+  // above each makes the "Простыми словами / детали / подводные камни /
+  // запомни" blocks visually distinct and easy to scan.
+  :where(h2) {
     color: var(--text-primary);
-    margin: 1rem 0 0.4rem;
-    font-size: 1rem;
+    font-size: 1.12rem;
+    font-weight: 700;
+    line-height: 1.35;
+    margin: 1.6rem 0 0.7rem;
+    padding-top: 1rem;
+    border-top: 1px solid color-mix(in srgb, var(--text-secondary) 18%, transparent);
+  }
+
+  // The first section is always the plain-language intro — highlight it as a
+  // friendly callout and drop the divider/top padding so it reads as the lead.
+  :where(h2:first-child) {
+    margin-top: 0.2rem;
+    padding-top: 0;
+    border-top: none;
+    color: var(--text-primary);
+  }
+
+  :where(h3) {
+    color: var(--text-primary);
+    font-size: 1.02rem;
+    font-weight: 650;
+    margin: 1.1rem 0 0.4rem;
+  }
+
+  :where(h4) {
+    color: var(--text-primary);
+    font-size: 0.96rem;
+    font-weight: 600;
+    margin: 0.9rem 0 0.35rem;
   }
 
   :where(p) {
-    margin: 0.5rem 0;
+    margin: 0.65rem 0;
   }
 
   :where(ul, ol) {
-    margin: 0.5rem 0;
-    padding-left: 1.4rem;
+    margin: 0.65rem 0;
+    padding-left: 1.5rem;
   }
 
   :where(li) {
-    margin: 0.2rem 0;
+    margin: 0.35rem 0;
+    line-height: 1.65;
+  }
+
+  :where(li)::marker {
+    color: color-mix(in srgb, var(--text-secondary) 75%, transparent);
   }
 
   :where(strong) {
     color: var(--text-primary);
+    font-weight: 700;
   }
 
   :where(code) {
     font-family: ui-monospace, monospace;
-    font-size: 0.85em;
+    font-size: 0.86em;
     background: color-mix(in srgb, var(--text-primary) 10%, transparent);
-    padding: 0.1rem 0.35rem;
+    padding: 0.12rem 0.38rem;
     border-radius: 5px;
   }
 
   :where(blockquote) {
-    margin: 0.6rem 0;
-    padding: 0.3rem 0.9rem;
-    border-left: 3px solid color-mix(in srgb, var(--text-primary) 30%, transparent);
+    margin: 0.8rem 0;
+    padding: 0.55rem 1rem;
+    background: color-mix(in srgb, var(--text-secondary) 8%, transparent);
+    border-left: 3px solid color-mix(in srgb, var(--text-primary) 35%, transparent);
+    border-radius: 0 8px 8px 0;
     color: var(--text-secondary);
   }
 
   :where(pre.md-code) {
-    margin: 0.75rem 0;
-    padding: 0.9rem 1rem;
+    margin: 0.9rem 0;
+    padding: 1rem 1.1rem;
     overflow-x: auto;
     background: color-mix(in srgb, var(--background) 90%, var(--text-primary));
     border: 1px solid color-mix(in srgb, var(--text-secondary) 18%, transparent);
-    border-radius: 8px;
+    border-radius: 10px;
+    line-height: 1.55;
 
     code {
       background: none;
       padding: 0;
       white-space: pre;
       color: var(--text-primary);
-      font-size: 0.82rem;
+      font-size: 0.85rem;
     }
   }
 }

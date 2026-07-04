@@ -11,44 +11,15 @@ export const ANGULAR_CORE_QUESTIONS_MORE: InterviewQuestion[] = [
       en: 'How do functional HTTP interceptors work, and how do you build auth, retry and caching with them?',
     },
     answer: {
-      ru: `## Функциональные интерсепторы
+      ru: `## 🧩 Простыми словами
 
-С Angular 15 интерсепторы — это **обычные функции** \`HttpInterceptorFn\`, а не классы с DI через конструктор. Регистрируются через \`provideHttpClient(withInterceptors([...]))\`. Внутри функции можно вызывать \`inject()\`, потому что она выполняется в injection-контексте.
+Представь, что каждый HTTP-запрос из твоего приложения проходит через череду «контрольных постов» по пути на сервер и обратно. Интерсептор — это такой пост: он может посмотреть запрос, что-то в него добавить (например, пропуск-токен), а на обратном пути осмотреть ответ или поймать ошибку. В новом Angular эти посты — просто маленькие функции, а не громоздкие классы.
 
-\`\`\`ts
-export const authInterceptor: HttpInterceptorFn = (req, next) => {
-  const token = inject(AuthService).token();
-  const authReq = token
-    ? req.clone({ setHeaders: { Authorization: \`Bearer \${token}\` } })
-    : req;
-  return next(authReq);
-};
-\`\`\`
+### Что такое функциональный интерсептор
 
-\`req\` **иммутабелен** — нужно \`req.clone()\`. \`next\` — это следующий обработчик в цепочке; интерсепторы выполняются в порядке регистрации, ответ идёт в обратном порядке.
+Начиная с Angular 15, интерсептор — это **обычная функция** типа \`HttpInterceptorFn\`, а не класс с зависимостями через конструктор. Ты регистрируешь их списком через \`provideHttpClient(withInterceptors([...]))\`.
 
-## Retry
-
-Оборачиваем поток в RxJS-операторы. \`retry\` с \`delay\` даёт экспоненциальный backoff:
-
-\`\`\`ts
-export const retryInterceptor: HttpInterceptorFn = (req, next) =>
-  next(req).pipe(retry({ count: 3, delay: (_, i) => timer(2 ** i * 300) }));
-\`\`\`
-
-## Кэширование
-
-Храним \`Map<url, HttpResponse>\` (например, в сервисе) и для GET возвращаем \`of(cached)\` вместо запроса, иначе пропускаем дальше и кэшируем через \`tap\`.
-
-## Нюансы
-
-- \`withInterceptorsFromDi()\` нужен для совместимости со старыми классовыми \`HTTP_INTERCEPTORS\`.
-- Порядок важен: auth обычно первым, logging — крайним.
-- Интерсепторы видят и \`HttpResponse\`, и ошибки — можно централизованно ловить 401 и редиректить на логин.
-- Функциональный стиль проще тестировать и tree-shake'ить.`,
-      en: `## Functional interceptors
-
-Since Angular 15 interceptors are **plain functions** of type \`HttpInterceptorFn\`, not classes with constructor DI. They are registered via \`provideHttpClient(withInterceptors([...]))\`. Inside the function you can call \`inject()\` because it runs in an injection context.
+Функция получает два аргумента: \`req\` (запрос) и \`next\` (следующий пост в цепочке). Внутри можно вызвать \`inject()\`, чтобы достать любой сервис — потому что функция выполняется в так называемом injection-контексте (месте, где Angular знает, как выдавать зависимости).
 
 \`\`\`ts
 export const authInterceptor: HttpInterceptorFn = (req, next) => {
@@ -60,27 +31,116 @@ export const authInterceptor: HttpInterceptorFn = (req, next) => {
 };
 \`\`\`
 
-\`req\` is **immutable** — you must \`req.clone()\`. \`next\` is the next handler in the chain; interceptors run in registration order, the response flows back in reverse.
+Здесь мы достаём токен и, если он есть, добавляем заголовок \`Authorization\`. Обрати внимание: \`req\` **иммутабелен** (его нельзя менять напрямую), поэтому мы делаем \`req.clone()\` — создаём копию с изменениями. В конце вызываем \`next(authReq)\`, чтобы передать запрос дальше.
 
-## Retry
+### Порядок выполнения
 
-Wrap the stream in RxJS operators. \`retry\` with \`delay\` gives exponential backoff:
+\`next\` — это следующий обработчик в цепочке. Интерсепторы выполняются в том порядке, в котором ты их зарегистрировал, а ответ идёт обратно в **обратном** порядке — как стопка тарелок: положил первой, снял последней.
+
+### Retry (повтор при ошибке)
+
+Так как \`next(req)\` возвращает поток (Observable), мы можем навесить на него RxJS-операторы. \`retry\` с настройкой \`delay\` даёт экспоненциальный backoff — то есть каждая следующая попытка ждёт всё дольше, чтобы не долбить упавший сервер:
 
 \`\`\`ts
 export const retryInterceptor: HttpInterceptorFn = (req, next) =>
   next(req).pipe(retry({ count: 3, delay: (_, i) => timer(2 ** i * 300) }));
 \`\`\`
 
-## Caching
+До 3 повторов, пауза \`2^i * 300\` мс растёт с каждой попыткой (300, 600, 1200 мс).
 
-Keep a \`Map<url, HttpResponse>\` (e.g. in a service) and for GETs return \`of(cached)\` instead of a request, otherwise pass through and cache via \`tap\`.
+### Кэширование
 
-## Nuances
+Держим \`Map<url, HttpResponse>\` (например, в сервисе). Для GET-запросов, если ответ уже лежит в кэше, возвращаем его через \`of(cached)\` вместо реального запроса. Иначе пропускаем запрос дальше и по пути сохраняем ответ через оператор \`tap\`.
 
-- \`withInterceptorsFromDi()\` is needed for compatibility with legacy class-based \`HTTP_INTERCEPTORS\`.
-- Order matters: auth usually first, logging usually last.
-- Interceptors see both \`HttpResponse\` and errors — you can centrally catch 401 and redirect to login.
-- The functional style is easier to test and tree-shake.`,
+### Регистрация
+
+\`\`\`ts
+bootstrapApplication(App, {
+  providers: [
+    provideHttpClient(
+      withInterceptors([authInterceptor, retryInterceptor, cacheInterceptor]),
+    ),
+  ],
+});
+\`\`\`
+
+## ⚠️ Подводные камни
+
+- Забыл \`req.clone()\` и пытаешься менять \`req\` напрямую — не сработает, запрос иммутабелен.
+- Порядок важен: auth обычно ставят первым, logging — крайним.
+- \`withInterceptorsFromDi()\` нужен, только если у тебя остались старые классовые интерсепторы на токене \`HTTP_INTERCEPTORS\`.
+
+## 🎯 Запомни
+
+- Интерсептор — это функция \`(req, next) => Observable\`, регистрируется через \`withInterceptors([...])\`.
+- \`req\` иммутабелен: меняешь только через \`req.clone()\`.
+- Интерсепторы видят и успешный \`HttpResponse\`, и ошибки — удобно централизованно ловить 401 и редиректить на логин.
+- Функциональный стиль проще тестировать и tree-shake'ить (выкидывать неиспользуемый код при сборке).`,
+      en: `## 🧩 In plain words
+
+Imagine every HTTP request from your app passing through a series of "checkpoints" on its way to the server and back. An interceptor is one of those checkpoints: it can look at the request, add something to it (like an access token), and on the way back inspect the response or catch an error. In modern Angular these checkpoints are just small functions, not bulky classes.
+
+### What a functional interceptor is
+
+Since Angular 15, an interceptor is a **plain function** of type \`HttpInterceptorFn\`, not a class with constructor dependencies. You register them as a list via \`provideHttpClient(withInterceptors([...]))\`.
+
+The function gets two arguments: \`req\` (the request) and \`next\` (the next checkpoint in the chain). Inside you can call \`inject()\` to grab any service — because the function runs in an injection context (a place where Angular knows how to hand out dependencies).
+
+\`\`\`ts
+export const authInterceptor: HttpInterceptorFn = (req, next) => {
+  const token = inject(AuthService).token();
+  const authReq = token
+    ? req.clone({ setHeaders: { Authorization: \`Bearer \${token}\` } })
+    : req;
+  return next(authReq);
+};
+\`\`\`
+
+Here we grab the token and, if present, add the \`Authorization\` header. Note: \`req\` is **immutable** (you can't change it in place), so we use \`req.clone()\` — make a copy with the changes. Finally we call \`next(authReq)\` to pass the request onward.
+
+### Execution order
+
+\`next\` is the next handler in the chain. Interceptors run in the order you registered them, and the response flows back in **reverse** order — like a stack of plates: first one down, last one up.
+
+### Retry
+
+Since \`next(req)\` returns a stream (an Observable), we can attach RxJS operators to it. \`retry\` with a \`delay\` gives exponential backoff — each next attempt waits longer, so you don't hammer a failing server:
+
+\`\`\`ts
+export const retryInterceptor: HttpInterceptorFn = (req, next) =>
+  next(req).pipe(retry({ count: 3, delay: (_, i) => timer(2 ** i * 300) }));
+\`\`\`
+
+Up to 3 retries, and the pause \`2^i * 300\` ms grows each attempt (300, 600, 1200 ms).
+
+### Caching
+
+Keep a \`Map<url, HttpResponse>\` (e.g. in a service). For GET requests, if the answer is already in the cache, return it via \`of(cached)\` instead of a real request. Otherwise pass the request through and store the response along the way using the \`tap\` operator.
+
+### Registration
+
+\`\`\`ts
+bootstrapApplication(App, {
+  providers: [
+    provideHttpClient(
+      withInterceptors([authInterceptor, retryInterceptor, cacheInterceptor]),
+    ),
+  ],
+});
+\`\`\`
+
+## ⚠️ Common pitfalls
+
+- Forgetting \`req.clone()\` and trying to mutate \`req\` directly won't work — the request is immutable.
+- Order matters: auth usually goes first, logging usually last.
+- \`withInterceptorsFromDi()\` is only needed if you still have old class-based interceptors on the \`HTTP_INTERCEPTORS\` token.
+
+## 🎯 Key takeaways
+
+- An interceptor is a function \`(req, next) => Observable\`, registered via \`withInterceptors([...])\`.
+- \`req\` is immutable: change it only through \`req.clone()\`.
+- Interceptors see both the successful \`HttpResponse\` and errors — handy for centrally catching 401 and redirecting to login.
+- The functional style is easier to test and tree-shake (drop unused code at build time).`,
     },
     codeSnippet: `bootstrapApplication(App, {
   providers: [
@@ -100,9 +160,13 @@ Keep a \`Map<url, HttpResponse>\` (e.g. in a service) and for GETs return \`of(c
       en: 'How do you set up global error handling via ErrorHandler, and how does it differ from HTTP-level handling?',
     },
     answer: {
-      ru: `## ErrorHandler
+      ru: `## 🧩 Простыми словами
 
-Angular предоставляет токен \`ErrorHandler\` — единую точку для **необработанных** ошибок: исключения в lifecycle-хуках, обработчиках событий, асинхронном коде внутри зоны. По умолчанию он просто пишет в \`console.error\`. Подменяя его, вы централизуете логирование (Sentry и т.п.).
+Представь приложение как здание. HTTP-обработка ошибок — это охрана на входной двери, которая ловит проблемы только с «посылками» (запросами к серверу). А \`ErrorHandler\` — это дежурный на всё здание: он ловит любую аварию, где бы она ни случилась, если её никто другой не поймал. Это последний рубеж, чтобы приложение не рухнуло молча.
+
+### Что такое ErrorHandler
+
+Angular даёт токен \`ErrorHandler\` — единую точку для **необработанных** ошибок: исключений в lifecycle-хуках (методах жизненного цикла компонента), в обработчиках событий, в асинхронном коде внутри зоны Angular. По умолчанию он просто пишет ошибку в \`console.error\`. Подменив его своим классом, ты централизуешь логирование — например, отправку в Sentry.
 
 \`\`\`ts
 @Injectable()
@@ -117,21 +181,33 @@ export class GlobalErrorHandler implements ErrorHandler {
 // providers: [{ provide: ErrorHandler, useClass: GlobalErrorHandler }]
 \`\`\`
 
-## Отличие от HTTP-перехвата
+Здесь мы показываем пользователю уведомление и логируем ошибку. Регистрируем через провайдер, который говорит Angular использовать наш класс вместо стандартного.
 
-- **HTTP-интерсептор / catchError** ловит только ошибки сети: статусы 4xx/5xx, таймауты. Здесь логично делать retry, обновление токена, маппинг в доменные ошибки.
-- **ErrorHandler** ловит **всё остальное**: \`TypeError\`, ошибки рендеринга, неперехваченные \`throw\`. Это последний рубеж.
+### Чем отличается от HTTP-перехвата
 
-## Нюансы
+- **HTTP-интерсептор / \`catchError\`** ловит только ошибки сети: статусы 4xx/5xx, таймауты. Именно здесь логично делать retry (повтор), обновление токена, маппинг в доменные ошибки (перевод «500» в понятное «сервис недоступен»).
+- **\`ErrorHandler\`** ловит **всё остальное**: \`TypeError\`, ошибки рендеринга, неперехваченные \`throw\`. Это последний рубеж, куда падает то, что не поймали раньше.
 
-- \`handleError\` выполняется **внутри** Angular-зоны — навигация и обновление UI из него работают, но осторожно с повторными ошибками (риск цикла).
-- В zoneless-режиме всё так же: ошибки в CD/эффектах попадают в \`ErrorHandler\`.
-- Промисы, отклонённые **вне** зоны, могут не дойти — нужен глобальный \`window.onunhandledrejection\`.
-- Не глотайте ошибку молча: всегда логируйте, иначе отладка станет невозможной.
-- Для SSR используйте отдельную стратегию — на сервере нет \`window\`/уведомлений.`,
-      en: `## ErrorHandler
+## ⚠️ Подводные камни
 
-Angular provides the \`ErrorHandler\` token — a single point for **unhandled** errors: exceptions in lifecycle hooks, event handlers, async code inside the zone. By default it just writes to \`console.error\`. By overriding it you centralize logging (Sentry, etc.).
+- \`handleError\` выполняется **внутри** Angular-зоны, поэтому навигация и обновление UI из него работают. Но осторожно с ошибками внутри самого обработчика — можно словить бесконечный цикл.
+- В zoneless-режиме (без Zone.js) всё так же: ошибки в change detection и эффектах попадают в \`ErrorHandler\`.
+- Промисы, отклонённые **вне** зоны Angular, могут до него не дойти — для них нужен глобальный \`window.onunhandledrejection\`.
+- Никогда не глотай ошибку молча: всегда логируй, иначе отладка станет невозможной.
+- Для SSR (рендеринга на сервере) нужна отдельная стратегия — там нет \`window\` и всплывающих уведомлений.
+
+## 🎯 Запомни
+
+- \`ErrorHandler\` — глобальная «сеть безопасности» для всех необработанных ошибок; переопределяешь его через провайдер.
+- HTTP-перехват — про сетевые ошибки и повторы; \`ErrorHandler\` — про всё остальное (последний рубеж).
+- Логируй всегда, но берегись цикла из-за ошибок внутри самого обработчика.`,
+      en: `## 🧩 In plain words
+
+Picture your app as a building. HTTP error handling is the guard at the front door who only catches problems with "packages" (requests to the server). \`ErrorHandler\`, on the other hand, is the caretaker for the whole building: it catches any incident, wherever it happens, if nobody else caught it. It's the last line of defence so the app doesn't crash silently.
+
+### What ErrorHandler is
+
+Angular provides the \`ErrorHandler\` token — a single point for **unhandled** errors: exceptions in lifecycle hooks (component lifecycle methods), in event handlers, in async code inside the Angular zone. By default it just writes the error to \`console.error\`. By overriding it with your own class, you centralize logging — for example, sending to Sentry.
 
 \`\`\`ts
 @Injectable()
@@ -146,18 +222,26 @@ export class GlobalErrorHandler implements ErrorHandler {
 // providers: [{ provide: ErrorHandler, useClass: GlobalErrorHandler }]
 \`\`\`
 
-## Difference from HTTP handling
+Here we show the user a notification and log the error. We register it via a provider that tells Angular to use our class instead of the default one.
 
-- An **HTTP interceptor / catchError** only catches network errors: 4xx/5xx statuses, timeouts. That is where retry, token refresh and mapping to domain errors belong.
-- \`ErrorHandler\` catches **everything else**: \`TypeError\`, render errors, uncaught \`throw\`. It is the last line of defence.
+### How it differs from HTTP handling
 
-## Nuances
+- An **HTTP interceptor / \`catchError\`** only catches network errors: 4xx/5xx statuses, timeouts. This is exactly where retry, token refresh and mapping to domain errors (turning a "500" into a friendly "service unavailable") belong.
+- \`ErrorHandler\` catches **everything else**: \`TypeError\`, render errors, uncaught \`throw\`. It's the last line of defence for whatever wasn't caught earlier.
 
-- \`handleError\` runs **inside** the Angular zone — navigation and UI updates from it work, but beware re-entrant errors (loop risk).
-- In zoneless mode it is the same: errors in CD/effects reach \`ErrorHandler\`.
-- Promises rejected **outside** the zone may not arrive — you need a global \`window.onunhandledrejection\`.
+## ⚠️ Common pitfalls
+
+- \`handleError\` runs **inside** the Angular zone, so navigation and UI updates from it work. But beware of errors inside the handler itself — you can trigger an infinite loop.
+- In zoneless mode (no Zone.js) it's the same: errors in change detection and effects reach \`ErrorHandler\`.
+- Promises rejected **outside** the Angular zone may not arrive here — for those you need a global \`window.onunhandledrejection\`.
 - Never swallow an error silently: always log, or debugging becomes impossible.
-- For SSR use a separate strategy — there is no \`window\`/notifications on the server.`,
+- For SSR (server-side rendering) you need a separate strategy — there's no \`window\` or pop-up notifications there.
+
+## 🎯 Key takeaways
+
+- \`ErrorHandler\` is the global "safety net" for all unhandled errors; you override it via a provider.
+- HTTP handling is about network errors and retries; \`ErrorHandler\` is about everything else (the last line of defence).
+- Always log, but watch out for a loop caused by errors inside the handler itself.`,
     },
     codeSnippet: `@Injectable()
 export class GlobalErrorHandler implements ErrorHandler {
@@ -177,9 +261,13 @@ export class GlobalErrorHandler implements ErrorHandler {
       en: 'What is APP_INITIALIZER / provideAppInitializer for, and how does it affect app startup?',
     },
     answer: {
-      ru: `## Назначение
+      ru: `## 🧩 Простыми словами
 
-\`APP_INITIALIZER\` — это hook, который выполняется **до** того, как Angular отрендерит корневой компонент. Если фабрика возвращает \`Promise\` или \`Observable\`, Angular **дожидается** его завершения. Используется для критичных задач старта: загрузка runtime-конфига, фиче-флагов, локали, проверки сессии.
+Иногда приложению нужно что-то подготовить до того, как показать первый экран: загрузить настройки, узнать, какие фичи включены, проверить, залогинен ли пользователь. \`APP_INITIALIZER\` — это как «прогрев двигателя» перед поездкой: Angular ждёт, пока эта подготовка закончится, и только потом рисует интерфейс.
+
+### Назначение
+
+\`APP_INITIALIZER\` — это hook (точка подключения), который выполняется **до** того, как Angular отрендерит корневой компонент. Если фабрика возвращает \`Promise\` или \`Observable\` (асинхронный результат), Angular **дожидается** его завершения. Используется для критичных задач старта: загрузки runtime-конфига (настроек, которые известны только во время работы), фиче-флагов, локали, проверки сессии.
 
 \`\`\`ts
 // классический multi-провайдер
@@ -191,9 +279,11 @@ export class GlobalErrorHandler implements ErrorHandler {
 }
 \`\`\`
 
-## provideAppInitializer (Angular 19+)
+\`multi: true\` означает, что таких инициализаторов может быть несколько, и Angular соберёт их все. \`deps\` перечисляет зависимости, которые нужно передать в фабрику.
 
-Новый функциональный API без \`multi\`/\`deps\`-боилерплейта; внутри работает \`inject()\`:
+### provideAppInitializer (Angular 19+)
+
+Новый функциональный API без боилерплейта с \`multi\`/\`deps\`; внутри работает \`inject()\`, поэтому зависимости достаются прямо в теле функции:
 
 \`\`\`ts
 provideAppInitializer(() => {
@@ -202,20 +292,32 @@ provideAppInitializer(() => {
 });
 \`\`\`
 
-## Как влияет на старт
+Тот же смысл, но короче и чище.
 
-- Все инициализаторы (это multi-токен) запускаются **параллельно**, бутстрап ждёт **все** \`Promise\`.
-- Долгий инициализатор задерживает первый рендер — кладите туда только то, что **обязано** быть готово до UI.
-- Ошибка/reject в инициализаторе **прерывает** бутстрап — приложение не стартует.
+### Как влияет на старт
 
-## Нюансы
+- Все инициализаторы (это multi-токен, их может быть много) запускаются **параллельно**, а бутстрап ждёт завершения **всех** \`Promise\`.
+- Долгий инициализатор задерживает первый рендер — клади туда только то, что **обязано** быть готово до появления UI.
+- Ошибка или reject в инициализаторе **прерывает** бутстрап — приложение просто не стартует.
 
-- Для конфига часто комбинируют с фабрикой \`InjectionToken\`, чтобы значения были доступны синхронно везде.
-- Не путать с \`ENVIRONMENT_INITIALIZER\`: тот выполняется при создании EnvironmentInjector (раньше и для каждого инжектора), без ожидания async.
-- В SSR инициализаторы выполняются и на сервере — учитывайте отсутствие \`window\`.`,
-      en: `## Purpose
+## ⚠️ Подводные камни
 
-\`APP_INITIALIZER\` is a hook that runs **before** Angular renders the root component. If the factory returns a \`Promise\` or \`Observable\`, Angular **waits** for it to settle. Used for critical startup tasks: loading runtime config, feature flags, locale, session checks.
+- Не путай с \`ENVIRONMENT_INITIALIZER\`: тот выполняется при создании EnvironmentInjector (раньше и для каждого инжектора) и **не ждёт** асинхронную работу.
+- Для конфига часто комбинируют с фабрикой \`InjectionToken\`, чтобы загруженные значения были доступны синхронно во всём приложении.
+- В SSR инициализаторы выполняются и на сервере — учитывай отсутствие \`window\`.
+
+## 🎯 Запомни
+
+- \`APP_INITIALIZER\` / \`provideAppInitializer\` откладывает первый рендер, пока не завершится подготовка (например, загрузка конфига).
+- Angular ждёт все инициализаторы; их ошибка прерывает старт приложения.
+- Клади туда только по-настоящему обязательное — иначе замедлишь запуск.`,
+      en: `## 🧩 In plain words
+
+Sometimes an app needs to prepare something before it shows the first screen: load settings, find out which features are enabled, check whether the user is logged in. \`APP_INITIALIZER\` is like "warming up the engine" before a drive: Angular waits for this prep to finish, and only then draws the interface.
+
+### Purpose
+
+\`APP_INITIALIZER\` is a hook (a plug-in point) that runs **before** Angular renders the root component. If the factory returns a \`Promise\` or \`Observable\` (an async result), Angular **waits** for it to settle. Used for critical startup tasks: loading runtime config (settings only known at run time), feature flags, locale, session checks.
 
 \`\`\`ts
 // classic multi-provider
@@ -227,9 +329,11 @@ provideAppInitializer(() => {
 }
 \`\`\`
 
-## provideAppInitializer (Angular 19+)
+\`multi: true\` means there can be several such initializers, and Angular will collect them all. \`deps\` lists the dependencies to pass into the factory.
 
-A new functional API without \`multi\`/\`deps\` boilerplate; \`inject()\` works inside:
+### provideAppInitializer (Angular 19+)
+
+A new functional API without the \`multi\`/\`deps\` boilerplate; \`inject()\` works inside, so dependencies are grabbed right in the function body:
 
 \`\`\`ts
 provideAppInitializer(() => {
@@ -238,17 +342,25 @@ provideAppInitializer(() => {
 });
 \`\`\`
 
-## Effect on startup
+Same meaning, but shorter and cleaner.
 
-- All initializers (it is a multi-token) run **in parallel**, bootstrap awaits **all** \`Promise\`s.
-- A slow initializer delays the first render — only put things that **must** be ready before the UI.
-- An error/rejection in an initializer **aborts** bootstrap — the app does not start.
+### Effect on startup
 
-## Nuances
+- All initializers (it's a multi-token, so there can be many) run **in parallel**, and bootstrap awaits **all** the \`Promise\`s.
+- A slow initializer delays the first render — only put things there that **must** be ready before the UI appears.
+- An error or rejection in an initializer **aborts** bootstrap — the app simply doesn't start.
 
-- For config, it is often combined with an \`InjectionToken\` factory so values are synchronously available everywhere.
-- Do not confuse with \`ENVIRONMENT_INITIALIZER\`: that runs when an EnvironmentInjector is created (earlier and per injector), without awaiting async work.
-- In SSR initializers run on the server too — account for the missing \`window\`.`,
+## ⚠️ Common pitfalls
+
+- Don't confuse it with \`ENVIRONMENT_INITIALIZER\`: that runs when an EnvironmentInjector is created (earlier and per injector) and does **not** await async work.
+- For config it's often combined with an \`InjectionToken\` factory so the loaded values are synchronously available across the whole app.
+- In SSR initializers run on the server too — account for the missing \`window\`.
+
+## 🎯 Key takeaways
+
+- \`APP_INITIALIZER\` / \`provideAppInitializer\` delays the first render until the prep (e.g. loading config) finishes.
+- Angular awaits all initializers; an error in one aborts app startup.
+- Only put truly essential work there — otherwise you slow down launch.`,
     },
     codeSnippet: `bootstrapApplication(App, {
   providers: [
@@ -266,56 +378,100 @@ provideAppInitializer(() => {
       en: 'How do ViewEncapsulation Emulated, ShadowDom and None differ, and why is ::ng-deep deprecated?',
     },
     answer: {
-      ru: `## Emulated (по умолчанию)
+      ru: `## 🧩 Простыми словами
 
-Angular **эмулирует** Shadow DOM, не используя его. При компиляции к каждому элементу компонента добавляется уникальный атрибут (\`_ngcontent-xxx\`), а селекторы стилей переписываются с этим атрибутом. Стили компонента не «протекают» наружу, но и **глобальные стили** просачиваются внутрь. Работает везде, без реального Shadow DOM.
+Когда ты пишешь стили для компонента, важный вопрос: останутся ли они «внутри» этого компонента или расползутся на всю страницу? \`ViewEncapsulation\` — это настройка, которая решает, насколько сильно стили компонента изолированы от остального приложения. Представь три варианта: невидимый заборчик (Emulated), настоящая бетонная стена (ShadowDom) или совсем без забора (None).
 
-## ShadowDom
+### Emulated (по умолчанию)
 
-Использует **нативный** Shadow DOM браузера: \`attachShadow\`. Полная изоляция — глобальные стили **не** проникают внутрь, а стили компонента не выходят наружу. Минусы: ломается стилизация снаружи (темы), \`document\`-селекторы и некоторые сторонние библиотеки могут не работать; проекция идёт через нативный \`<slot>\`.
+Angular **эмулирует** (имитирует) Shadow DOM, не используя его по-настоящему. При компиляции к каждому элементу компонента добавляется уникальный атрибут (например, \`_ngcontent-xxx\`), а селекторы стилей переписываются так, чтобы срабатывать только с этим атрибутом. В итоге стили компонента не «протекают» наружу — но **глобальные стили** всё же просачиваются внутрь. Работает в любом браузере, реальный Shadow DOM не нужен.
 
-## None
+### ShadowDom
 
-Стили компонента становятся **глобальными** — добавляются в \`<head>\` без скоупинга. Любой компонент может быть затронут. Применяют осознанно для глобальных тем/ресетов.
+Использует **нативный** (встроенный в браузер) Shadow DOM через \`attachShadow\`. Это полная изоляция: глобальные стили **не** проникают внутрь, а стили компонента не выходят наружу. Минусы: ломается стилизация снаружи (например, темы), \`document\`-селекторы и некоторые сторонние библиотеки могут не работать, а проекция контента идёт через нативный \`<slot>\`.
 
-## ::ng-deep
+### None
 
-\`::ng-deep\` (и старые \`/deep/\`, \`>>>\`) отключает скоупинг для части селектора, позволяя стилю «пробить» границу в дочерние компоненты. Он **deprecated**, потому что это часть устаревшего стандарта Shadow DOM piercing, и в нативном Shadow DOM не работает.
+Стили компонента становятся **глобальными** — добавляются в \`<head>\` без скоупинга (без ограничения области). Любой компонент может быть ими затронут. Применяют осознанно для глобальных тем или ресетов (сброса стилей).
 
-## Современные альтернативы
+### Почему ::ng-deep устарел
 
-- CSS Custom Properties (переменные) — они **наследуются** сквозь любые границы, идеальны для тем.
-- \`::part()\` / \`::slotted()\` для Shadow DOM.
-- Глобальные стили или \`encapsulation: None\` для конкретного дизайн-системного слоя.
+\`::ng-deep\` (и старые \`/deep/\`, \`>>>\`) отключает скоупинг для части селектора, позволяя стилю «пробить» границу и дотянуться до дочерних компонентов. Он **deprecated** (объявлен устаревшим), потому что относится к удалённому из стандарта механизму Shadow DOM piercing и в нативном Shadow DOM просто не работает.
+
+### Современные альтернативы
+
+- CSS Custom Properties (CSS-переменные) — они **наследуются** сквозь любые границы, идеальны для тем.
+- \`::part()\` и \`::slotted()\` — для стилизации содержимого в Shadow DOM.
+- Глобальные стили или \`encapsulation: None\` для конкретного слоя дизайн-системы.
 
 \`\`\`ts
-@Component({ encapsulation: ViewEncapsulation.Emulated })
-\`\`\``,
-      en: `## Emulated (default)
+@Component({
+  selector: 'app-card',
+  encapsulation: ViewEncapsulation.Emulated, // по умолчанию: CSS со скоупингом через атрибут
+  styles: [':host { --card-bg: white; } .body { background: var(--card-bg); }'],
+})
+export class CardComponent {}
+\`\`\`
 
-Angular **emulates** Shadow DOM without using it. At compile time a unique attribute (\`_ngcontent-xxx\`) is added to each component element, and style selectors are rewritten with that attribute. Component styles do not leak out, but **global styles** still seep in. Works everywhere, no real Shadow DOM.
+## ⚠️ Подводные камни
 
-## ShadowDom
+- В Emulated не удивляйся, что глобальные стили влияют на компонент — изоляция односторонняя.
+- ShadowDom даёт настоящую изоляцию, но именно поэтому темы «снаружи» перестают работать — не включай его бездумно.
+- Не тянись к \`::ng-deep\` для новых задач: используй CSS-переменные.
 
-Uses the browser's **native** Shadow DOM: \`attachShadow\`. Full isolation — global styles do **not** penetrate inside, and component styles do not escape. Downsides: external styling (theming) breaks, \`document\` selectors and some third-party libraries may not work; projection goes through native \`<slot>\`.
+## 🎯 Запомни
 
-## None
+- Emulated (по умолчанию) — стили не текут наружу, но глобальные текут внутрь.
+- ShadowDom — полная нативная изоляция в обе стороны, но со своими ограничениями.
+- None — стили становятся глобальными.
+- \`::ng-deep\` устарел; для «пробивания» границ используй CSS Custom Properties.`,
+      en: `## 🧩 In plain words
 
-Component styles become **global** — added to \`<head>\` with no scoping. Any component can be affected. Used deliberately for global themes/resets.
+When you write styles for a component, a key question is: do they stay "inside" that component, or do they spill across the whole page? \`ViewEncapsulation\` is the setting that decides how strongly a component's styles are isolated from the rest of the app. Picture three options: an invisible little fence (Emulated), a real concrete wall (ShadowDom), or no fence at all (None).
 
-## ::ng-deep
+### Emulated (default)
 
-\`::ng-deep\` (and the old \`/deep/\`, \`>>>\`) disables scoping for part of a selector, letting a style "pierce" the boundary into child components. It is **deprecated** because it is part of the removed Shadow DOM piercing spec and does not work in native Shadow DOM.
+Angular **emulates** (imitates) Shadow DOM without actually using it. At compile time a unique attribute (e.g. \`_ngcontent-xxx\`) is added to each component element, and style selectors are rewritten so they only match with that attribute. As a result the component's styles don't "leak" out — but **global styles** still seep in. Works in any browser, no real Shadow DOM needed.
 
-## Modern alternatives
+### ShadowDom
 
-- CSS Custom Properties (variables) — they **inherit** across any boundary, ideal for theming.
-- \`::part()\` / \`::slotted()\` for Shadow DOM.
+Uses the browser's **native** (built-in) Shadow DOM via \`attachShadow\`. This is full isolation: global styles do **not** penetrate inside, and component styles don't escape. Downsides: external styling (like theming) breaks, \`document\` selectors and some third-party libraries may not work, and content projection goes through the native \`<slot>\`.
+
+### None
+
+Component styles become **global** — added to \`<head>\` with no scoping (no area restriction). Any component can be affected. Used deliberately for global themes or resets.
+
+### Why ::ng-deep is deprecated
+
+\`::ng-deep\` (and the old \`/deep/\`, \`>>>\`) disables scoping for part of a selector, letting a style "pierce" the boundary and reach into child components. It is **deprecated** because it belongs to the Shadow DOM piercing mechanism that was removed from the spec, and it simply doesn't work in native Shadow DOM.
+
+### Modern alternatives
+
+- CSS Custom Properties (CSS variables) — they **inherit** across any boundary, ideal for theming.
+- \`::part()\` and \`::slotted()\` — for styling content in Shadow DOM.
 - Global styles or \`encapsulation: None\` for a specific design-system layer.
 
 \`\`\`ts
-@Component({ encapsulation: ViewEncapsulation.Emulated })
-\`\`\``,
+@Component({
+  selector: 'app-card',
+  encapsulation: ViewEncapsulation.Emulated, // default: attribute-scoped CSS
+  styles: [':host { --card-bg: white; } .body { background: var(--card-bg); }'],
+})
+export class CardComponent {}
+\`\`\`
+
+## ⚠️ Common pitfalls
+
+- With Emulated, don't be surprised that global styles affect the component — the isolation is one-way.
+- ShadowDom gives real isolation, but that's exactly why "external" themes stop working — don't enable it thoughtlessly.
+- Don't reach for \`::ng-deep\` for new work: use CSS variables instead.
+
+## 🎯 Key takeaways
+
+- Emulated (default) — styles don't leak out, but global styles leak in.
+- ShadowDom — full native isolation both ways, but with its own limitations.
+- None — styles become global.
+- \`::ng-deep\` is deprecated; use CSS Custom Properties to cross boundaries.`,
     },
     codeSnippet: `@Component({
   selector: 'app-card',
@@ -334,46 +490,16 @@ export class CardComponent {}`,
       en: 'Why use Renderer2, and how does DomSanitizer protect against XSS?',
     },
     answer: {
-      ru: `## Renderer2
+      ru: `## 🧩 Простыми словами
 
-\`Renderer2\` — абстракция над DOM, которая позволяет манипулировать элементами **без прямого обращения** к \`document\`. Зачем:
-- **Platform-agnostic**: работает в SSR (где нет \`document\`), в Web Workers.
-- Совместимо с анимациями и будущими рендер-движками.
+Представь, что твой Angular-код — это гость в чужом доме, а DOM (структура страницы) — это сам дом. \`Renderer2\` — это вежливый посредник: вместо того чтобы самому хватать стены руками (\`document.querySelector\`, \`innerHTML\`), ты просишь посредника внести изменения. Это удобно, потому что тот же код будет работать и там, где дома в привычном виде нет (например, при рендеринге на сервере). А \`DomSanitizer\` — это охранник, который проверяет, не пытается ли кто-то протащить в дом вредоносный код. XSS (Cross-Site Scripting) — это как раз атака, когда злоумышленник подсовывает свой скрипт через данные, и тот выполняется в браузере жертвы.
 
-\`\`\`ts
-const r = inject(Renderer2);
-r.setAttribute(el, 'aria-hidden', 'true');
-r.addClass(el, 'active');
-const unlisten = r.listen(el, 'click', () => {});
-\`\`\`
+### Что такое Renderer2 и зачем он нужен
 
-Прямой \`nativeElement.innerHTML = ...\` — антипаттерн: ломает SSR и открывает XSS.
+\`Renderer2\` — это абстракция (прослойка) над DOM, которая позволяет менять элементы страницы **без прямого обращения** к глобальному объекту \`document\`. Причины использовать его:
 
-## Контекстная санитизация
-
-Angular по умолчанию **санитизирует** все интерполяции и property-биндинги в зависимости от контекста: HTML, STYLE, URL, RESOURCE_URL. Опасный HTML вырезается, \`javascript:\`-URL блокируется. Поэтому \`{{ userInput }}\` безопасен — текст экранируется.
-
-## DomSanitizer
-
-Когда нужно вставить доверенный HTML/URL, Angular требует **явно** пометить значение доверенным:
-
-\`\`\`ts
-const safe = inject(DomSanitizer).bypassSecurityTrustHtml(html);
-// [innerHTML]="safe"
-\`\`\`
-
-\`bypassSecurityTrust*\` — это «escape hatch». Использовать **только** для значений, в безопасности которых вы уверены (не пользовательский ввод), иначе вы сами создаёте XSS.
-
-## Нюансы
-
-- \`[innerHTML]\` проходит санитизацию (\`SecurityContext.HTML\`) — скрипты вырезаются; чтобы вставить как есть, нужен bypass.
-- \`[src]\`/\`[href]\` для ресурсов (\`<iframe>\`) требуют \`RESOURCE_URL\` — его нельзя санитизировать, только bypass.
-- Trusted Types (CSP) усиливают защиту на уровне браузера.`,
-      en: `## Renderer2
-
-\`Renderer2\` is an abstraction over the DOM that lets you manipulate elements **without touching** \`document\` directly. Why:
-- **Platform-agnostic**: works in SSR (no \`document\`), Web Workers.
-- Compatible with animations and future render engines.
+- **Platform-agnostic** (не привязан к платформе): код работает при SSR (Server-Side Rendering — отрисовка на сервере, где объекта \`document\` вообще нет) и в Web Workers (фоновые потоки браузера без доступа к DOM).
+- Совместим с системой анимаций Angular и с будущими движками отрисовки.
 
 \`\`\`ts
 const r = inject(Renderer2);
@@ -382,28 +508,90 @@ r.addClass(el, 'active');
 const unlisten = r.listen(el, 'click', () => {});
 \`\`\`
 
-Direct \`nativeElement.innerHTML = ...\` is an anti-pattern: it breaks SSR and opens XSS.
+Здесь мы через посредника ставим атрибут, добавляем CSS-класс и вешаем обработчик клика. Метод \`listen\` возвращает функцию \`unlisten\`, вызвав которую, ты отписываешься от события.
 
-## Contextual sanitization
+Прямое присваивание \`nativeElement.innerHTML = ...\` — это антипаттерн: оно ломает SSR (на сервере нет DOM) и открывает дыру для XSS.
 
-By default Angular **sanitizes** all interpolations and property bindings depending on context: HTML, STYLE, URL, RESOURCE_URL. Dangerous HTML is stripped, \`javascript:\` URLs are blocked. That is why \`{{ userInput }}\` is safe — text is escaped.
+### Контекстная санитизация — защита по умолчанию
 
-## DomSanitizer
+Санитизация — это очистка данных от опасных частей. Angular по умолчанию **санитизирует** все интерполяции (\`{{ ... }}\`) и property-биндинги в зависимости от **контекста**, куда попадает значение: HTML, STYLE (стили), URL, RESOURCE_URL (адрес ресурса вроде \`<iframe>\`). Опасный HTML вырезается, ссылки вида \`javascript:\` блокируются.
 
-When you need to insert trusted HTML/URL, Angular requires you to **explicitly** mark the value trusted:
+Именно поэтому \`{{ userInput }}\` безопасен: текст экранируется (спецсимволы вроде \`<\` превращаются в безобидные), и вставить скрипт через него нельзя.
+
+### DomSanitizer — ручной пропуск для доверенных значений
+
+Иногда тебе действительно нужно вставить готовый HTML или URL, которому ты доверяешь. Тогда Angular требует **явно** пометить значение доверенным:
 
 \`\`\`ts
 const safe = inject(DomSanitizer).bypassSecurityTrustHtml(html);
 // [innerHTML]="safe"
 \`\`\`
 
-\`bypassSecurityTrust*\` is an "escape hatch". Use it **only** for values you are sure are safe (not user input), otherwise you create the XSS yourself.
+Методы \`bypassSecurityTrust*\` — это «escape hatch» (аварийный люк, обход защиты). Использовать их можно **только** для значений, в безопасности которых ты абсолютно уверен (не пользовательский ввод!). Иначе ты своими руками создаёшь XSS-уязвимость.
 
-## Nuances
+## ⚠️ Подводные камни
 
-- \`[innerHTML]\` is sanitized (\`SecurityContext.HTML\`) — scripts are stripped; to insert verbatim you need bypass.
-- \`[src]\`/\`[href]\` for resources (\`<iframe>\`) require \`RESOURCE_URL\` — which cannot be sanitized, only bypassed.
-- Trusted Types (CSP) strengthen protection at the browser level.`,
+- \`[innerHTML]\` всегда проходит санитизацию (\`SecurityContext.HTML\`) — скрипты вырезаются; чтобы вставить HTML «как есть», нужен bypass.
+- \`[src]\` / \`[href]\` для ресурсов (например, \`<iframe>\`) требуют контекст \`RESOURCE_URL\` — его нельзя санитизировать, можно только сделать bypass, поэтому будь особенно осторожен.
+- \`bypassSecurityTrust*\` с пользовательскими данными = ты сам открыл дверь атаке.
+- Trusted Types (часть механизма CSP — Content Security Policy) усиливают защиту уже на уровне браузера.
+
+## 🎯 Запомни
+
+- \`Renderer2\` = безопасный посредник для работы с DOM, который не ломается на сервере и в Web Workers.
+- Angular по умолчанию санитизирует данные по контексту, поэтому \`{{ }}\` защищён от XSS автоматически.
+- \`bypassSecurityTrust*\` — аварийный обход; применяй только к данным, которым доверяешь, никогда к пользовательскому вводу.`,
+      en: `## 🧩 In plain words
+
+Think of your Angular code as a guest in someone else's house, and the DOM (the page structure) as the house itself. \`Renderer2\` is a polite middleman: instead of grabbing the walls with your own hands (\`document.querySelector\`, \`innerHTML\`), you ask the middleman to make changes. This is handy because the same code also works where the house doesn't exist in its usual form (for example, when rendering on the server). And \`DomSanitizer\` is a security guard who checks whether anyone is trying to smuggle malicious code into the house. XSS (Cross-Site Scripting) is exactly that kind of attack: an attacker slips their script in through data, and it runs in the victim's browser.
+
+### What Renderer2 is and why you need it
+
+\`Renderer2\` is an abstraction (a layer) over the DOM that lets you change page elements **without touching** the global \`document\` object directly. Reasons to use it:
+
+- **Platform-agnostic**: the code works with SSR (Server-Side Rendering — drawing on the server, where the \`document\` object doesn't exist at all) and in Web Workers (background browser threads with no DOM access).
+- Compatible with Angular's animation system and with future render engines.
+
+\`\`\`ts
+const r = inject(Renderer2);
+r.setAttribute(el, 'aria-hidden', 'true');
+r.addClass(el, 'active');
+const unlisten = r.listen(el, 'click', () => {});
+\`\`\`
+
+Here, through the middleman, we set an attribute, add a CSS class, and attach a click handler. The \`listen\` method returns an \`unlisten\` function; calling it unsubscribes from the event.
+
+Direct assignment \`nativeElement.innerHTML = ...\` is an anti-pattern: it breaks SSR (no DOM on the server) and opens an XSS hole.
+
+### Contextual sanitization — protection by default
+
+Sanitization means cleaning data of its dangerous parts. By default Angular **sanitizes** all interpolations (\`{{ ... }}\`) and property bindings depending on the **context** the value lands in: HTML, STYLE, URL, RESOURCE_URL (a resource address like \`<iframe>\`). Dangerous HTML is stripped, and \`javascript:\` URLs are blocked.
+
+This is exactly why \`{{ userInput }}\` is safe: the text is escaped (special characters like \`<\` become harmless), so you can't inject a script through it.
+
+### DomSanitizer — a manual pass for trusted values
+
+Sometimes you genuinely need to insert ready-made HTML or a URL that you trust. In that case Angular requires you to **explicitly** mark the value as trusted:
+
+\`\`\`ts
+const safe = inject(DomSanitizer).bypassSecurityTrustHtml(html);
+// [innerHTML]="safe"
+\`\`\`
+
+The \`bypassSecurityTrust*\` methods are an "escape hatch" (an emergency bypass of the protection). Use them **only** for values whose safety you are absolutely certain of (not user input!). Otherwise you create the XSS vulnerability with your own hands.
+
+## ⚠️ Common pitfalls
+
+- \`[innerHTML]\` always goes through sanitization (\`SecurityContext.HTML\`) — scripts are stripped; to insert HTML verbatim you need a bypass.
+- \`[src]\` / \`[href]\` for resources (e.g. \`<iframe>\`) require the \`RESOURCE_URL\` context — which cannot be sanitized, only bypassed, so be extra careful.
+- \`bypassSecurityTrust*\` with user data = you opened the door to the attack yourself.
+- Trusted Types (part of the CSP — Content Security Policy — mechanism) strengthen protection at the browser level.
+
+## 🎯 Key takeaways
+
+- \`Renderer2\` = a safe middleman for DOM work that doesn't break on the server or in Web Workers.
+- Angular sanitizes data by context by default, so \`{{ }}\` is protected from XSS automatically.
+- \`bypassSecurityTrust*\` is an emergency bypass; apply it only to data you trust, never to user input.`,
     },
     codeSnippet: `@Directive({ selector: '[appHighlight]' })
 export class HighlightDirective {
@@ -424,9 +612,18 @@ export class HighlightDirective {
       en: 'What are ng-container, ngTemplateOutlet and ngComponentOutlet used for?',
     },
     answer: {
-      ru: `## ng-container
+      ru: `## 🧩 Простыми словами
 
-Логический контейнер, который **не создаёт** DOM-элемент. Нужен, чтобы навесить структурную директиву (\`*ngIf\`, \`*ngFor\`, \`@if\` обёртку) или сгруппировать узлы без лишнего \`<div>\`. Особенно полезен, когда нельзя ставить две структурные директивы на один элемент.
+Представь, что ты собираешь страницу из деталей. Иногда тебе нужна невидимая коробка, которая группирует детали, но сама не занимает места на витрине — это \`ng-container\`. Иногда у тебя есть готовый «трафарет» (шаблон), и ты хочешь напечатать его в разных местах с разными данными — это \`ngTemplateOutlet\`. А иногда ты хочешь на лету решить, какой именно готовый блок (компонент) поставить сюда — это \`ngComponentOutlet\`. Все три — инструменты, чтобы гибко управлять тем, что и где появляется на странице.
+
+### ng-container — невидимая обёртка
+
+\`ng-container\` — это логический контейнер, который **не создаёт** реальный DOM-элемент. Он нужен, чтобы:
+
+- навесить структурную директиву (\`*ngIf\`, \`*ngFor\` — директивы, которые добавляют или убирают элементы) без лишнего обёрточного \`<div>\`;
+- сгруппировать несколько узлов, не засоряя разметку.
+
+Особенно полезен, когда на один элемент нельзя повесить сразу две структурные директивы (это запрещено в Angular).
 
 \`\`\`html
 <ng-container *ngIf="user as u">
@@ -434,9 +631,11 @@ export class HighlightDirective {
 </ng-container>
 \`\`\`
 
-## ngTemplateOutlet
+Здесь \`*ngIf\` работает, но в итоговом HTML никакого \`<ng-container>\` не будет — только \`<h2>\`, если условие истинно.
 
-Рендерит \`ng-template\` в заданном месте, с передачей **контекста**. Это механизм переиспользования кусков шаблона и кастомизации компонентов (передача шаблона снаружи).
+### ngTemplateOutlet — печать шаблона с данными
+
+\`ngTemplateOutlet\` рендерит \`ng-template\` (кусок шаблона-заготовки) в заданном месте и передаёт ему **контекст** — набор данных. Это механизм переиспользования кусков разметки и настройки компонентов снаружи (передал свой шаблон — компонент его отрисовал).
 
 \`\`\`html
 <ng-template #row let-item let-i="index">{{ i }}: {{ item }}</ng-template>
@@ -445,11 +644,11 @@ export class HighlightDirective {
   [ngTemplateOutletContext]="{ $implicit: data, index: 0 }" />
 \`\`\`
 
-Ключ \`$implicit\` маппится на \`let-item\` без имени.
+Ключ \`$implicit\` в контексте — это «значение по умолчанию»: оно маппится на переменную без имени, то есть на \`let-item\`. Остальные ключи (\`index\`) привязываются по имени через \`let-i="index"\`.
 
-## ngComponentOutlet
+### ngComponentOutlet — динамический выбор компонента
 
-Декларативно рендерит **компонент по классу**, динамически — без \`ViewContainerRef.createComponent\`. Поддерживает inputs, инжектор и проекцию контента (Angular 16.2+).
+\`ngComponentOutlet\` декларативно (то есть прямо в шаблоне, без ручного императивного кода) рендерит **компонент по его классу** — динамически, без вызова \`ViewContainerRef.createComponent\`. Поддерживает передачу inputs, свой инжектор и проекцию контента (начиная с Angular 16.2).
 
 \`\`\`html
 <ng-container
@@ -457,14 +656,37 @@ export class HighlightDirective {
   [ngComponentOutletInputs]="{ title: 'Hi' }" />
 \`\`\`
 
-## Когда что
+Здесь \`widgetClass\` — это переменная с классом компонента; поменяешь её значение — отрисуется другой компонент.
 
-- \`ng-container\` — структурная группировка без DOM.
-- \`ngTemplateOutlet\` — повтор/инъекция шаблона с контекстом (паттерн «slot с данными»).
-- \`ngComponentOutlet\` — динамический выбор компонента (дашборды, плагины, CMS-виджеты) декларативно.`,
-      en: `## ng-container
+### Когда что использовать
 
-A logical container that creates **no** DOM element. Use it to attach a structural directive (\`*ngIf\`, \`*ngFor\`, an \`@if\` wrapper) or group nodes without an extra \`<div>\`. Especially handy when you cannot put two structural directives on one element.
+- \`ng-container\` — структурная группировка без создания DOM.
+- \`ngTemplateOutlet\` — повтор или инъекция шаблона с данными (паттерн «slot с данными»).
+- \`ngComponentOutlet\` — динамический выбор компонента декларативно (дашборды, плагины, CMS-виджеты).
+
+## ⚠️ Подводные камни
+
+- Нельзя ставить две структурные директивы на один элемент — используй \`ng-container\` как обёртку для одной из них.
+- В \`ngTemplateOutletContext\` именно \`$implicit\` попадает в \`let-item\` без имени; остальные переменные требуют явного имени ключа.
+- \`ngComponentOutletInputs\` работает только с Angular 16.2+; на старых версиях inputs так не передашь.
+
+## 🎯 Запомни
+
+- \`ng-container\` = невидимая коробка для группировки и структурных директив.
+- \`ngTemplateOutlet\` = печатаем один шаблон в разных местах с разным контекстом.
+- \`ngComponentOutlet\` = выбираем и рендерим компонент по классу на лету, прямо в шаблоне.`,
+      en: `## 🧩 In plain words
+
+Imagine assembling a page out of parts. Sometimes you need an invisible box that groups parts but takes no space on the display shelf itself — that's \`ng-container\`. Sometimes you have a ready-made "stencil" (a template) and you want to print it in different places with different data — that's \`ngTemplateOutlet\`. And sometimes you want to decide on the fly which ready-made block (component) to place here — that's \`ngComponentOutlet\`. All three are tools for flexibly controlling what appears where on the page.
+
+### ng-container — the invisible wrapper
+
+\`ng-container\` is a logical container that creates **no** real DOM element. Use it to:
+
+- attach a structural directive (\`*ngIf\`, \`*ngFor\` — directives that add or remove elements) without an extra wrapping \`<div>\`;
+- group several nodes without cluttering the markup.
+
+It's especially handy when you can't put two structural directives on one element (Angular forbids that).
 
 \`\`\`html
 <ng-container *ngIf="user as u">
@@ -472,9 +694,11 @@ A logical container that creates **no** DOM element. Use it to attach a structur
 </ng-container>
 \`\`\`
 
-## ngTemplateOutlet
+Here \`*ngIf\` works, but the final HTML contains no \`<ng-container>\` — only the \`<h2>\`, if the condition is true.
 
-Renders an \`ng-template\` at a given place, passing a **context**. It is a mechanism for reusing template fragments and customizing components (passing a template from outside).
+### ngTemplateOutlet — printing a template with data
+
+\`ngTemplateOutlet\` renders an \`ng-template\` (a template blueprint fragment) at a given place and passes it a **context** — a set of data. It's a mechanism for reusing markup fragments and customizing components from outside (you pass in your template, the component draws it).
 
 \`\`\`html
 <ng-template #row let-item let-i="index">{{ i }}: {{ item }}</ng-template>
@@ -483,11 +707,11 @@ Renders an \`ng-template\` at a given place, passing a **context**. It is a mech
   [ngTemplateOutletContext]="{ $implicit: data, index: 0 }" />
 \`\`\`
 
-The \`$implicit\` key maps to the unnamed \`let-item\`.
+The \`$implicit\` key in the context is the "default value": it maps to the unnamed variable, i.e. \`let-item\`. Other keys (\`index\`) bind by name via \`let-i="index"\`.
 
-## ngComponentOutlet
+### ngComponentOutlet — dynamic component selection
 
-Declaratively renders a **component by class**, dynamically — without \`ViewContainerRef.createComponent\`. It supports inputs, an injector and content projection (Angular 16.2+).
+\`ngComponentOutlet\` declaratively (right in the template, without manual imperative code) renders a **component by its class** — dynamically, without calling \`ViewContainerRef.createComponent\`. It supports passing inputs, a custom injector, and content projection (since Angular 16.2).
 
 \`\`\`html
 <ng-container
@@ -495,11 +719,25 @@ Declaratively renders a **component by class**, dynamically — without \`ViewCo
   [ngComponentOutletInputs]="{ title: 'Hi' }" />
 \`\`\`
 
-## When to use which
+Here \`widgetClass\` is a variable holding a component class; change its value and a different component is drawn.
 
-- \`ng-container\` — structural grouping without DOM.
-- \`ngTemplateOutlet\` — repeat/inject a template with context (the "slot with data" pattern).
-- \`ngComponentOutlet\` — dynamic component selection (dashboards, plugins, CMS widgets) declaratively.`,
+### When to use which
+
+- \`ng-container\` — structural grouping without creating DOM.
+- \`ngTemplateOutlet\` — repeat or inject a template with data (the "slot with data" pattern).
+- \`ngComponentOutlet\` — dynamic component selection declaratively (dashboards, plugins, CMS widgets).
+
+## ⚠️ Common pitfalls
+
+- You can't put two structural directives on one element — use \`ng-container\` as a wrapper for one of them.
+- In \`ngTemplateOutletContext\` it's specifically \`$implicit\` that lands in the unnamed \`let-item\`; other variables need an explicit key name.
+- \`ngComponentOutletInputs\` only works on Angular 16.2+; on older versions you can't pass inputs this way.
+
+## 🎯 Key takeaways
+
+- \`ng-container\` = an invisible box for grouping and structural directives.
+- \`ngTemplateOutlet\` = print one template in different places with different context.
+- \`ngComponentOutlet\` = pick and render a component by class on the fly, right in the template.`,
     },
     codeSnippet: `<ng-template #cell let-value let-col="col">{{ col }}: {{ value }}</ng-template>
 
@@ -518,9 +756,13 @@ Declaratively renders a **component by class**, dynamically — without \`ViewCo
       en: 'How do you write a custom structural directive, and how does its microsyntax desugar?',
     },
     answer: {
-      ru: `## Что такое структурная директива
+      ru: `## 🧩 Простыми словами
 
-Звёздочка \`*\` — это синтаксический сахар. \`<div *appUnless="cond">\` разворачивается в:
+Знаешь звёздочку \`*\` перед директивами вроде \`*ngIf\` и \`*ngFor\`? Это просто удобное сокращение (синтаксический сахар). Под капотом Angular разворачивает эту запись в более длинную форму с \`<ng-template>\` — заготовкой, которую директива может показать или спрятать. Структурная директива — это код, который сам решает: создавать этот кусок разметки или нет, и сколько раз его повторить. Написать свою такую директиву несложно: тебе дают в руки «трафарет» содержимого и «место для вставки», а ты командуешь, что с ними делать.
+
+### Что такое структурная директива
+
+Звёздочка \`*\` — это синтаксический сахар. Запись \`<div *appUnless="cond">\` разворачивается компилятором в:
 
 \`\`\`html
 <ng-template appUnless [appUnless]="cond">
@@ -528,7 +770,12 @@ Declaratively renders a **component by class**, dynamically — without \`ViewCo
 </ng-template>
 \`\`\`
 
-Директива получает \`TemplateRef\` (содержимое) и \`ViewContainerRef\` (точка вставки) и сама решает, создавать ли view.
+То есть содержимое оборачивается в \`<ng-template>\` (заготовку, которая не рендерится сама по себе). Директива получает два инструмента через инъекцию:
+
+- \`TemplateRef\` — ссылку на содержимое (сам трафарет);
+- \`ViewContainerRef\` — точку вставки (место, куда можно поставить отрисованный трафарет).
+
+И сама решает, создавать ли view (отрисованный экземпляр шаблона).
 
 \`\`\`ts
 @Directive({ selector: '[appUnless]' })
@@ -549,21 +796,38 @@ export class UnlessDirective {
 }
 \`\`\`
 
-## Микросинтаксис
+Это директива-«если НЕ»: когда условие ложно, она рисует содержимое через \`createEmbeddedView\`, когда истинно — убирает его через \`clear\`. Флаг \`created\` не даёт создавать view повторно.
 
-\`*ngFor="let item of items; let i = index; trackBy: fn"\` разворачивается по правилам: первое слово после \`*\` — имя директивы и её главный input; ключевые слова (\`of\`, \`let\`, \`as\`) маппятся на inputs (\`ngForOf\`) и контекстные переменные. \`let x = expr\` создаёт локальную переменную из контекста embedded view.
+### Как разворачивается микросинтаксис
 
-## Type-guards
+Микросинтаксис — это компактная строка внутри кавычек у структурной директивы. Например, \`*ngFor="let item of items; let i = index; trackBy: fn"\` разворачивается по правилам:
 
-Для строгой типизации шаблона добавляют статический \`ngTemplateGuard_\` и \`ngTemplateContextGuard\`, чтобы внутри шаблона типы сужались (как \`*ngIf\` сужает к non-null).
+- первое слово после \`*\` — имя директивы и её главный input;
+- ключевые слова (\`of\`, \`let\`, \`as\`) маппятся на inputs (например, \`of items\` становится \`ngForOf\`) и на контекстные переменные;
+- \`let x = expr\` создаёт локальную переменную из контекста embedded view (например, \`let i = index\` даёт тебе индекс текущего элемента).
 
-## Нюансы
+### Type-guards — подсказки типов для шаблона
 
-- Современный \`@if\`/\`@for\` (control flow) встроен в компилятор и быстрее; кастомные структурные директивы всё ещё нужны для своей логики (\`*appHasPermission\`).
-- Один элемент — одна структурная директива; используйте \`ng-container\` для нескольких.`,
-      en: `## What a structural directive is
+Для строгой типизации внутри шаблона к директиве добавляют статические свойства \`ngTemplateGuard_\` и метод \`ngTemplateContextGuard\`. Они говорят компилятору, как **сузить** типы внутри шаблона — например, \`*ngIf\` благодаря им сужает значение к non-null (гарантирует, что внутри блока значение точно не \`null\`).
 
-The asterisk \`*\` is syntactic sugar. \`<div *appUnless="cond">\` desugars to:
+## ⚠️ Подводные камни
+
+- Современный синтаксис \`@if\` / \`@for\` (встроенный control flow) вшит в компилятор и работает быстрее кастомных директив — но кастомные структурные директивы всё ещё нужны для своей логики (например, \`*appHasPermission\`).
+- На один элемент можно повесить только одну структурную директиву; для нескольких используй \`ng-container\`.
+- Не забывай очищать view (\`vcr.clear()\`) при изменении условия — иначе получишь дубли или устаревшую разметку.
+
+## 🎯 Запомни
+
+- \`*\` = сахар: \`<div *dir>\` превращается в \`<ng-template dir>\` с обёрнутым содержимым.
+- Директиве дают \`TemplateRef\` (что рисовать) и \`ViewContainerRef\` (куда рисовать); она сама решает когда и сколько раз.
+- Микросинтаксис — правила разбора строки в inputs и контекстные переменные; \`let x = ...\` берёт значение из контекста view.`,
+      en: `## 🧩 In plain words
+
+You know the asterisk \`*\` in front of directives like \`*ngIf\` and \`*ngFor\`? It's just a convenient shorthand (syntactic sugar). Under the hood Angular expands it into a longer form with \`<ng-template>\` — a blueprint the directive can show or hide. A structural directive is code that decides for itself: whether to create this piece of markup, and how many times to repeat it. Writing your own such directive isn't hard: you're handed a "stencil" of the content and an "insertion spot," and you command what to do with them.
+
+### What a structural directive is
+
+The asterisk \`*\` is syntactic sugar. The expression \`<div *appUnless="cond">\` is desugared by the compiler into:
 
 \`\`\`html
 <ng-template appUnless [appUnless]="cond">
@@ -571,7 +835,12 @@ The asterisk \`*\` is syntactic sugar. \`<div *appUnless="cond">\` desugars to:
 </ng-template>
 \`\`\`
 
-The directive receives a \`TemplateRef\` (the content) and a \`ViewContainerRef\` (the insertion point) and decides whether to create the view itself.
+That is, the content is wrapped in an \`<ng-template>\` (a blueprint that doesn't render on its own). The directive receives two tools via injection:
+
+- \`TemplateRef\` — a reference to the content (the stencil itself);
+- \`ViewContainerRef\` — the insertion point (a spot where the rendered stencil can be placed).
+
+And it decides for itself whether to create the view (a rendered instance of the template).
 
 \`\`\`ts
 @Directive({ selector: '[appUnless]' })
@@ -592,18 +861,31 @@ export class UnlessDirective {
 }
 \`\`\`
 
-## Microsyntax
+This is an "if NOT" directive: when the condition is false it draws the content via \`createEmbeddedView\`, and when true it removes it via \`clear\`. The \`created\` flag prevents creating the view twice.
 
-\`*ngFor="let item of items; let i = index; trackBy: fn"\` desugars by rules: the first word after \`*\` is the directive name and its primary input; keywords (\`of\`, \`let\`, \`as\`) map to inputs (\`ngForOf\`) and context variables. \`let x = expr\` creates a local variable from the embedded view context.
+### How the microsyntax desugars
 
-## Type guards
+Microsyntax is the compact string inside the quotes of a structural directive. For example, \`*ngFor="let item of items; let i = index; trackBy: fn"\` desugars by rules:
 
-For strict template typing you add a static \`ngTemplateGuard_\` and \`ngTemplateContextGuard\` so types narrow inside the template (like \`*ngIf\` narrows to non-null).
+- the first word after \`*\` is the directive name and its primary input;
+- keywords (\`of\`, \`let\`, \`as\`) map to inputs (e.g. \`of items\` becomes \`ngForOf\`) and to context variables;
+- \`let x = expr\` creates a local variable from the embedded view context (e.g. \`let i = index\` gives you the current item's index).
 
-## Nuances
+### Type guards — type hints for the template
 
-- The modern \`@if\`/\`@for\` (control flow) is built into the compiler and faster; custom structural directives are still useful for your own logic (\`*appHasPermission\`).
-- One element — one structural directive; use \`ng-container\` for several.`,
+For strict typing inside the template you add static members to the directive: \`ngTemplateGuard_\` and a \`ngTemplateContextGuard\` method. They tell the compiler how to **narrow** types inside the template — for example, thanks to them \`*ngIf\` narrows the value to non-null (guarantees that inside the block the value is definitely not \`null\`).
+
+## ⚠️ Common pitfalls
+
+- The modern \`@if\` / \`@for\` syntax (built-in control flow) is baked into the compiler and runs faster than custom directives — but custom structural directives are still useful for your own logic (e.g. \`*appHasPermission\`).
+- You can attach only one structural directive to a single element; for several, use \`ng-container\`.
+- Don't forget to clear the view (\`vcr.clear()\`) when the condition changes — otherwise you'll get duplicates or stale markup.
+
+## 🎯 Key takeaways
+
+- \`*\` = sugar: \`<div *dir>\` turns into \`<ng-template dir>\` with the content wrapped.
+- The directive is given a \`TemplateRef\` (what to draw) and a \`ViewContainerRef\` (where to draw); it decides when and how many times.
+- Microsyntax = rules for parsing the string into inputs and context variables; \`let x = ...\` takes a value from the view context.`,
     },
     codeSnippet: `@Directive({ selector: '[appRepeat]' })
 export class RepeatDirective {
@@ -627,57 +909,19 @@ export class RepeatDirective {
       en: 'How do @angular/animations work: triggers, states, transitions and keyframes?',
     },
     answer: {
-      ru: `## Декларативная модель
+      ru: `## 🧩 Простыми словами
 
-Анимации Angular описываются как **машина состояний** в метаданных компонента, а не в CSS. Подключаются через \`provideAnimationsAsync()\` (или \`provideAnimations()\`).
+Представь настольную игру, где у фишки есть несколько клеток-состояний: «закрыто» и «открыто». Анимации Angular работают похоже: ты описываешь состояния и правила плавного перехода между ними, а Angular сам проигрывает движение. Вместо того чтобы писать анимацию в CSS, ты описываешь её прямо в коде компонента как **машину состояний** — набор клеток и переходов. Это удобно, когда анимация зависит от данных (например, от того, открыт блок или нет).
 
-## Триггер и состояния
+### Декларативная модель
 
-\`trigger\` связывает имя анимации с шаблоном (\`[@name]\`). \`state\` задаёт стиль конечного состояния, \`transition\` — анимацию между состояниями.
+Анимации Angular описываются как **машина состояний** (набор состояний и переходов) в метаданных компонента, а не в CSS-файле. Чтобы они заработали, их нужно подключить провайдером: \`provideAnimationsAsync()\` (или \`provideAnimations()\`).
 
-\`\`\`ts
-animations: [
-  trigger('open', [
-    state('closed', style({ height: '0', opacity: 0 })),
-    state('open', style({ height: '*', opacity: 1 })),
-    transition('closed <=> open', animate('300ms ease-in-out')),
-  ]),
-]
-// <div [@open]="isOpen ? 'open' : 'closed'">
-\`\`\`
+### Триггер и состояния
 
-\`*\` — «текущее вычисленное значение» (например, реальная высота).
-
-## Спец-переходы
-
-- \`:enter\` / \`:leave\` — для появления/удаления элемента (алиасы \`void => *\` и \`* => void\`).
-- \`:increment\` / \`:decrement\` — по числовому значению.
-
-## keyframes и query/stagger
-
-\`keyframes\` задаёт промежуточные кадры с \`offset\`. \`query\` + \`stagger\` анимируют список с задержкой между элементами.
-
-\`\`\`ts
-transition('* => *', [
-  query(':enter', [
-    style({ opacity: 0 }),
-    stagger(50, animate('200ms', style({ opacity: 1 }))),
-  ], { optional: true }),
-])
-\`\`\`
-
-## Нюансы
-
-- Анимации выполняются через Web Animations API; \`:leave\` откладывает реальное удаление DOM до конца анимации.
-- Пакет \`@angular/animations\` весит немало — для простых эффектов часто достаточно CSS transitions.
-- В SSR анимации запускаются только в браузере после гидратации.`,
-      en: `## Declarative model
-
-Angular animations are described as a **state machine** in the component metadata, not in CSS. Enabled via \`provideAnimationsAsync()\` (or \`provideAnimations()\`).
-
-## Trigger and states
-
-\`trigger\` binds an animation name to the template (\`[@name]\`). \`state\` defines an end-state style, \`transition\` defines the animation between states.
+- \`trigger\` связывает имя анимации с шаблоном — в разметке ты обращаешься к нему через \`[@name]\`.
+- \`state\` задаёт стиль **конечного состояния** (как элемент выглядит, когда он в этом состоянии).
+- \`transition\` описывает саму анимацию перехода между состояниями.
 
 \`\`\`ts
 animations: [
@@ -690,16 +934,17 @@ animations: [
 // <div [@open]="isOpen ? 'open' : 'closed'">
 \`\`\`
 
-\`*\` means "current computed value" (e.g. the real height).
+Здесь \`<=>\` означает «в обе стороны» (из \`closed\` в \`open\` и обратно). Символ \`*\` в стиле — это «текущее вычисленное значение» (например, реальная высота элемента, которую заранее не знаешь).
 
-## Special transitions
+### Спец-переходы
 
-- \`:enter\` / \`:leave\` — for element appearance/removal (aliases of \`void => *\` and \`* => void\`).
-- \`:increment\` / \`:decrement\` — by numeric value.
+- \`:enter\` / \`:leave\` — для появления и удаления элемента (это алиасы, то есть псевдонимы, для \`void => *\` и \`* => void\`, где \`void\` — состояние «элемента ещё/уже нет»).
+- \`:increment\` / \`:decrement\` — срабатывают при увеличении или уменьшении числового значения.
 
-## keyframes and query/stagger
+### keyframes и query/stagger
 
-\`keyframes\` defines intermediate frames with \`offset\`. \`query\` + \`stagger\` animate a list with a delay between items.
+- \`keyframes\` задаёт промежуточные кадры анимации через \`offset\` (доля от 0 до 1 — где по времени находится кадр).
+- \`query\` находит вложенные элементы, а \`stagger\` анимирует список с задержкой между элементами (эффект «волны»).
 
 \`\`\`ts
 transition('* => *', [
@@ -710,11 +955,78 @@ transition('* => *', [
 ])
 \`\`\`
 
-## Nuances
+Здесь каждый появляющийся элемент проявляется на 50 мс позже предыдущего. Флаг \`{ optional: true }\` не даёт упасть, если элементов не нашлось.
 
-- Animations run via the Web Animations API; \`:leave\` delays the actual DOM removal until the animation finishes.
+## ⚠️ Подводные камни
+
+- Анимации выполняются через Web Animations API браузера; \`:leave\` откладывает реальное удаление элемента из DOM до конца анимации.
+- Пакет \`@angular/animations\` весит немало — для простых эффектов часто достаточно обычных CSS-transitions.
+- В SSR (рендеринг на сервере) анимации запускаются только в браузере после гидратации (когда серверный HTML «оживает» на клиенте).
+
+## 🎯 Запомни
+
+- Анимации Angular = машина состояний в метаданных компонента: \`trigger\` → \`state\` → \`transition\`.
+- \`*\` = текущее вычисленное значение (например, авто-высота); \`:enter\` / \`:leave\` = появление / удаление.
+- \`keyframes\` даёт промежуточные кадры, \`query\` + \`stagger\` — «волну» по списку; для простого хватает CSS.`,
+      en: `## 🧩 In plain words
+
+Picture a board game where a token has a few state-squares: "closed" and "open." Angular animations work similarly: you describe states and the rules for smoothly moving between them, and Angular plays the motion for you. Instead of writing the animation in CSS, you describe it right in the component code as a **state machine** — a set of squares and transitions. This is handy when the animation depends on data (for example, whether a block is open or not).
+
+### Declarative model
+
+Angular animations are described as a **state machine** (a set of states and transitions) in the component metadata, not in a CSS file. To make them work you must enable them with a provider: \`provideAnimationsAsync()\` (or \`provideAnimations()\`).
+
+### Trigger and states
+
+- \`trigger\` binds an animation name to the template — in the markup you reference it via \`[@name]\`.
+- \`state\` defines the **end-state** style (how the element looks when it's in that state).
+- \`transition\` describes the actual animation between states.
+
+\`\`\`ts
+animations: [
+  trigger('open', [
+    state('closed', style({ height: '0', opacity: 0 })),
+    state('open', style({ height: '*', opacity: 1 })),
+    transition('closed <=> open', animate('300ms ease-in-out')),
+  ]),
+]
+// <div [@open]="isOpen ? 'open' : 'closed'">
+\`\`\`
+
+Here \`<=>\` means "both directions" (from \`closed\` to \`open\` and back). The \`*\` in a style means "current computed value" (e.g. the element's real height, which you don't know in advance).
+
+### Special transitions
+
+- \`:enter\` / \`:leave\` — for an element appearing and being removed (these are aliases, i.e. nicknames, for \`void => *\` and \`* => void\`, where \`void\` is the "element doesn't exist yet/anymore" state).
+- \`:increment\` / \`:decrement\` — fire when a numeric value increases or decreases.
+
+### keyframes and query/stagger
+
+- \`keyframes\` defines intermediate animation frames via \`offset\` (a fraction from 0 to 1 — where in time the frame sits).
+- \`query\` finds nested elements, and \`stagger\` animates a list with a delay between items (a "wave" effect).
+
+\`\`\`ts
+transition('* => *', [
+  query(':enter', [
+    style({ opacity: 0 }),
+    stagger(50, animate('200ms', style({ opacity: 1 }))),
+  ], { optional: true }),
+])
+\`\`\`
+
+Here each appearing element fades in 50 ms later than the previous one. The \`{ optional: true }\` flag keeps it from failing if no elements are found.
+
+## ⚠️ Common pitfalls
+
+- Animations run via the browser's Web Animations API; \`:leave\` delays the actual removal of the element from the DOM until the animation finishes.
 - The \`@angular/animations\` package is sizable — plain CSS transitions are often enough for simple effects.
-- In SSR animations only run in the browser after hydration.`,
+- In SSR (server-side rendering) animations run only in the browser after hydration (when the server HTML "comes alive" on the client).
+
+## 🎯 Key takeaways
+
+- Angular animations = a state machine in the component metadata: \`trigger\` → \`state\` → \`transition\`.
+- \`*\` = current computed value (e.g. auto height); \`:enter\` / \`:leave\` = appearance / removal.
+- \`keyframes\` gives intermediate frames, \`query\` + \`stagger\` gives a list "wave"; for simple cases CSS is enough.`,
     },
     codeSnippet: `trigger('flash', [
   transition(':enter', [
