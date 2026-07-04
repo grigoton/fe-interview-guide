@@ -1048,66 +1048,106 @@ Here each appearing element fades in 50 ms later than the previous one. The \`{ 
       en: 'What does the NgOptimizedImage directive give you, and how does it improve LCP?',
     },
     answer: {
-      ru: `## Назначение
+      ru: `## 🧩 Простыми словами
 
-\`NgOptimizedImage\` (атрибут \`ngSrc\`) — директива для оптимальной загрузки изображений, напрямую влияющая на **Core Web Vitals**, особенно LCP (Largest Contentful Paint).
+Представь, что картинки на сайте — это гости, которые приходят на вечеринку. Если каждый гость сам решает, когда прийти и сколько места занять, начинается хаос: страница дёргается, главная картинка грузится последней. \`NgOptimizedImage\` — это распорядитель, который заранее бронирует места и пропускает важных гостей вперёд. В итоге страница выглядит стабильно и главная картинка появляется быстро.
 
-\`\`\`html
-<img ngSrc="hero.jpg" width="800" height="600" priority alt="Hero" />
-\`\`\`
+### Зачем это нужно: LCP и Core Web Vitals
 
-## Что она делает автоматически
+**Core Web Vitals** — набор метрик Google, которыми измеряют «ощущение скорости» сайта. Одна из главных — **LCP** (Largest Contentful Paint, «отрисовка самого большого элемента»): сколько секунд проходит до появления самого крупного видимого элемента, а это почти всегда большая картинка (баннер, hero-изображение). Чем быстрее она появилась — тем ниже LCP и тем лучше.
 
-- **Требует width/height** — резервирует место и устраняет CLS (layout shift).
-- **lazy loading** по умолчанию (\`loading="lazy"\`) для всех, кроме приоритетных.
-- **priority** — для LCP-картинки: добавляет \`fetchpriority="high"\`, \`loading="eager"\` и **preload**-подсказку в \`<head>\`, ускоряя загрузку.
-- **srcset** генерируется автоматически по набору breakpoint'ов для адаптивности.
-- **Предупреждения в dev**: о слишком больших файлах, отсутствии \`priority\` у LCP, неверных размерах.
-
-## Image loaders
-
-Через \`provideImgixLoader\`/\`provideCloudflareLoader\` или кастомный loader директива переписывает URL под CDN с ресайзом и форматом (WebP/AVIF):
-
-\`\`\`ts
-provideImgixLoader('https://cdn.example.com/')
-\`\`\`
-
-## Нюансы
-
-- Для адаптивных изображений на всю ширину используйте \`fill\` вместо width/height (родитель должен быть \`position: relative\`).
-- \`ngSrcset\` задаёт плотности/ширины: \`ngSrcset="1x, 2x"\` или \`"100w, 200w"\`.
-- Директива не оптимизирует сами файлы — это делает CDN/loader; она управляет **как** браузер их грузит.
-- Нельзя одновременно \`ngSrc\` и \`src\`.`,
-      en: `## Purpose
-
-\`NgOptimizedImage\` (the \`ngSrc\` attribute) is a directive for optimal image loading that directly affects **Core Web Vitals**, especially LCP (Largest Contentful Paint).
+\`NgOptimizedImage\` — это директива Angular (директива — переиспользуемое поведение, которое навешивается на HTML-элемент). Ты подключаешь её и вместо обычного атрибута \`src\` пишешь \`ngSrc\`:
 
 \`\`\`html
 <img ngSrc="hero.jpg" width="800" height="600" priority alt="Hero" />
 \`\`\`
 
-## What it does automatically
+### Что директива делает автоматически
 
-- **Requires width/height** — reserves space and eliminates CLS (layout shift).
-- **Lazy loading** by default (\`loading="lazy"\`) for everything except priority images.
-- **priority** — for the LCP image: adds \`fetchpriority="high"\`, \`loading="eager"\` and a **preload** hint in \`<head>\`, speeding up loading.
-- **srcset** is generated automatically from a set of breakpoints for responsiveness.
-- **Dev warnings**: oversized files, missing \`priority\` on the LCP image, wrong dimensions.
+- **Требует \`width\` и \`height\`.** Зная размеры заранее, браузер резервирует место под картинку и не дёргает вёрстку, когда она догрузится. Это убирает **CLS** (Cumulative Layout Shift — «скачки» вёрстки), ещё одну метрику Core Web Vitals.
+- **Ленивая загрузка по умолчанию** (\`loading="lazy"\`): картинки грузятся, только когда пользователь до них доскроллит. Исключение — приоритетные (см. ниже).
+- **\`priority\`** — пометь этим атрибутом ту самую LCP-картинку (обычно баннер вверху). Директива добавит \`fetchpriority="high"\` и \`loading="eager"\` (грузить сразу, не откладывая), а также **preload**-подсказку в \`<head>\` — команду браузеру «начни качать это как можно раньше». Всё это ускоряет появление главной картинки.
+- **\`srcset\` генерируется автоматически** по набору контрольных ширин (breakpoint'ов). \`srcset\` — это список вариантов картинки под разные размеры экрана, чтобы телефон не качал версию для 4K-монитора.
+- **Предупреждения в dev-режиме**: директива подскажет, если файл слишком тяжёлый, у LCP-картинки забыт \`priority\` или размеры указаны неверно.
 
-## Image loaders
+### Image loaders (загрузчики через CDN)
 
-Via \`provideImgixLoader\`/\`provideCloudflareLoader\` or a custom loader the directive rewrites URLs for a CDN with resizing and format (WebP/AVIF):
+**CDN** (Content Delivery Network) — сеть серверов, которая раздаёт и на лету обрабатывает картинки: меняет размер, конвертирует в современные форматы **WebP/AVIF** (они весят меньше JPEG при том же качестве). Через провайдер-функцию (\`provideImgixLoader\`, \`provideCloudflareLoader\` или свой кастомный loader) директива сама переписывает URL картинки под нужный CDN:
 
 \`\`\`ts
 provideImgixLoader('https://cdn.example.com/')
 \`\`\`
 
-## Nuances
+Теперь \`ngSrc="hero.jpg"\` превратится в ссылку на CDN с нужным размером и форматом.
 
-- For full-width responsive images use \`fill\` instead of width/height (the parent must be \`position: relative\`).
-- \`ngSrcset\` sets densities/widths: \`ngSrcset="1x, 2x"\` or \`"100w, 200w"\`.
-- The directive does not optimize the files themselves — the CDN/loader does; it controls **how** the browser loads them.
-- You cannot use \`ngSrc\` and \`src\` together.`,
+### Полезные атрибуты
+
+- **\`fill\`** — для адаптивных картинок «на всю ширину контейнера», когда точные \`width\`/\`height\` в пикселях задать нельзя. Вместо размеров пишешь \`fill\`, а родительский элемент делаешь \`position: relative\`.
+- **\`ngSrcset\`** — задаёт плотности или ширины вручную: \`ngSrcset="1x, 2x"\` (для обычного и retina-экрана) или \`ngSrcset="100w, 200w"\` (по ширине в пикселях).
+
+## ⚠️ Подводные камни
+
+- Директива **не сжимает сами файлы** — этим занимается CDN/loader. Она управляет тем, **как** браузер их грузит (когда, в каком приоритете, каким размером).
+- Нельзя одновременно указывать \`ngSrc\` и обычный \`src\` на одном \`<img>\` — выбери что-то одно.
+- Забыть \`priority\` на LCP-картинке — частая ошибка: тогда она грузится лениво и метрика проседает.
+- \`width\`/\`height\` обязательны (кроме режима \`fill\`) — без них директива выдаст ошибку.
+
+## 🎯 Запомни
+
+- \`NgOptimizedImage\` + атрибут \`ngSrc\` = быстрый LCP и отсутствие скачков вёрстки «из коробки».
+- \`priority\` — на главную (LCP) картинку; остальные грузятся лениво сами.
+- Обязательные \`width\`/\`height\` резервируют место и убивают CLS.
+- Оптимизацией самих файлов занимается CDN/loader, директива — дирижёр загрузки.`,
+      en: `## 🧩 In plain words
+
+Think of the images on a page as guests arriving at a party. If each guest decides on their own when to show up and how much space to take, chaos follows: the page jumps around, and the most important picture loads last. \`NgOptimizedImage\` is the host who reserves seats in advance and lets the VIP guests in first. The result: a stable-looking page and a hero image that appears fast.
+
+### Why it matters: LCP and Core Web Vitals
+
+**Core Web Vitals** are Google's metrics for how fast a site *feels*. One of the main ones is **LCP** (Largest Contentful Paint): how many seconds pass before the biggest visible element shows up — and that's almost always a large image (a banner or hero image). The faster it appears, the lower the LCP and the better.
+
+\`NgOptimizedImage\` is an Angular directive (a directive is reusable behavior attached to an HTML element). You enable it and, instead of the usual \`src\` attribute, you write \`ngSrc\`:
+
+\`\`\`html
+<img ngSrc="hero.jpg" width="800" height="600" priority alt="Hero" />
+\`\`\`
+
+### What the directive does automatically
+
+- **Requires \`width\` and \`height\`.** Knowing the size up front, the browser reserves space for the image and doesn't reshuffle the layout when it loads. This eliminates **CLS** (Cumulative Layout Shift — layout "jumps"), another Core Web Vitals metric.
+- **Lazy loading by default** (\`loading="lazy"\`): images load only when the user scrolls near them. The exception is priority images (below).
+- **\`priority\`** — mark your LCP image (usually the banner at the top) with this. The directive adds \`fetchpriority="high"\` and \`loading="eager"\` (load right away, don't defer), plus a **preload** hint in \`<head>\` — a command telling the browser to start fetching this as early as possible. All of it makes the hero image appear sooner.
+- **\`srcset\` is generated automatically** from a set of breakpoints. \`srcset\` is a list of image variants for different screen sizes, so a phone doesn't download the 4K-monitor version.
+- **Dev-mode warnings**: it flags files that are too heavy, an LCP image missing \`priority\`, or wrong dimensions.
+
+### Image loaders (CDN-backed)
+
+A **CDN** (Content Delivery Network) is a network of servers that serves and transforms images on the fly: resizes them and converts them to modern **WebP/AVIF** formats (smaller than JPEG at the same quality). Via a provider function (\`provideImgixLoader\`, \`provideCloudflareLoader\`, or a custom loader) the directive rewrites the image URL for the chosen CDN:
+
+\`\`\`ts
+provideImgixLoader('https://cdn.example.com/')
+\`\`\`
+
+Now \`ngSrc="hero.jpg"\` becomes a CDN link with the right size and format.
+
+### Handy attributes
+
+- **\`fill\`** — for responsive "fill the container" images where you can't state exact pixel \`width\`/\`height\`. Use \`fill\` instead of dimensions, and make the parent element \`position: relative\`.
+- **\`ngSrcset\`** — set densities or widths manually: \`ngSrcset="1x, 2x"\` (normal and retina screens) or \`ngSrcset="100w, 200w"\` (by pixel width).
+
+## ⚠️ Common pitfalls
+
+- The directive **does not compress the files themselves** — the CDN/loader does. It controls **how** the browser loads them (when, at what priority, at what size).
+- You cannot set both \`ngSrc\` and a plain \`src\` on the same \`<img>\` — pick one.
+- Forgetting \`priority\` on the LCP image is a common mistake: it then loads lazily and the metric suffers.
+- \`width\`/\`height\` are mandatory (except in \`fill\` mode) — without them the directive throws an error.
+
+## 🎯 Key takeaways
+
+- \`NgOptimizedImage\` + the \`ngSrc\` attribute = fast LCP and no layout jumps, out of the box.
+- Put \`priority\` on the main (LCP) image; the rest lazy-load on their own.
+- Mandatory \`width\`/\`height\` reserve space and kill CLS.
+- File optimization is the CDN/loader's job; the directive conducts the loading.`,
     },
     codeSnippet: `@Component({
   imports: [NgOptimizedImage],
@@ -1128,11 +1168,15 @@ export class GalleryComponent {}`,
       en: 'What triggers, prefetch and blocks (@placeholder/@loading/@error) does @defer have, and how do they work?',
     },
     answer: {
-      ru: `## Идея @defer
+      ru: `## 🧩 Простыми словами
 
-\`@defer\` (Angular 17+) лениво загружает **код** зависимостей блока отдельным чанком и рендерит содержимое только при срабатывании триггера. Это снижает initial bundle и улучшает TTI.
+Представь книгу, где тяжёлые главы с картинками напечатаны на отдельных вкладышах. Пока читатель до них не дошёл, вкладыши лежат в коробке и не утяжеляют книгу. \`@defer\` делает то же самое с кодом: тяжёлые части страницы не грузятся сразу, а подтягиваются отдельным «вкладышем» только тогда, когда действительно нужны. Пока их нет, можно показать заглушку или спиннер.
 
-## Блоки
+### Идея @defer
+
+\`@defer\` (появился в Angular 17) **лениво** загружает код зависимостей блока отдельным файлом (**чанком** — куском бандла) и рисует содержимое только когда сработает **триггер** (условие запуска). За счёт этого начальный бандл (initial bundle — то, что грузится при первом открытии) становится меньше, а **TTI** (Time To Interactive — момент, когда со страницей уже можно взаимодействовать) наступает раньше.
+
+### Четыре блока
 
 \`\`\`html
 @defer (on viewport) {
@@ -1146,33 +1190,52 @@ export class GalleryComponent {}`,
 }
 \`\`\`
 
-- \`@placeholder\` — до начала загрузки (опционально, рендерится сразу, но его зависимости не отложены).
-- \`@loading\` — пока грузится чанк; \`after\`/\`minimum\` убирают мелькание.
-- \`@error\` — если загрузка чанка провалилась.
+- **\`@defer\`** — сам ленивый блок; его содержимое появится после триггера.
+- **\`@placeholder\`** — что показать **до** начала загрузки (например, кнопку или текст). Рендерится сразу, но, в отличие от defer-блока, его зависимости **не** откладываются.
+- **\`@loading\`** — что показать, **пока** грузится чанк (спиннер). Параметры \`after 100ms\` (не показывать первые 100 мс) и \`minimum 1s\` (показывать минимум 1 с) убирают неприятное мелькание спиннера.
+- **\`@error\`** — что показать, если загрузка чанка провалилась (например, пропал интернет).
 
-## Триггеры
+### Триггеры (когда запускать загрузку)
 
-- \`on idle\` (по умолчанию) — при \`requestIdleCallback\`.
-- \`on viewport\` — когда блок (или placeholder) попадает в видимую область (IntersectionObserver).
-- \`on interaction\`, \`on hover\` — по событию пользователя.
-- \`on timer(2s)\`, \`on immediate\`.
-- \`when condition\` — по булевому выражению/сигналу.
+- **\`on idle\`** (по умолчанию) — когда браузер свободен, через \`requestIdleCallback\`.
+- **\`on viewport\`** — когда блок (или его placeholder) появился на экране; внутри работает **IntersectionObserver** (браузерный API слежения за видимостью элемента).
+- **\`on interaction\`** — по клику/нажатию пользователя; **\`on hover\`** — при наведении курсора.
+- **\`on timer(2s)\`** — через заданное время; **\`on immediate\`** — сразу после отрисовки страницы.
+- **\`when condition\`** — по булевому выражению или сигналу (\`when isReady()\`).
 
-Триггеры можно комбинировать и привязывать к элементу-ссылке: \`on viewport(ref)\`.
+Триггеры можно комбинировать через \`;\` и привязывать к конкретному элементу-ссылке: \`on viewport(ref)\` сработает, когда в зону видимости попадёт именно элемент \`ref\`.
 
-## prefetch
+### prefetch (загрузить заранее, но не показывать)
 
-\`prefetch\` загружает чанк **заранее**, не рендеря его, по отдельному триггеру: \`@defer (on interaction; prefetch on idle)\`. Так код уже в кэше к моменту реального показа.
+\`prefetch\` качает чанк **впрок**, ещё не рендеря его, по отдельному триггеру:
 
-## Нюансы
+\`\`\`html
+@defer (on interaction; prefetch on idle) { ... }
+\`\`\`
 
-- Все зависимости defer-блока должны быть **standalone** и использоваться только внутри блока, иначе они не отложатся.
-- В SSR с incremental hydration defer-границы становятся точками частичной гидратации.`,
-      en: `## The @defer idea
+Здесь код тихо скачается, когда браузер свободен (\`prefetch on idle\`), а покажется только по клику (\`on interaction\`). К моменту реального показа файл уже в кэше — ждать не придётся.
 
-\`@defer\` (Angular 17+) lazily loads the **code** of the block's dependencies as a separate chunk and renders the content only when a trigger fires. This shrinks the initial bundle and improves TTI.
+## ⚠️ Подводные камни
 
-## Blocks
+- Все зависимости defer-блока должны быть **standalone** (самодостаточными компонентами/директивами без NgModule) и использоваться **только внутри** блока. Если тот же компонент нужен где-то ещё вне блока — он не отложится, и весь смысл теряется.
+- Слишком агрессивный \`on immediate\` почти сводит на нет пользу — код всё равно грузится сразу.
+- При **SSR** (server-side rendering — отрисовка на сервере) с incremental hydration границы \`@defer\` становятся точками частичной **гидратации** (оживления серверного HTML на клиенте).
+
+## 🎯 Запомни
+
+- \`@defer\` откладывает загрузку **кода** до срабатывания триггера — меньше стартовый бандл, быстрее TTI.
+- Четыре блока: \`@defer\` (контент), \`@placeholder\` (до), \`@loading\` (во время), \`@error\` (при сбое).
+- Триггеры: \`idle\`, \`viewport\`, \`interaction\`, \`hover\`, \`timer\`, \`immediate\`, \`when\` — можно комбинировать.
+- \`prefetch\` качает чанк заранее, чтобы к моменту показа он уже был в кэше.`,
+      en: `## 🧩 In plain words
+
+Picture a book where the heavy, image-filled chapters are printed on separate inserts. Until the reader gets to them, the inserts sit in a box and don't weigh the book down. \`@defer\` does the same with code: the heavy parts of a page don't load right away — they're pulled in as a separate "insert" only when actually needed. Until then, you can show a placeholder or a spinner.
+
+### The @defer idea
+
+\`@defer\` (introduced in Angular 17) **lazily** loads the block's dependency code as a separate file (a **chunk** — a slice of the bundle) and renders the content only when a **trigger** (start condition) fires. This shrinks the initial bundle (what loads on first open) and makes **TTI** (Time To Interactive — the moment the page is usable) arrive sooner.
+
+### The four blocks
 
 \`\`\`html
 @defer (on viewport) {
@@ -1186,28 +1249,43 @@ export class GalleryComponent {}`,
 }
 \`\`\`
 
-- \`@placeholder\` — before loading starts (optional, rendered immediately, but its dependencies are not deferred).
-- \`@loading\` — while the chunk loads; \`after\`/\`minimum\` prevent flicker.
-- \`@error\` — if the chunk fails to load.
+- **\`@defer\`** — the lazy block itself; its content shows after the trigger.
+- **\`@placeholder\`** — what to show **before** loading starts (e.g. a button or text). It renders immediately, but unlike the defer block, its dependencies are **not** deferred.
+- **\`@loading\`** — what to show **while** the chunk loads (a spinner). The options \`after 100ms\` (don't show for the first 100 ms) and \`minimum 1s\` (show for at least 1 s) prevent an ugly spinner flicker.
+- **\`@error\`** — what to show if the chunk fails to load (e.g. the connection dropped).
 
-## Triggers
+### Triggers (when to start loading)
 
-- \`on idle\` (default) — on \`requestIdleCallback\`.
-- \`on viewport\` — when the block (or placeholder) enters the viewport (IntersectionObserver).
-- \`on interaction\`, \`on hover\` — on a user event.
-- \`on timer(2s)\`, \`on immediate\`.
-- \`when condition\` — on a boolean expression/signal.
+- **\`on idle\`** (default) — when the browser is free, via \`requestIdleCallback\`.
+- **\`on viewport\`** — when the block (or its placeholder) enters the screen; it uses **IntersectionObserver** under the hood (a browser API that watches element visibility).
+- **\`on interaction\`** — on a user click/tap; **\`on hover\`** — on cursor hover.
+- **\`on timer(2s)\`** — after a set delay; **\`on immediate\`** — right after the page renders.
+- **\`when condition\`** — on a boolean expression or signal (\`when isReady()\`).
 
-Triggers can be combined and bound to a reference element: \`on viewport(ref)\`.
+Triggers can be combined with \`;\` and bound to a specific reference element: \`on viewport(ref)\` fires when that exact \`ref\` element enters the viewport.
 
-## prefetch
+### prefetch (load ahead, don't show yet)
 
-\`prefetch\` loads the chunk **ahead of time** without rendering it, on a separate trigger: \`@defer (on interaction; prefetch on idle)\`. So the code is already cached when the real display happens.
+\`prefetch\` fetches the chunk **in advance** without rendering it, on its own trigger:
 
-## Nuances
+\`\`\`html
+@defer (on interaction; prefetch on idle) { ... }
+\`\`\`
 
-- All defer-block dependencies must be **standalone** and used only inside the block, otherwise they will not be deferred.
-- In SSR with incremental hydration, defer boundaries become partial-hydration points.`,
+Here the code quietly downloads when the browser is free (\`prefetch on idle\`), but shows only on click (\`on interaction\`). By the time of the real display, the file is already cached — no waiting.
+
+## ⚠️ Common pitfalls
+
+- All defer-block dependencies must be **standalone** (self-contained components/directives with no NgModule) and used **only inside** the block. If the same component is used somewhere else outside the block, it won't be deferred, and the whole point is lost.
+- An overly aggressive \`on immediate\` almost defeats the purpose — the code still loads right away.
+- Under **SSR** (server-side rendering) with incremental hydration, \`@defer\` boundaries become partial **hydration** points (bringing server HTML to life on the client).
+
+## 🎯 Key takeaways
+
+- \`@defer\` postpones loading the **code** until a trigger fires — smaller initial bundle, faster TTI.
+- Four blocks: \`@defer\` (content), \`@placeholder\` (before), \`@loading\` (during), \`@error\` (on failure).
+- Triggers: \`idle\`, \`viewport\`, \`interaction\`, \`hover\`, \`timer\`, \`immediate\`, \`when\` — combinable.
+- \`prefetch\` downloads the chunk ahead of time so it's already cached when shown.`,
     },
     codeSnippet: `@defer (on hover; prefetch on idle) {
   <app-comments [postId]="id" />
@@ -1227,13 +1305,27 @@ Triggers can be combined and bound to a reference element: \`on viewport(ref)\`.
       en: 'How do DestroyRef and takeUntilDestroyed solve unsubscription, and where can they be used?',
     },
     answer: {
-      ru: `## Проблема
+      ru: `## 🧩 Простыми словами
 
-Классический паттерн отписки — \`takeUntil(this.destroy$)\` с \`Subject\`, который нужно создавать, эмитить и завершать в \`ngOnDestroy\`. Много шаблонного кода и легко забыть.
+Когда компонент подписывается на поток данных, он как будто оставляет открытый кран. Если закрыть компонент, но не закрыть кран — вода продолжит течь (утечка памяти, лишние вызовы). Раньше приходилось вручную заводить «вентиль» и не забывать закрывать его при уничтожении. \`DestroyRef\` и \`takeUntilDestroyed\` — это автоматический вентиль, который сам перекрывается, как только компонент умирает.
 
-## DestroyRef
+### Проблема: ручные отписки
 
-\`DestroyRef\` — инжектируемый токен, дающий доступ к моменту уничтожения текущего контекста (компонента, директивы, сервиса с тем же lifecycle). Метод \`onDestroy(cb)\` регистрирует колбэк очистки.
+**Подписка** (subscription) — это когда ты говоришь потоку (Observable из RxJS): «сообщай мне о новых значениях». Пока не отпишешься, поток держит ссылку на твой колбэк — отсюда утечки. Классический способ уборки — оператор \`takeUntil(this.destroy$)\` с отдельным \`Subject\`:
+
+\`\`\`ts
+private destroy$ = new Subject<void>();
+ngOnDestroy() {
+  this.destroy$.next();
+  this.destroy$.complete();
+}
+\`\`\`
+
+\`Subject\` тут — «сигнальная ракета»: в \`ngOnDestroy\` (метод жизненного цикла, вызывается при уничтожении компонента) ты её пускаешь, и все подписки с \`takeUntil\` завершаются. Работает, но это много шаблонного кода, и легко забыть.
+
+### DestroyRef
+
+\`DestroyRef\` — инжектируемый токен (объект, который ты получаешь через систему внедрения зависимостей Angular функцией \`inject()\`). Он даёт доступ к моменту уничтожения **текущего контекста** — компонента, директивы или сервиса с тем же временем жизни. Его метод \`onDestroy(cb)\` регистрирует колбэк, который выполнится при уничтожении:
 
 \`\`\`ts
 private destroyRef = inject(DestroyRef);
@@ -1243,33 +1335,65 @@ ngOnInit() {
 }
 \`\`\`
 
-## takeUntilDestroyed
+Здесь мы регистрируем очистку таймера прямо рядом с его созданием — не нужно отдельно лезть в \`ngOnDestroy\`.
 
-RxJS-оператор, который автоматически завершает подписку при уничтожении контекста, используя \`DestroyRef\` под капотом.
+### takeUntilDestroyed
+
+Это RxJS-оператор, который сам завершает подписку при уничтожении контекста, используя \`DestroyRef\` под капотом. По сути — готовый \`takeUntil\`, за которым не надо следить:
 
 \`\`\`ts
 this.data$
-  .pipe(takeUntilDestroyed()) // в конструкторе/поле — берёт DestroyRef сам
+  .pipe(takeUntilDestroyed()) // в конструкторе/инициализаторе поля — берёт DestroyRef сам
   .subscribe();
 \`\`\`
 
-## Где вызывать
+### Где его можно вызывать
 
-- **Без аргумента** \`takeUntilDestroyed()\` должен вызываться в **injection-контексте** (инициализатор поля, конструктор), чтобы получить \`DestroyRef\` через \`inject()\`.
-- **Вне** этого контекста (например, в \`ngOnInit\` или колбэке) нужно передать ref явно: \`takeUntilDestroyed(this.destroyRef)\`.
+- **Без аргумента** \`takeUntilDestroyed()\` должен вызываться в **injection-контексте** — то есть там, где Angular разрешает \`inject()\`: в инициализаторе поля или в конструкторе. Тогда оператор сам достанет \`DestroyRef\`.
+- **Вне** этого контекста (например, в \`ngOnInit\` или в обычном колбэке) \`inject()\` уже недоступен, поэтому ref нужно передать явно:
 
-## Нюансы
+\`\`\`ts
+ngOnInit() {
+  this.svc.stream$
+    .pipe(takeUntilDestroyed(this.destroyRef)) // ref передан руками
+    .subscribe(v => this.handle(v));
+}
+\`\`\`
 
-- Работает для любого контекста с DI, включая сервисы, предоставленные на уровне компонента (уничтожаются вместе с ним).
-- Не отменяет необходимость завершать «горячие» источники; но для подписок это идиоматичная замена \`ngOnDestroy\`.
-- В связке с сигналами (\`toSignal\`) отписка происходит автоматически — ручной \`takeUntilDestroyed\` нужен реже.`,
-      en: `## The problem
+## ⚠️ Подводные камни
 
-The classic unsubscription pattern is \`takeUntil(this.destroy$)\` with a \`Subject\` you must create, emit and complete in \`ngOnDestroy\`. Lots of boilerplate and easy to forget.
+- Главная ошибка — вызвать \`takeUntilDestroyed()\` **без** аргумента вне injection-контекста: будет ошибка «inject() must be called from an injection context». Решение — заранее получить \`destroyRef = inject(DestroyRef)\` в поле и передавать его явно.
+- Работает для любого контекста с DI, включая сервисы, предоставленные **на уровне компонента** (они уничтожаются вместе с ним). А вот глобальный сервис (\`providedIn: 'root'\`) живёт всё время работы приложения — там «уничтожение» практически не наступает.
+- Оператор не отменяет необходимость правильно завершать «горячие» источники, но для подписок это идиоматичная замена ручному \`ngOnDestroy\`.
+- В связке с сигналами (\`toSignal\` — превращает Observable в сигнал) отписка происходит автоматически, так что ручной \`takeUntilDestroyed\` нужен реже.
 
-## DestroyRef
+## 🎯 Запомни
 
-\`DestroyRef\` is an injectable token giving access to the destruction moment of the current context (component, directive, service with the same lifecycle). The \`onDestroy(cb)\` method registers a cleanup callback.
+- \`DestroyRef.onDestroy(cb)\` — регистрирует очистку рядом с местом, где ресурс создан.
+- \`takeUntilDestroyed()\` — автоматическая отписка от Observable при уничтожении контекста.
+- Без аргумента — только в injection-контексте (поле/конструктор); в \`ngOnInit\`/колбэке передавай \`DestroyRef\` явно.
+- Это современная замена паттерну \`takeUntil(destroy$)\` с ручным \`Subject\`.`,
+      en: `## 🧩 In plain words
+
+When a component subscribes to a stream of data, it's like leaving a tap open. If you close the component but not the tap, water keeps flowing (a memory leak, extra calls). You used to have to set up a "valve" by hand and remember to close it on destruction. \`DestroyRef\` and \`takeUntilDestroyed\` are an automatic valve that shuts itself off the moment the component dies.
+
+### The problem: manual unsubscription
+
+A **subscription** is when you tell a stream (an RxJS Observable): "notify me of new values." Until you unsubscribe, the stream holds a reference to your callback — hence the leaks. The classic cleanup is the \`takeUntil(this.destroy$)\` operator with a dedicated \`Subject\`:
+
+\`\`\`ts
+private destroy$ = new Subject<void>();
+ngOnDestroy() {
+  this.destroy$.next();
+  this.destroy$.complete();
+}
+\`\`\`
+
+The \`Subject\` here is a "signal flare": in \`ngOnDestroy\` (a lifecycle method called when the component is destroyed) you fire it, and all subscriptions with \`takeUntil\` complete. It works, but it's a lot of boilerplate and easy to forget.
+
+### DestroyRef
+
+\`DestroyRef\` is an injectable token (an object you obtain through Angular's dependency injection via the \`inject()\` function). It gives access to the destruction moment of the **current context** — a component, directive, or service with the same lifetime. Its \`onDestroy(cb)\` method registers a callback that runs on destruction:
 
 \`\`\`ts
 private destroyRef = inject(DestroyRef);
@@ -1279,26 +1403,44 @@ ngOnInit() {
 }
 \`\`\`
 
-## takeUntilDestroyed
+Here we register the timer cleanup right next to where it's created — no need to jump over to \`ngOnDestroy\` separately.
 
-An RxJS operator that automatically completes the subscription when the context is destroyed, using \`DestroyRef\` under the hood.
+### takeUntilDestroyed
+
+This is an RxJS operator that completes the subscription itself when the context is destroyed, using \`DestroyRef\` under the hood. It's essentially a ready-made \`takeUntil\` you don't have to babysit:
 
 \`\`\`ts
 this.data$
-  .pipe(takeUntilDestroyed()) // in constructor/field — grabs DestroyRef itself
+  .pipe(takeUntilDestroyed()) // in constructor/field initializer — grabs DestroyRef itself
   .subscribe();
 \`\`\`
 
-## Where to call it
+### Where you can call it
 
-- **Without an argument** \`takeUntilDestroyed()\` must be called in an **injection context** (field initializer, constructor) to obtain \`DestroyRef\` via \`inject()\`.
-- **Outside** that context (e.g. in \`ngOnInit\` or a callback) you must pass the ref explicitly: \`takeUntilDestroyed(this.destroyRef)\`.
+- **Without an argument**, \`takeUntilDestroyed()\` must be called in an **injection context** — that is, where Angular allows \`inject()\`: a field initializer or the constructor. Then the operator fetches \`DestroyRef\` itself.
+- **Outside** that context (e.g. in \`ngOnInit\` or a regular callback) \`inject()\` is no longer available, so you must pass the ref explicitly:
 
-## Nuances
+\`\`\`ts
+ngOnInit() {
+  this.svc.stream$
+    .pipe(takeUntilDestroyed(this.destroyRef)) // ref passed by hand
+    .subscribe(v => this.handle(v));
+}
+\`\`\`
 
-- It works for any DI context, including component-level services (destroyed together with the component).
-- It does not remove the need to complete "hot" sources; but for subscriptions it is the idiomatic replacement for \`ngOnDestroy\`.
-- Combined with signals (\`toSignal\`) unsubscription is automatic — manual \`takeUntilDestroyed\` is needed less often.`,
+## ⚠️ Common pitfalls
+
+- The main mistake is calling \`takeUntilDestroyed()\` **without** an argument outside an injection context: you'll get "inject() must be called from an injection context." Fix: grab \`destroyRef = inject(DestroyRef)\` in a field up front and pass it explicitly.
+- It works for any DI context, including **component-level** services (destroyed together with the component). A global service (\`providedIn: 'root'\`), however, lives for the whole app's lifetime — "destruction" essentially never happens there.
+- The operator doesn't remove the need to properly complete "hot" sources, but for subscriptions it's the idiomatic replacement for a manual \`ngOnDestroy\`.
+- Combined with signals (\`toSignal\` — turns an Observable into a signal) unsubscription is automatic, so manual \`takeUntilDestroyed\` is needed less often.
+
+## 🎯 Key takeaways
+
+- \`DestroyRef.onDestroy(cb)\` — registers cleanup right where the resource is created.
+- \`takeUntilDestroyed()\` — automatic unsubscription from an Observable when the context is destroyed.
+- No argument → injection context only (field/constructor); in \`ngOnInit\`/callbacks pass \`DestroyRef\` explicitly.
+- It's the modern replacement for the \`takeUntil(destroy$)\` pattern with a manual \`Subject\`.`,
     },
     codeSnippet: `export class WidgetComponent {
   private destroyRef = inject(DestroyRef);
@@ -1321,52 +1463,15 @@ this.data$
       en: 'How do effect cleanup, untracked and custom computed equality work?',
     },
     answer: {
-      ru: `## Cleanup в effect
+      ru: `## 🧩 Простыми словами
 
-Колбэк effect получает \`onCleanup\`, который вызывается **перед каждым** повторным запуском и при уничтожении. Это место для отмены таймеров, подписок, запросов:
+Сигналы в Angular — это «умные коробки» со значениями: когда значение меняется, всё, что от него зависит, само пересчитывается. Но у этой автоматики есть тонкие настройки. \`effect\` умеет прибираться за собой перед каждым перезапуском. \`untracked\` позволяет «подсмотреть» значение, не подписываясь на него. А кастомное \`equal\` учит сигнал не дёргаться, когда данные по сути те же. Разберём по очереди.
 
-\`\`\`ts
-effect((onCleanup) => {
-  const ctrl = new AbortController();
-  fetch(url(), { signal: ctrl.signal });
-  onCleanup(() => ctrl.abort());
-});
-\`\`\`
+### Cleanup в effect (уборка)
 
-## untracked
+**Сигнал** (signal) — контейнер значения, который оповещает подписчиков об изменениях. **\`effect\`** — функция, которая автоматически перезапускается, когда меняется любой прочитанный внутри неё сигнал (например, чтобы что-то залогировать или сделать запрос).
 
-По умолчанию **любой** сигнал, прочитанный внутри \`effect\`/\`computed\`, становится зависимостью. \`untracked(() => ...)\` читает сигнал **без** создания зависимости — эффект не перезапустится при его изменении.
-
-\`\`\`ts
-effect(() => {
-  const value = data();              // зависимость
-  const cfg = untracked(() => config()); // НЕ зависимость
-  log(value, cfg);
-});
-\`\`\`
-
-Типичный кейс: эффект должен реагировать на \`data\`, но использовать «текущее» значение \`config\` без подписки на него — иначе лишние перезапуски.
-
-## Кастомное equality у computed
-
-\`computed\`/\`signal\` по умолчанию сравнивают через \`Object.is\`. Для объектов/массивов это означает, что новая ссылка с теми же данными считается изменением. Опция \`equal\` задаёт свою функцию сравнения:
-
-\`\`\`ts
-const list = computed(() => filter(items()), {
-  equal: (a, b) => a.length === b.length && a.every((x, i) => x === b[i]),
-});
-\`\`\`
-
-Если \`equal\` вернёт \`true\`, значение считается неизменным — зависимые computed/effects/шаблон **не** пересчитываются, что экономит CD.
-
-## Нюансы
-
-- \`untracked\` также нужен, чтобы безопасно вызывать методы/писать вне реактивного трекинга внутри computed.
-- Слишком тяжёлая \`equal\`-функция может стоить дороже, чем лишний пересчёт — мерьте.
-- \`untracked\` не делает чтение «замороженным»: оно вернёт актуальное значение на момент вызова.`,
-      en: `## Cleanup in effect
-
-An effect callback receives \`onCleanup\`, called **before each** re-run and on destruction. It is the place to cancel timers, subscriptions, requests:
+Колбэк \`effect\` получает аргумент \`onCleanup\` — функцию, куда ты кладёшь «уборку». Она вызывается **перед каждым** повторным запуском эффекта и при его уничтожении. Идеальное место, чтобы отменить таймер, подписку или сетевой запрос:
 
 \`\`\`ts
 effect((onCleanup) => {
@@ -1376,23 +1481,27 @@ effect((onCleanup) => {
 });
 \`\`\`
 
-## untracked
+Здесь \`AbortController\` — способ отменить \`fetch\`. Как только \`url()\` изменится и эффект перезапустится, старый запрос отменяется через \`onCleanup\`, и мы не получим ответ от устаревшего запроса.
 
-By default **any** signal read inside \`effect\`/\`computed\` becomes a dependency. \`untracked(() => ...)\` reads a signal **without** creating a dependency — the effect will not re-run when it changes.
+### untracked (прочитать, но не подписываться)
+
+По умолчанию **любой** сигнал, прочитанный внутри \`effect\` или \`computed\`, становится **зависимостью** — то есть его изменение вызовет пересчёт. Иногда это не нужно: значение хочется просто «подсмотреть». Для этого есть \`untracked(() => ...)\` — читает сигнал **без** создания зависимости:
 
 \`\`\`ts
 effect(() => {
-  const value = data();              // dependency
-  const cfg = untracked(() => config()); // NOT a dependency
+  const value = data();                  // зависимость: меняется — эффект перезапустится
+  const cfg = untracked(() => config());  // НЕ зависимость: изменение config эффект не тронет
   log(value, cfg);
 });
 \`\`\`
 
-Typical case: an effect must react to \`data\` but use the "current" value of \`config\` without subscribing to it — otherwise extra re-runs.
+Типичный случай: эффект должен реагировать на \`data\`, но брать **текущее** значение \`config\`, не перезапускаясь всякий раз, когда \`config\` дёрнулся. Без \`untracked\` были бы лишние перезапуски.
 
-## Custom equality on computed
+### Кастомное equality у computed
 
-\`computed\`/\`signal\` compare via \`Object.is\` by default. For objects/arrays this means a new reference with the same data counts as a change. The \`equal\` option provides a custom comparator:
+**\`computed\`** — сигнал, вычисляемый из других сигналов. По умолчанию Angular сравнивает старое и новое значение через \`Object.is\` (проверка «это тот же самый объект?»). Для объектов и массивов это ловушка: новый массив с точно теми же данными — это новая ссылка, поэтому \`Object.is\` считает его изменившимся, и всё зависимое пересчитывается зря.
+
+Опция \`equal\` задаёт свою функцию сравнения:
 
 \`\`\`ts
 const list = computed(() => filter(items()), {
@@ -1400,13 +1509,82 @@ const list = computed(() => filter(items()), {
 });
 \`\`\`
 
-If \`equal\` returns \`true\`, the value is considered unchanged — dependent computeds/effects/template do **not** recompute, saving CD.
+Если \`equal\` вернёт \`true\` (значения «равны»), Angular считает, что ничего не изменилось — зависимые computed, эффекты и шаблон **не** пересчитываются. Это экономит **CD** (Change Detection — проход Angular, обновляющий DOM).
 
-## Nuances
+## ⚠️ Подводные камни
 
-- \`untracked\` is also needed to safely call methods/write outside reactive tracking inside a computed.
-- An overly heavy \`equal\` function may cost more than a redundant recompute — measure.
-- \`untracked\` does not "freeze" the read: it returns the current value at call time.`,
+- Слишком тяжёлая \`equal\`-функция (например, глубокое сравнение больших структур) может обойтись **дороже**, чем один лишний пересчёт. Всегда мерь, прежде чем оптимизировать.
+- \`untracked\` не «замораживает» значение: он вернёт актуальное на момент вызова, просто не создаст зависимость.
+- \`untracked\` также нужен, чтобы безопасно писать в сигнал или вызывать сторонние методы внутри \`computed\`, не нарушая правило «computed должен быть чистым».
+- \`onCleanup\` вызывается и перед перезапуском, и при уничтожении — не рассчитывай, что он сработает только один раз.
+
+## 🎯 Запомни
+
+- \`onCleanup\` в \`effect\` — отмена ресурсов **перед каждым** перезапуском и при уничтожении.
+- \`untracked(() => sig())\` — прочитать сигнал без подписки, чтобы не ловить лишние перезапуски.
+- \`equal\` у \`computed\`/\`signal\` учит сравнивать по содержимому, а не по ссылке, и пропускать ненужный пересчёт.
+- Кастомное \`equal\` экономит Change Detection, но само не должно быть тяжелее выгоды — мерь.`,
+      en: `## 🧩 In plain words
+
+Signals in Angular are "smart boxes" holding values: when a value changes, everything that depends on it recomputes automatically. But this automation has fine-tuning knobs. \`effect\` can clean up after itself before each re-run. \`untracked\` lets you "peek" at a value without subscribing to it. And a custom \`equal\` teaches a signal not to twitch when the data is essentially the same. Let's take them one at a time.
+
+### Cleanup in effect
+
+A **signal** is a value container that notifies subscribers of changes. An **\`effect\`** is a function that automatically re-runs whenever any signal read inside it changes (e.g. to log something or make a request).
+
+The \`effect\` callback receives an \`onCleanup\` argument — a function where you put the "cleanup." It's called **before each** re-run of the effect and on its destruction. It's the perfect place to cancel a timer, subscription, or network request:
+
+\`\`\`ts
+effect((onCleanup) => {
+  const ctrl = new AbortController();
+  fetch(url(), { signal: ctrl.signal });
+  onCleanup(() => ctrl.abort());
+});
+\`\`\`
+
+Here \`AbortController\` is a way to cancel a \`fetch\`. As soon as \`url()\` changes and the effect re-runs, the old request is aborted via \`onCleanup\`, so we don't get a response from a stale request.
+
+### untracked (read, but don't subscribe)
+
+By default, **any** signal read inside an \`effect\` or \`computed\` becomes a **dependency** — meaning its change triggers a recompute. Sometimes that's not what you want: you just want to "peek." That's what \`untracked(() => ...)\` is for — it reads a signal **without** creating a dependency:
+
+\`\`\`ts
+effect(() => {
+  const value = data();                  // dependency: when it changes, the effect re-runs
+  const cfg = untracked(() => config());  // NOT a dependency: a config change won't touch the effect
+  log(value, cfg);
+});
+\`\`\`
+
+Typical case: the effect must react to \`data\` but read the **current** value of \`config\` without re-running every time \`config\` twitches. Without \`untracked\` you'd get extra re-runs.
+
+### Custom equality on computed
+
+A **\`computed\`** is a signal derived from other signals. By default Angular compares the old and new value with \`Object.is\` (a "is it the very same object?" check). For objects and arrays this is a trap: a new array with exactly the same data is a new reference, so \`Object.is\` sees it as changed, and everything downstream recomputes for nothing.
+
+The \`equal\` option provides a custom comparator:
+
+\`\`\`ts
+const list = computed(() => filter(items()), {
+  equal: (a, b) => a.length === b.length && a.every((x, i) => x === b[i]),
+});
+\`\`\`
+
+If \`equal\` returns \`true\` (the values are "equal"), Angular treats it as unchanged — dependent computeds, effects, and the template do **not** recompute. This saves **CD** (Change Detection — Angular's pass that updates the DOM).
+
+## ⚠️ Common pitfalls
+
+- An overly heavy \`equal\` function (e.g. deep-comparing large structures) can cost **more** than a single redundant recompute. Always measure before optimizing.
+- \`untracked\` doesn't "freeze" the value: it returns the current value at call time, it just doesn't create a dependency.
+- \`untracked\` is also needed to safely write to a signal or call side-effecting methods inside a \`computed\` without breaking the "a computed must be pure" rule.
+- \`onCleanup\` runs both before a re-run and on destruction — don't assume it fires only once.
+
+## 🎯 Key takeaways
+
+- \`onCleanup\` in \`effect\` — cancel resources **before each** re-run and on destruction.
+- \`untracked(() => sig())\` — read a signal without subscribing, to avoid extra re-runs.
+- \`equal\` on \`computed\`/\`signal\` teaches comparison by content, not by reference, and skips needless recomputes.
+- A custom \`equal\` saves Change Detection, but it must not cost more than the benefit — measure.`,
     },
     codeSnippet: `const result = computed(
   () => expensiveTransform(source()),
@@ -1428,51 +1606,13 @@ effect((onCleanup) => {
       en: 'How do you work with FormArray, updateOn and valueChanges in typed reactive forms?',
     },
     answer: {
-      ru: `## FormArray
+      ru: `## 🧩 Простыми словами
 
-\`FormArray\` — динамическая коллекция контролов с числовыми индексами. В отличие от \`FormGroup\` (фиксированные именованные поля), используется для списков переменной длины: теги, строки таблицы, набор телефонов.
+Представь форму, где заранее неизвестно, сколько будет полей: пользователь может добавить один телефон, а может пять. Для таких «списков переменной длины» в Angular есть \`FormArray\` — коробка, в которую можно на лету докидывать и вынимать поля. А \`updateOn\` решает, **когда** форма реагирует на ввод (сразу, при потере фокуса или при отправке), а \`valueChanges\` — это «радиоволна», которая сообщает вам о каждом изменении значения.
 
-\`\`\`ts
-form = this.fb.group({
-  name: this.fb.control('', { nonNullable: true }),
-  phones: this.fb.array<FormControl<string>>([]),
-});
-get phones() { return this.form.controls.phones; }
-addPhone() {
-  this.phones.push(this.fb.control('', { nonNullable: true }));
-}
-removePhone(i: number) { this.phones.removeAt(i); }
-\`\`\`
+### FormArray — список полей переменной длины
 
-## Типизация
-
-Со строго типизированными формами (Angular 14+) \`FormArray<FormControl<string>>\` даёт типобезопасный \`value: string[]\`. \`nonNullable: true\` (или \`NonNullableFormBuilder\`) убирает \`| null\` и делает reset к initial вместо \`null\`.
-
-## updateOn
-
-Стратегия, **когда** контрол обновляет значение и валидируется:
-- \`'change'\` (по умолчанию) — на каждый ввод.
-- \`'blur'\` — при потере фокуса (меньше валидаций, удобно для тяжёлых async-валидаторов).
-- \`'submit'\` — только при сабмите формы.
-
-\`\`\`ts
-new FormControl('', { updateOn: 'blur', validators: [Validators.required] })
-\`\`\`
-
-Можно задать на уровне группы — наследуется детьми.
-
-## valueChanges
-
-\`Observable\`, эмитящий при изменении значения (с учётом \`updateOn\`). Есть парный \`statusChanges\`. \`valueChanges\` отдаёт **типизированное** значение; для side-effect'ов оборачивайте в \`takeUntilDestroyed\` и \`debounceTime\`.
-
-## Нюансы
-
-- \`getRawValue()\` включает \`disabled\`-контролы (которых нет в \`value\`).
-- \`patchValue\` для частичного, \`setValue\` требует все поля.
-- \`valueChanges\` не эмитит при \`emitEvent: false\` — полезно, чтобы не зациклить программные апдейты.`,
-      en: `## FormArray
-
-\`FormArray\` is a dynamic collection of controls with numeric indices. Unlike \`FormGroup\` (fixed named fields), it is used for variable-length lists: tags, table rows, a set of phones.
+\`FormArray\` — это коллекция контролов с числовыми индексами (0, 1, 2...). В отличие от \`FormGroup\`, у которого поля фиксированные и именованные (\`name\`, \`email\`), \`FormArray\` подходит, когда количество полей заранее неизвестно: теги, строки таблицы, набор телефонов.
 
 \`\`\`ts
 form = this.fb.group({
@@ -1486,32 +1626,112 @@ addPhone() {
 removePhone(i: number) { this.phones.removeAt(i); }
 \`\`\`
 
-## Typing
+Здесь \`push\` добавляет новый контрол в конец, а \`removeAt(i)\` удаляет по индексу — как работа с обычным массивом, только для полей формы.
 
-With strictly typed forms (Angular 14+), \`FormArray<FormControl<string>>\` yields a type-safe \`value: string[]\`. \`nonNullable: true\` (or \`NonNullableFormBuilder\`) removes the \`| null\` and resets to the initial value instead of \`null\`.
+### Типизация (Angular 14+)
 
-## updateOn
+С типизированными формами (появились в Angular 14) \`FormArray<FormControl<string>>\` даёт типобезопасное значение \`value: string[]\` — TypeScript знает, что внутри строки. Опция \`nonNullable: true\` (или \`NonNullableFormBuilder\`) убирает \`| null\` из типа и делает так, что \`reset()\` возвращает контрол к начальному значению, а не к \`null\`.
 
-The strategy for **when** a control updates its value and validates:
-- \`'change'\` (default) — on every input.
-- \`'blur'\` — on focus loss (fewer validations, handy for heavy async validators).
-- \`'submit'\` — only on form submit.
+### updateOn — когда форма реагирует
+
+\`updateOn\` — стратегия, определяющая, **в какой момент** контрол обновляет своё значение и запускает валидацию:
+
+- \`'change'\` (по умолчанию) — на каждый ввод символа.
+- \`'blur'\` — при потере фокуса. Валидаций меньше, удобно для тяжёлых асинхронных валидаторов (например, проверка занятости логина на сервере).
+- \`'submit'\` — только при отправке формы.
 
 \`\`\`ts
 new FormControl('', { updateOn: 'blur', validators: [Validators.required] })
 \`\`\`
 
-It can be set at the group level — inherited by children.
+Можно задать \`updateOn\` на уровне всей группы — тогда дети унаследуют стратегию.
 
-## valueChanges
+### valueChanges — поток изменений
 
-An \`Observable\` emitting on value change (respecting \`updateOn\`). There is a paired \`statusChanges\`. \`valueChanges\` emits the **typed** value; for side effects wrap it in \`takeUntilDestroyed\` and \`debounceTime\`.
+\`valueChanges\` — это \`Observable\` (поток данных), который эмитит новое значение при каждом изменении (с учётом \`updateOn\`). Рядом есть парный \`statusChanges\` — поток статуса валидности. Значение приходит **типизированным**. Для побочных эффектов (сохранение, запросы) оборачивайте поток в \`takeUntilDestroyed\` (авто-отписка при уничтожении компонента) и \`debounceTime\` (не дёргать на каждый символ).
 
-## Nuances
+\`\`\`ts
+this.form.controls.phones.valueChanges
+  .pipe(debounceTime(300), takeUntilDestroyed(this.destroyRef))
+  .subscribe(phones => this.savePhones(phones)); // phones: string[]
+\`\`\`
 
-- \`getRawValue()\` includes \`disabled\` controls (absent from \`value\`).
-- \`patchValue\` for partial, \`setValue\` requires all fields.
-- \`valueChanges\` does not emit with \`emitEvent: false\` — useful to avoid loops on programmatic updates.`,
+Здесь мы ждём 300 мс тишины после последнего изменения телефонов и только потом сохраняем — это защищает сервер от лавины запросов.
+
+## ⚠️ Подводные камни
+
+- \`getRawValue()\` включает и \`disabled\`-контролы, которых нет в обычном \`value\`.
+- \`patchValue\` обновляет только переданные поля, а \`setValue\` требует указать **все** поля.
+- При \`emitEvent: false\` программное обновление **не** вызывает \`valueChanges\` — так избегают бесконечных циклов, когда подписка сама меняет форму.
+
+## 🎯 Запомни
+
+- \`FormArray\` — для списков переменной длины; \`push\`/\`removeAt\` управляют полями.
+- \`updateOn\` (\`change\`/\`blur\`/\`submit\`) решает, когда срабатывает валидация и обновляется значение.
+- \`valueChanges\` — типизированный поток изменений; всегда добавляйте \`takeUntilDestroyed\`, чтобы не текла память.`,
+      en: `## 🧩 In plain words
+
+Imagine a form where you don't know upfront how many fields there will be: a user might add one phone number, or five. For such "variable-length lists" Angular has \`FormArray\` — a box you can add fields to and remove them from on the fly. \`updateOn\` decides **when** the form reacts to input (immediately, on blur, or on submit), and \`valueChanges\` is a "radio signal" that tells you about every value change.
+
+### FormArray — a variable-length list of fields
+
+\`FormArray\` is a collection of controls with numeric indices (0, 1, 2...). Unlike \`FormGroup\`, which has fixed named fields (\`name\`, \`email\`), \`FormArray\` fits when the number of fields isn't known ahead of time: tags, table rows, a set of phones.
+
+\`\`\`ts
+form = this.fb.group({
+  name: this.fb.control('', { nonNullable: true }),
+  phones: this.fb.array<FormControl<string>>([]),
+});
+get phones() { return this.form.controls.phones; }
+addPhone() {
+  this.phones.push(this.fb.control('', { nonNullable: true }));
+}
+removePhone(i: number) { this.phones.removeAt(i); }
+\`\`\`
+
+Here \`push\` appends a new control, and \`removeAt(i)\` deletes one by index — just like working with a regular array, but for form fields.
+
+### Typing (Angular 14+)
+
+With typed forms (introduced in Angular 14) \`FormArray<FormControl<string>>\` yields a type-safe \`value: string[]\` — TypeScript knows the items are strings. The \`nonNullable: true\` option (or \`NonNullableFormBuilder\`) removes the \`| null\` from the type and makes \`reset()\` return the control to its initial value instead of \`null\`.
+
+### updateOn — when the form reacts
+
+\`updateOn\` is the strategy deciding **at what moment** a control updates its value and runs validation:
+
+- \`'change'\` (default) — on every keystroke.
+- \`'blur'\` — on focus loss. Fewer validations, handy for heavy async validators (e.g. checking username availability on the server).
+- \`'submit'\` — only when the form is submitted.
+
+\`\`\`ts
+new FormControl('', { updateOn: 'blur', validators: [Validators.required] })
+\`\`\`
+
+You can set \`updateOn\` at the group level — children then inherit the strategy.
+
+### valueChanges — the stream of changes
+
+\`valueChanges\` is an \`Observable\` (a data stream) that emits a new value on each change (respecting \`updateOn\`). There's a paired \`statusChanges\` — a stream of validity status. The value arrives **typed**. For side effects (saving, requests) wrap the stream in \`takeUntilDestroyed\` (auto-unsubscribe when the component is destroyed) and \`debounceTime\` (don't fire on every keystroke).
+
+\`\`\`ts
+this.form.controls.phones.valueChanges
+  .pipe(debounceTime(300), takeUntilDestroyed(this.destroyRef))
+  .subscribe(phones => this.savePhones(phones)); // phones: string[]
+\`\`\`
+
+Here we wait for 300 ms of silence after the last phone edit and only then save — protecting the server from a flood of requests.
+
+## ⚠️ Common pitfalls
+
+- \`getRawValue()\` includes \`disabled\` controls, which are absent from the plain \`value\`.
+- \`patchValue\` updates only the passed fields, while \`setValue\` requires **all** fields.
+- With \`emitEvent: false\` a programmatic update does **not** trigger \`valueChanges\` — this avoids infinite loops where a subscription itself changes the form.
+
+## 🎯 Key takeaways
+
+- \`FormArray\` is for variable-length lists; \`push\`/\`removeAt\` manage the fields.
+- \`updateOn\` (\`change\`/\`blur\`/\`submit\`) decides when validation runs and the value updates.
+- \`valueChanges\` is a typed stream of changes; always add \`takeUntilDestroyed\` to avoid memory leaks.`,
     },
     codeSnippet: `this.form.controls.phones.valueChanges
   .pipe(debounceTime(300), takeUntilDestroyed(this.destroyRef))
@@ -1527,22 +1747,35 @@ An \`Observable\` emitting on value change (respecting \`updateOn\`). There is a
       en: 'How do CanDeactivate and RouteReuseStrategy work, and what problems do they solve?',
     },
     answer: {
-      ru: `## CanDeactivate
+      ru: `## 🧩 Простыми словами
 
-Гвард, который вызывается **перед уходом** с маршрута и может **отменить** навигацию. Главный кейс — «у вас несохранённые изменения, точно уйти?».
+Два разных инструмента роутера про «уход» и «возврат». \`CanDeactivate\` — это охранник у выхода: он спрашивает «точно уходишь? у тебя же несохранённые изменения» и может не выпустить. \`RouteReuseStrategy\` — это про то, пересоздавать ли компонент заново при возврате или сохранить его как есть (как свернуть вкладку в браузере, а не закрыть).
+
+### CanDeactivate — охранник на выходе
+
+\`CanDeactivate\` — это гвард (проверка), который вызывается **перед уходом** с маршрута и может **отменить** навигацию. Классический случай: пользователь заполнил форму, но не сохранил и жмёт «назад» — надо спросить «уйти без сохранения?».
 
 \`\`\`ts
 export const unsavedGuard: CanDeactivateFn<FormComponent> = (cmp) =>
   cmp.form.pristine || confirm('Покинуть без сохранения?');
 \`\`\`
 
-Возврат \`false\`/\`UrlTree\`/\`Observable<boolean>\` останавливает или перенаправляет навигацию. Функциональный стиль (\`CanDeactivateFn\`) заменил классовый интерфейс; внутри доступен \`inject()\`.
+\`pristine\` означает «форму не трогали». Если её меняли — показываем \`confirm\`. Возврат \`false\` останавливает навигацию, \`UrlTree\` перенаправляет, а \`Observable<boolean>\` позволяет дождаться ответа из диалога. Функциональный стиль (\`CanDeactivateFn\`) заменил старый классовый интерфейс; внутри доступен \`inject()\` для получения сервисов.
 
-## RouteReuseStrategy
+\`\`\`ts
+export const unsavedGuard: CanDeactivateFn<EditComponent> = (component) => {
+  if (component.form.pristine) return true;
+  const dialog = inject(ConfirmDialog);
+  return dialog.confirm('Discard changes?');
+};
+// route: { path: 'edit', component: EditComponent, canDeactivate: [unsavedGuard] }
+\`\`\`
 
-Стратегия, определяющая, **переиспользовать** ли уже созданный компонент маршрута вместо его пересоздания. По умолчанию Angular переиспользует компонент, если меняются только параметры одного и того же роута (тогда срабатывает не пересоздание, а \`paramMap\`-emit).
+### RouteReuseStrategy — переиспользовать компонент или пересоздавать
 
-Кастомная стратегия позволяет **сохранять и восстанавливать** целые поддеревья (detach/store/retrieve) — например, кэшировать состояние вкладок или результаты поиска при возврате назад.
+\`RouteReuseStrategy\` — стратегия, которая решает, **переиспользовать** ли уже созданный компонент маршрута вместо его пересоздания с нуля. По умолчанию Angular переиспользует компонент, если меняются только параметры **того же** роута (например, \`/user/1\` → \`/user/2\`): компонент не пересоздаётся, а просто эмитит новый \`paramMap\`.
+
+Кастомная стратегия позволяет **сохранять и восстанавливать** целые поддеревья (методы detach/store/retrieve) — например, кэшировать состояние вкладок или результаты поиска, чтобы при возврате назад страница осталась ровно такой, какой её оставили.
 
 \`\`\`ts
 class TabReuseStrategy extends BaseRouteReuseStrategy {
@@ -1556,27 +1789,48 @@ class TabReuseStrategy extends BaseRouteReuseStrategy {
 // { provide: RouteReuseStrategy, useClass: TabReuseStrategy }
 \`\`\`
 
-## Нюансы
+Здесь \`shouldDetach\` говорит «этот роут стоит сохранить при уходе», \`store\` кладёт сохранённый компонент в кэш, а \`shouldAttach\`/\`retrieve\` восстанавливают его при возврате.
 
-- Переиспользование компонента означает, что \`ngOnInit\` **не** вызывается повторно — подписывайтесь на \`paramMap\`/\`data\`, а не читайте snapshot один раз.
-- Неаккуратная reuse-стратегия ведёт к утечкам памяти (сохранённые, но никогда не восстановленные хендлеры) и устаревшему состоянию.
-- \`shouldReuseRoute\` сравнивает \`future\` и \`curr\` снапшоты — основа дефолтного поведения.`,
-      en: `## CanDeactivate
+## ⚠️ Подводные камни
 
-A guard invoked **before leaving** a route that can **cancel** navigation. The main case is "you have unsaved changes, leave anyway?".
+- Переиспользование компонента означает, что \`ngOnInit\` **не** вызывается повторно — подписывайтесь на \`paramMap\`/\`data\`, а не читайте \`snapshot\` один раз, иначе данные не обновятся при смене параметров.
+- Неаккуратная reuse-стратегия ведёт к утечкам памяти (компоненты сохранены, но никогда не восстанавливаются) и к устаревшему состоянию на экране.
+- \`shouldReuseRoute\` сравнивает \`future\` и \`curr\` снапшоты — это основа дефолтного поведения переиспользования.
+
+## 🎯 Запомни
+
+- \`CanDeactivate\` — охранник перед уходом; вернёшь \`false\`/\`UrlTree\` — навигация отменяется или перенаправляется.
+- \`RouteReuseStrategy\` решает, пересоздавать компонент или сохранить его (detach/store/retrieve).
+- При переиспользовании \`ngOnInit\` не срабатывает снова — слушайте \`paramMap\`, а не читайте snapshot единожды.`,
+      en: `## 🧩 In plain words
+
+Two different router tools about "leaving" and "coming back". \`CanDeactivate\` is a guard at the exit door: it asks "are you sure you want to leave? you have unsaved changes" and can block you. \`RouteReuseStrategy\` is about whether to recreate a component from scratch when you return, or keep it as-is (like minimizing a browser tab instead of closing it).
+
+### CanDeactivate — the guard at the exit
+
+\`CanDeactivate\` is a guard (a check) invoked **before leaving** a route that can **cancel** navigation. The classic case: the user filled in a form, didn't save, and hits "back" — you need to ask "leave without saving?".
 
 \`\`\`ts
 export const unsavedGuard: CanDeactivateFn<FormComponent> = (cmp) =>
   cmp.form.pristine || confirm('Leave without saving?');
 \`\`\`
 
-Returning \`false\`/\`UrlTree\`/\`Observable<boolean>\` stops or redirects navigation. The functional style (\`CanDeactivateFn\`) replaced the class interface; \`inject()\` is available inside.
+\`pristine\` means "the form was never touched". If it was changed, we show a \`confirm\`. Returning \`false\` stops navigation, a \`UrlTree\` redirects, and an \`Observable<boolean>\` lets you wait for an answer from a dialog. The functional style (\`CanDeactivateFn\`) replaced the old class interface; \`inject()\` is available inside to grab services.
 
-## RouteReuseStrategy
+\`\`\`ts
+export const unsavedGuard: CanDeactivateFn<EditComponent> = (component) => {
+  if (component.form.pristine) return true;
+  const dialog = inject(ConfirmDialog);
+  return dialog.confirm('Discard changes?');
+};
+// route: { path: 'edit', component: EditComponent, canDeactivate: [unsavedGuard] }
+\`\`\`
 
-A strategy that decides whether to **reuse** an already created route component instead of recreating it. By default Angular reuses the component when only the params of the same route change (then it is not recreated, but \`paramMap\` emits).
+### RouteReuseStrategy — reuse a component or recreate it
 
-A custom strategy lets you **store and restore** whole subtrees (detach/store/retrieve) — e.g. caching tab state or search results when navigating back.
+\`RouteReuseStrategy\` is a strategy that decides whether to **reuse** an already created route component instead of recreating it from scratch. By default Angular reuses the component when only the params of the **same** route change (e.g. \`/user/1\` → \`/user/2\`): the component isn't recreated, it simply emits a new \`paramMap\`.
+
+A custom strategy lets you **store and restore** whole subtrees (the detach/store/retrieve methods) — e.g. caching tab state or search results so that when you navigate back the page is exactly as you left it.
 
 \`\`\`ts
 class TabReuseStrategy extends BaseRouteReuseStrategy {
@@ -1590,11 +1844,19 @@ class TabReuseStrategy extends BaseRouteReuseStrategy {
 // { provide: RouteReuseStrategy, useClass: TabReuseStrategy }
 \`\`\`
 
-## Nuances
+Here \`shouldDetach\` says "this route is worth saving on leave", \`store\` puts the saved component into a cache, and \`shouldAttach\`/\`retrieve\` restore it on return.
 
-- Reusing a component means \`ngOnInit\` is **not** called again — subscribe to \`paramMap\`/\`data\` instead of reading the snapshot once.
-- A careless reuse strategy causes memory leaks (stored but never restored handlers) and stale state.
-- \`shouldReuseRoute\` compares the \`future\` and \`curr\` snapshots — the basis of the default behavior.`,
+## ⚠️ Common pitfalls
+
+- Reusing a component means \`ngOnInit\` is **not** called again — subscribe to \`paramMap\`/\`data\` instead of reading the \`snapshot\` once, or your data won't update when params change.
+- A careless reuse strategy causes memory leaks (components stored but never restored) and stale state on screen.
+- \`shouldReuseRoute\` compares the \`future\` and \`curr\` snapshots — the basis of the default reuse behavior.
+
+## 🎯 Key takeaways
+
+- \`CanDeactivate\` is a guard before leaving; return \`false\`/\`UrlTree\` to cancel or redirect navigation.
+- \`RouteReuseStrategy\` decides whether to recreate a component or keep it (detach/store/retrieve).
+- On reuse \`ngOnInit\` doesn't fire again — listen to \`paramMap\` rather than reading the snapshot once.`,
     },
     codeSnippet: `export const unsavedGuard: CanDeactivateFn<EditComponent> = (component) => {
   if (component.form.pristine) return true;
@@ -1613,9 +1875,13 @@ class TabReuseStrategy extends BaseRouteReuseStrategy {
       en: 'What preloading strategies exist, and how does route-level code splitting work?',
     },
     answer: {
-      ru: `## Code splitting на уровне роутов
+      ru: `## 🧩 Простыми словами
 
-\`loadComponent\`/\`loadChildren\` с динамическим \`import()\` создают **отдельные чанки**, которые грузятся лениво при переходе на маршрут. Это уменьшает initial bundle.
+Представь, что всё приложение — это один огромный чемодан, который пользователь скачивает при первом заходе. Чем он больше, тем дольше грузится старт. Code splitting разрезает чемодан на части: сначала грузим только нужное для первой страницы, а раздел «Админка» скачаем лениво, лишь когда пользователь туда зайдёт. Preloading — умный ход: пока пользователь смотрит первую страницу, мы **в фоне** тихонько докачиваем остальные части, чтобы переход был мгновенным.
+
+### Code splitting на уровне роутов
+
+\`loadComponent\`/\`loadChildren\` с динамическим \`import()\` создают **отдельные чанки** (файлы), которые грузятся лениво — только при переходе на маршрут. Это уменьшает initial bundle (то, что качается при старте).
 
 \`\`\`ts
 {
@@ -1624,15 +1890,15 @@ class TabReuseStrategy extends BaseRouteReuseStrategy {
 }
 \`\`\`
 
-Минус ленивой загрузки: при первом переходе пользователь ждёт сетевой запрос чанка.
+Минус ленивой загрузки: при **первом** переходе пользователь ждёт сетевой запрос чанка — короткая заминка.
 
-## Preloading
+### Preloading — фоновая докачка
 
-Preloading решает этот минус, загружая ленивые чанки **в фоне** после старта приложения, не блокируя его. Настраивается во \`provideRouter\`:
+Preloading решает этот минус: он грузит ленивые чанки **в фоне** уже после старта приложения, не блокируя его. Настраивается во \`provideRouter\`:
 
-- \`withPreloading(PreloadAllModules)\` — грузит **все** ленивые маршруты в фоне. Просто, но качает лишнее.
+- \`withPreloading(PreloadAllModules)\` — грузит в фоне **все** ленивые маршруты. Просто, но качает лишнее (даже то, куда пользователь не зайдёт).
 - \`NoPreloading\` (по умолчанию) — ничего не предзагружается.
-- **Кастомная стратегия** — точечно, например по флагу \`data: { preload: true }\` или по скорости сети.
+- **Кастомная стратегия** — точечно: например, по флагу \`data: { preload: true }\` или в зависимости от скорости сети.
 
 \`\`\`ts
 @Injectable()
@@ -1644,15 +1910,36 @@ export class SelectivePreload implements PreloadingStrategy {
 provideRouter(routes, withPreloading(SelectivePreload))
 \`\`\`
 
-## Нюансы
+Здесь метод \`preload\` для каждого роута решает: если стоит флаг — вызываем \`load()\` (качаем сейчас), иначе \`of(null)\` (пропускаем).
 
-- Preloading стартует, когда приложение **стабильно** (после первого рендера), чтобы не конкурировать за пропускную способность с критичными ресурсами.
-- Можно учитывать \`navigator.connection\` (Network Information API), чтобы не предзагружать на медленном/lie-fi соединении.
-- \`@defer\` и preloading решают **разные** задачи: defer — для **частей шаблона**, preloading — для **роутов**; их часто комбинируют.
-- В сочетании с SSR ленивые роуты влияют на hydration-границы.`,
-      en: `## Route-level code splitting
+\`\`\`ts
+bootstrapApplication(App, {
+  providers: [
+    provideRouter(routes, withPreloading(PreloadAllModules)),
+  ],
+});
+// route: { path: 'reports', loadChildren: () => import('./reports.routes') }
+\`\`\`
 
-\`loadComponent\`/\`loadChildren\` with a dynamic \`import()\` create **separate chunks** loaded lazily when navigating to the route. This shrinks the initial bundle.
+## ⚠️ Подводные камни
+
+- Preloading стартует, когда приложение **стабильно** (после первого рендера), чтобы не конкурировать за пропускную способность с критичными для старта ресурсами.
+- Можно учитывать \`navigator.connection\` (Network Information API) и не предзагружать на медленном или нестабильном («lie-fi») соединении.
+- \`@defer\` и preloading решают **разные** задачи: \`@defer\` — про ленивую загрузку **частей шаблона**, preloading — про **роуты**; их часто комбинируют.
+- В сочетании с SSR ленивые роуты влияют на границы гидратации (hydration boundaries).
+
+## 🎯 Запомни
+
+- Code splitting (\`loadComponent\`/\`loadChildren\` + \`import()\`) режет бандл на ленивые чанки — меньше initial bundle.
+- Preloading докачивает чанки в фоне, убирая заминку при первом переходе.
+- \`PreloadAllModules\` — просто, но грузит всё; кастомная \`PreloadingStrategy\` — точечно и умнее.`,
+      en: `## 🧩 In plain words
+
+Imagine the whole app is one giant suitcase the user downloads on first visit. The bigger it is, the slower the startup. Code splitting cuts the suitcase into parts: first we load only what the landing page needs, and the "Admin" section we download lazily, only when the user goes there. Preloading is the clever move: while the user looks at the first page, we quietly download the remaining parts **in the background**, so the next navigation feels instant.
+
+### Route-level code splitting
+
+\`loadComponent\`/\`loadChildren\` with a dynamic \`import()\` create **separate chunks** (files) loaded lazily — only when navigating to the route. This shrinks the initial bundle (what gets downloaded at startup).
 
 \`\`\`ts
 {
@@ -1661,15 +1948,15 @@ provideRouter(routes, withPreloading(SelectivePreload))
 }
 \`\`\`
 
-The downside of lazy loading: on the first navigation the user waits for the chunk's network request.
+The downside of lazy loading: on the **first** navigation the user waits for the chunk's network request — a short hiccup.
 
-## Preloading
+### Preloading — background download
 
-Preloading addresses this by loading lazy chunks **in the background** after app start, without blocking it. Configured in \`provideRouter\`:
+Preloading addresses this: it loads lazy chunks **in the background** after app start, without blocking it. Configured in \`provideRouter\`:
 
-- \`withPreloading(PreloadAllModules)\` — loads **all** lazy routes in the background. Simple, but fetches too much.
+- \`withPreloading(PreloadAllModules)\` — loads **all** lazy routes in the background. Simple, but fetches too much (even routes the user never visits).
 - \`NoPreloading\` (default) — nothing is preloaded.
-- A **custom strategy** — selectively, e.g. by a \`data: { preload: true }\` flag or network speed.
+- A **custom strategy** — selectively: e.g. by a \`data: { preload: true }\` flag or depending on network speed.
 
 \`\`\`ts
 @Injectable()
@@ -1681,12 +1968,29 @@ export class SelectivePreload implements PreloadingStrategy {
 provideRouter(routes, withPreloading(SelectivePreload))
 \`\`\`
 
-## Nuances
+Here the \`preload\` method decides per route: if the flag is set we call \`load()\` (fetch now), otherwise \`of(null)\` (skip it).
 
-- Preloading starts once the app is **stable** (after the first render) so it does not compete for bandwidth with critical resources.
-- You can consider \`navigator.connection\` (Network Information API) to avoid preloading on slow/lie-fi connections.
-- \`@defer\` and preloading solve **different** problems: defer for **template parts**, preloading for **routes**; they are often combined.
-- Combined with SSR, lazy routes affect hydration boundaries.`,
+\`\`\`ts
+bootstrapApplication(App, {
+  providers: [
+    provideRouter(routes, withPreloading(PreloadAllModules)),
+  ],
+});
+// route: { path: 'reports', loadChildren: () => import('./reports.routes') }
+\`\`\`
+
+## ⚠️ Common pitfalls
+
+- Preloading starts once the app is **stable** (after the first render) so it doesn't compete for bandwidth with resources critical to startup.
+- You can consider \`navigator.connection\` (Network Information API) and skip preloading on slow or unstable ("lie-fi") connections.
+- \`@defer\` and preloading solve **different** problems: \`@defer\` is about lazily loading **template parts**, preloading is about **routes**; they're often combined.
+- Combined with SSR, lazy routes affect hydration boundaries.
+
+## 🎯 Key takeaways
+
+- Code splitting (\`loadComponent\`/\`loadChildren\` + \`import()\`) cuts the bundle into lazy chunks — smaller initial bundle.
+- Preloading fetches chunks in the background, removing the hiccup on the first navigation.
+- \`PreloadAllModules\` is simple but loads everything; a custom \`PreloadingStrategy\` is selective and smarter.`,
     },
     codeSnippet: `bootstrapApplication(App, {
   providers: [
@@ -1705,62 +2009,106 @@ provideRouter(routes, withPreloading(SelectivePreload))
       en: 'How does the async pipe work internally, and why are pure pipes memoized while impure ones are not?',
     },
     answer: {
-      ru: `## Чистые пайпы и мемоизация
+      ru: `## 🧩 Простыми словами
 
-Пайп по умолчанию **pure**. Его \`transform\` вызывается **только** когда меняется ссылка на входной аргумент (или сам пайп-binding). Angular кэширует последний результат: если входы те же — \`transform\` не вызывается, возвращается прежнее значение. Это мемоизация на уровне CD, делающая пайпы дешёвыми.
+Пайп (pipe) в Angular — это маленький преобразователь данных в шаблоне: \`{{ price | currency }}\`. Есть два типа. «Чистый» пайп — как калькулятор с памятью: если ты дал те же числа, что и в прошлый раз, он не считает заново, а сразу отдаёт запомненный ответ (это и есть мемоизация). «Нечистый» пайп памяти не доверяет и пересчитывает **каждый раз**. \`async\` — особый нечистый пайп: он сам подписывается на поток данных и сам отписывается, избавляя вас от ручной рутины.
 
-Следствие: мутация массива без новой ссылки (\`arr.push\`) **не** обновит pure-пайп — нужна новая ссылка.
+### Чистые пайпы и мемоизация
 
-## Нечистые пайпы
+По умолчанию пайп **pure** (чистый). Его метод \`transform\` вызывается **только** когда меняется ссылка на входной аргумент (или сам binding пайпа). Angular кэширует последний результат: если входы те же — \`transform\` не вызывается, возвращается прежнее значение. Это мемоизация (запоминание результата) на уровне change detection, которая делает пайпы дешёвыми.
 
-\`pure: false\` отключает мемоизацию: \`transform\` вызывается **на каждом** проходе CD. Это нужно для пайпов, зависящих от внутреннего состояния или времени (\`async\`, \`json\` для отладки, кастомный фильтр по мутируемому массиву). Цена — частые вызовы, поэтому \`transform\` должен быть лёгким, иначе бьёт по производительности.
+Важное следствие: если мутировать массив без создания новой ссылки (\`arr.push(x)\`), pure-пайп **не** обновится — Angular видит «та же ссылка» и пропускает пересчёт. Нужна новая ссылка (\`arr = [...arr, x]\`).
 
-## Как устроен AsyncPipe
+### Нечистые пайпы
 
-\`AsyncPipe\` — нечистый пайп с состоянием:
-1. При первом \`transform(obs$)\` он **подписывается** на Observable/Promise и запоминает ссылку.
-2. На каждое значение колбэк вызывает \`ChangeDetectorRef.markForCheck()\`, помечая view грязным (важно для OnPush/zoneless), и сохраняет последнее значение.
-3. \`transform\` возвращает закэшированное последнее значение (вызывается часто, т.к. пайп impure, но реальная работа — только при новом emit).
-4. Если ссылка на источник **сменилась**, пайп **отписывается** от старого и подписывается на новый.
-5. В \`ngOnDestroy\` пайпа подписка закрывается — **автоматическая отписка** без утечек.
+\`pure: false\` отключает мемоизацию: \`transform\` вызывается **на каждом** проходе change detection. Это нужно пайпам, которые зависят от внутреннего состояния или времени: \`async\`, \`json\` (для отладки), кастомный фильтр по мутируемому массиву. Цена — частые вызовы, поэтому \`transform\` должен быть лёгким, иначе он бьёт по производительности.
+
+\`\`\`ts
+@Pipe({ name: 'filter', pure: false }) // impure: выполняется на каждом проходе CD
+export class FilterPipe implements PipeTransform {
+  transform(items: Item[], term: string): Item[] {
+    return items.filter(i => i.name.includes(term)); // держите это дешёвым!
+  }
+}
+\`\`\`
+
+### Как устроен AsyncPipe
+
+\`AsyncPipe\` — это нечистый пайп с внутренним состоянием. Пошагово:
+
+1. При первом \`transform(obs$)\` он **подписывается** на Observable/Promise и запоминает ссылку на источник.
+2. На каждое новое значение колбэк вызывает \`ChangeDetectorRef.markForCheck()\` — помечает view «грязным», чтобы Angular его перерисовал (критично для стратегии OnPush и zoneless-режима), и сохраняет последнее значение.
+3. Сам \`transform\` возвращает закэшированное последнее значение. Вызывается он часто (пайп же impure), но реальная работа происходит только при новом emit.
+4. Если ссылка на источник **сменилась** (вы подставили другой Observable), пайп **отписывается** от старого и подписывается на новый.
+5. В \`ngOnDestroy\` пайпа подписка закрывается — **автоматическая отписка** без утечек памяти.
 
 \`\`\`html
 @if (user$ | async; as user) { {{ user.name }} }
 \`\`\`
 
-## Нюансы
+Здесь \`as user\` сохраняет значение в переменную, чтобы использовать его несколько раз без повторных подписок.
 
-- \`async\` устраняет ручные \`subscribe\`/\`unsubscribe\` и интегрируется с OnPush через \`markForCheck\`.
-- Несколько \`| async\` на один поток создают **несколько подписок** — выносите в \`as\` переменную.
-- В мире сигналов \`toSignal\` — более идиоматичная альтернатива \`async\`.`,
-      en: `## Pure pipes and memoization
+## ⚠️ Подводные камни
 
-A pipe is **pure** by default. Its \`transform\` is called **only** when the reference of an input argument changes (or the pipe binding itself). Angular caches the last result: if inputs are the same, \`transform\` is not called and the previous value is returned. This is CD-level memoization that makes pipes cheap.
+- \`async\` избавляет от ручных \`subscribe\`/\`unsubscribe\` и корректно работает с OnPush через \`markForCheck\`.
+- Несколько \`| async\` на **один и тот же** поток создают **несколько подписок** (несколько запросов!) — выносите значение в \`as\`-переменную.
+- В мире сигналов \`toSignal(obs$)\` — более идиоматичная альтернатива \`async\`.
 
-Consequence: mutating an array without a new reference (\`arr.push\`) does **not** update a pure pipe — you need a new reference.
+## 🎯 Запомни
 
-## Impure pipes
+- Pure-пайп пересчитывается только при смене **ссылки** на вход — отсюда мемоизация и требование иммутабельности.
+- Impure-пайп (\`pure: false\`) считает на каждом CD — держите \`transform\` лёгким.
+- \`AsyncPipe\` — нечистый пайп, который сам подписывается, дёргает \`markForCheck\` на emit и автоматически отписывается в \`ngOnDestroy\`.`,
+      en: `## 🧩 In plain words
 
-\`pure: false\` disables memoization: \`transform\` is called on **every** CD pass. This is needed for pipes that depend on internal state or time (\`async\`, \`json\` for debugging, a custom filter over a mutated array). The cost is frequent calls, so \`transform\` must be lightweight or it hurts performance.
+A pipe in Angular is a small data transformer in the template: \`{{ price | currency }}\`. There are two kinds. A "pure" pipe is like a calculator with memory: if you feed it the same numbers as last time, it doesn't recompute — it hands back the remembered answer (that's memoization). An "impure" pipe trusts no memory and recomputes **every time**. \`async\` is a special impure pipe: it subscribes to a data stream and unsubscribes for you, sparing you the manual chore.
 
-## How AsyncPipe works
+### Pure pipes and memoization
 
-\`AsyncPipe\` is a stateful impure pipe:
-1. On the first \`transform(obs$)\` it **subscribes** to the Observable/Promise and remembers the reference.
-2. On each value the callback calls \`ChangeDetectorRef.markForCheck()\`, marking the view dirty (crucial for OnPush/zoneless), and stores the latest value.
-3. \`transform\` returns the cached latest value (called often since the pipe is impure, but real work happens only on a new emit).
-4. If the source reference **changes**, the pipe **unsubscribes** from the old one and subscribes to the new one.
-5. In the pipe's \`ngOnDestroy\` the subscription is closed — **automatic unsubscription** without leaks.
+By default a pipe is **pure**. Its \`transform\` method is called **only** when the reference of an input argument changes (or the pipe binding itself). Angular caches the last result: if the inputs are the same, \`transform\` isn't called and the previous value is returned. This is memoization (caching the result) at the change-detection level, which makes pipes cheap.
+
+Important consequence: if you mutate an array without creating a new reference (\`arr.push(x)\`), a pure pipe does **not** update — Angular sees "same reference" and skips the recompute. You need a new reference (\`arr = [...arr, x]\`).
+
+### Impure pipes
+
+\`pure: false\` disables memoization: \`transform\` is called on **every** change-detection pass. This is needed for pipes that depend on internal state or time: \`async\`, \`json\` (for debugging), a custom filter over a mutated array. The cost is frequent calls, so \`transform\` must be lightweight or it hurts performance.
+
+\`\`\`ts
+@Pipe({ name: 'filter', pure: false }) // impure: runs every CD pass
+export class FilterPipe implements PipeTransform {
+  transform(items: Item[], term: string): Item[] {
+    return items.filter(i => i.name.includes(term)); // keep this cheap!
+  }
+}
+\`\`\`
+
+### How AsyncPipe works
+
+\`AsyncPipe\` is an impure pipe with internal state. Step by step:
+
+1. On the first \`transform(obs$)\` it **subscribes** to the Observable/Promise and remembers the source reference.
+2. On each new value the callback calls \`ChangeDetectorRef.markForCheck()\` — marks the view "dirty" so Angular re-renders it (crucial for the OnPush strategy and zoneless mode), and stores the latest value.
+3. \`transform\` itself returns the cached latest value. It's called often (the pipe is impure), but real work happens only on a new emit.
+4. If the source reference **changes** (you swapped in a different Observable), the pipe **unsubscribes** from the old one and subscribes to the new one.
+5. In the pipe's \`ngOnDestroy\` the subscription is closed — **automatic unsubscription** without memory leaks.
 
 \`\`\`html
 @if (user$ | async; as user) { {{ user.name }} }
 \`\`\`
 
-## Nuances
+Here \`as user\` stores the value in a variable so you can use it several times without extra subscriptions.
 
-- \`async\` removes manual \`subscribe\`/\`unsubscribe\` and integrates with OnPush via \`markForCheck\`.
-- Multiple \`| async\` on one stream create **multiple subscriptions** — extract into an \`as\` variable.
-- In the signals world \`toSignal\` is a more idiomatic alternative to \`async\`.`,
+## ⚠️ Common pitfalls
+
+- \`async\` removes manual \`subscribe\`/\`unsubscribe\` and works correctly with OnPush via \`markForCheck\`.
+- Multiple \`| async\` on the **same** stream create **multiple subscriptions** (multiple requests!) — extract the value into an \`as\` variable.
+- In the signals world \`toSignal(obs$)\` is a more idiomatic alternative to \`async\`.
+
+## 🎯 Key takeaways
+
+- A pure pipe recomputes only when the input **reference** changes — hence the memoization and the immutability requirement.
+- An impure pipe (\`pure: false\`) computes on every CD pass — keep \`transform\` lightweight.
+- \`AsyncPipe\` is an impure pipe that subscribes itself, calls \`markForCheck\` on emit, and auto-unsubscribes in \`ngOnDestroy\`.`,
     },
     codeSnippet: `@Pipe({ name: 'filter', pure: false }) // impure: runs every CD pass
 export class FilterPipe implements PipeTransform {
