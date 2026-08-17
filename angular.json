@@ -59,8 +59,8 @@
                 },
                 {
                   "type": "anyComponentStyle",
-                  "maximumWarning": "4kB",
-                  "maximumError": "8kB"
+                  "maximumWarning": "8kB",
+                  "maximumError": "16kB"
                 }
               ],
               "outputHashing": "all",
@@ -76,14 +76,19 @@
         },
         "serve": {
           "builder": "@angular/build:dev-server",
+          "options": {
+            "port": 4300
+          },
           "configurations": {
             "production": {
-              "buildTarget": "fe-interview-guide:build:production"
+              "buildTarget": "fe-interview-guide:build:production",
+              "port": 4300
             },
             "development": {
               "buildTarget": "fe-interview-guide:build:development",
               "hmr": true,
-              "liveReload": true
+              "liveReload": true,
+              "port": 4300
             }
           },
           "defaultConfiguration": "development"

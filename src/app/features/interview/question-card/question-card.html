@@ -1,47 +1,95 @@
-<article class="q-card" [class]="'status-' + status()" [class.expanded]="expanded()">
-  <header class="q-head">
-    <div class="q-meta">
-      <span class="badge" [class]="levelClass()">{{ question().level }}</span>
-      @for (tag of question().tags; track tag) {
-        <span class="tag">#{{ tag }}</span>
-      }
-      <span class="q-id">{{ question().id }}</span>
-    </div>
-
+<article class="card" [class]="'is-' + status()" [class.is-open]="expanded()">
+  <div class="card-row">
     <button
       type="button"
-      class="q-row"
+      class="card-head"
       (click)="toggle()"
-      [attr.aria-expanded]="expanded()">
+      [attr.aria-expanded]="expanded()"
+      [attr.aria-controls]="'answer-' + question().id"
+    >
+      <span class="q-num">#{{ number() }}</span>
       <span class="q-text">{{ question().question[locale()] }}</span>
-      <span class="q-toggle" aria-hidden="true">{{ expanded() ? '−' : '+' }}</span>
+      <span class="q-cat">{{ 'INT_CAT_' + question().category | translate }}</span>
+      <span class="lvl" [class]="levelClass()">{{ question().level }}</span>
+      <span class="chev" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+             stroke-linecap="round" stroke-linejoin="round">
+          <path d="m6 9 6 6 6-6" />
+        </svg>
+      </span>
     </button>
 
-    <div class="q-progress">
+    <!-- Kept out of the toggle button (no nested buttons); revealed on hover,
+         focus or when a status is already set, so a resting row stays clean. -->
+    <button
+      type="button"
+      class="copy-q"
+      [class.is-copied]="questionCopied()"
+      [attr.aria-label]="'INT_COPY_QUESTION' | translate"
+      [title]="(questionCopied() ? 'INT_COPIED' : 'INT_COPY_QUESTION') | translate"
+      (click)="copyQuestion($event)"
+    >
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        @if (questionCopied()) {
+          <path d="m20 6-11 11-5-5" />
+        } @else {
+          <rect x="9" y="9" width="11" height="11" rx="2" />
+          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+        }
+      </svg>
+    </button>
+
+    <div class="status-controls">
       <button
         type="button"
-        class="status-btn learning"
-        [class.active]="status() === 'learning'"
-        (click)="setStatus('learning', $event)">
+        class="status-btn status-btn--learning"
+        [class.is-active]="status() === 'learning'"
+        [attr.aria-pressed]="status() === 'learning'"
+        (click)="setStatus('learning', $event)"
+      >
         {{ 'INT_STATUS_LEARNING' | translate }}
       </button>
       <button
         type="button"
-        class="status-btn known"
-        [class.active]="status() === 'known'"
-        (click)="setStatus('known', $event)">
+        class="status-btn status-btn--known"
+        [class.is-active]="status() === 'known'"
+        [attr.aria-pressed]="status() === 'known'"
+        (click)="setStatus('known', $event)"
+      >
         {{ 'INT_STATUS_KNOWN' | translate }}
       </button>
     </div>
-  </header>
+  </div>
 
   @if (expanded()) {
-    <div class="q-body">
-      <div class="q-answer" [innerHTML]="question().answer[locale()] | markdown"></div>
+    <div class="card-body" [id]="'answer-' + question().id">
+      <div class="tags">
+        @for (tag of question().tags; track tag) {
+          <span class="tag">{{ tag }}</span>
+        }
+      </div>
+
+      <!-- Copy buttons rendered by MarkdownPipe are handled by delegation. -->
+      <div
+        class="md-content"
+        (click)="onAnswerClick($event)"
+        [innerHTML]="question().answer[locale()] | markdown: ('INT_COPY' | translate)"
+      ></div>
 
       @if (question().codeSnippet; as snippet) {
-        <div class="q-snippet">
-          <div class="q-snippet-label">{{ 'INT_CODE_EXAMPLE' | translate }}</div>
+        <div class="snippet">
+          <div class="snippet-head">
+            <span class="snippet-label">{{ 'INT_CODE_EXAMPLE' | translate }}</span>
+            <button
+              type="button"
+              class="snippet-copy"
+              [class.is-copied]="snippetCopied()"
+              (click)="copySnippet()"
+            >
+              {{ (snippetCopied() ? 'INT_COPIED' : 'INT_COPY') | translate }}
+            </button>
+          </div>
           <pre><code>{{ snippet }}</code></pre>
         </div>
       }

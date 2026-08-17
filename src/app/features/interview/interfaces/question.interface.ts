@@ -7,15 +7,22 @@
 export type QuestionLevel = 'Medium' | 'Hard' | 'Expert';
 
 /**
- * Stable identifiers for the five top-level interview modules.
+ * Stable identifiers for the top-level interview modules.
+ *
+ * Ordered as the filter sidebar presents them. The language, the framework and
+ * the platform are separate modules: TypeScript-only theory is not mixed into
+ * `js-state`, and transport/browser topics live in `network-browser` rather
+ * than being scattered across performance and architecture.
  */
 export type InterviewCategoryId =
-  | 'javascript-typescript'
-  | 'angular-core'
-  | 'rxjs-state'
-  | 'web-performance'
+  | 'js-state'
+  | 'html-css-performance'
   | 'architecture-testing'
-  | 'live-coding';
+  | 'angular-signals'
+  | 'live-coding'
+  | 'typescript'
+  | 'network-browser'
+  | 'hr-questions';
 
 /**
  * Learning progress status for a single question, persisted locally.

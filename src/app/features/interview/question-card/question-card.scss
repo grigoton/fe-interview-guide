@@ -2,235 +2,396 @@
   display: block;
 }
 
-.q-card {
+/* --------------------------------------------------------------------------
+   Card shell
+   -------------------------------------------------------------------------- */
+.card {
   position: relative;
-  border: 1px solid color-mix(in srgb, var(--text-secondary) 22%, transparent);
-  border-left: 4px solid transparent;
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--background) 96%, var(--text-primary));
-  margin-bottom: 0.75rem;
   overflow: hidden;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  backdrop-filter: blur(12px);
+  transition: border-color var(--dur) var(--ease), background-color var(--dur) var(--ease),
+    box-shadow var(--dur) var(--ease);
 
-  &.expanded {
-    box-shadow: 0 4px 18px color-mix(in srgb, var(--text-primary) 8%, transparent);
+  &:hover {
+    border-color: var(--border-strong);
   }
 
-  &.status-learning {
-    border-left-color: #f08c00;
-  }
-
-  &.status-known {
-    border-left-color: #2f9e44;
+  &.is-open {
+    background: var(--surface-hover);
+    border-color: var(--border-strong);
+    box-shadow: var(--shadow-2);
   }
 }
 
-.q-head {
-  padding: 0.9rem 1.1rem;
+// Status accent: a hairline down the leading edge, not a heavy 4px slab.
+.card::before {
+  content: '';
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  width: 3px;
+  background: transparent;
+  transition: background-color var(--dur) var(--ease);
 }
 
-.q-meta {
+.card.is-learning::before {
+  background: var(--warn);
+}
+
+.card.is-known::before {
+  background: var(--ok);
+}
+
+/* --------------------------------------------------------------------------
+   Collapsed row: number · question · module · level
+
+   One line per question, so a filtered list stays scannable; the question text
+   truncates rather than pushing the module and level out of alignment.
+   -------------------------------------------------------------------------- */
+.card-row {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   gap: 0.4rem;
-  margin-bottom: 0.5rem;
+  padding-inline-end: 0.7rem;
 }
 
-.q-row {
+.card-head {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 0.75rem;
-  width: 100%;
-  padding: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0.75rem 0.3rem 0.75rem 1rem;
   border: none;
   background: none;
-  text-align: left;
-  cursor: pointer;
   color: inherit;
   font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.q-num {
+  flex: 0 0 auto;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
 }
 
 .q-text {
-  margin: 0;
-  flex: 1;
-  font-size: 1rem;
-  font-weight: 600;
-  line-height: 1.4;
-  color: var(--text-primary);
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text-1);
+  font-size: 0.95rem;
+  font-weight: 560;
+  line-height: 1.45;
+  letter-spacing: -0.005em;
 }
 
-.q-toggle {
+// Room to breathe once it is the thing you are reading.
+.card.is-open .q-text {
+  white-space: normal;
+  overflow: visible;
+}
+
+/* Module chip — quiet, since the sidebar already says which module you're in. */
+.q-cat {
   flex: 0 0 auto;
-  width: 28px;
-  height: 28px;
-  border: 1px solid color-mix(in srgb, var(--text-secondary) 30%, transparent);
-  border-radius: 8px;
-  color: var(--text-primary);
-  font-size: 1.25rem;
-  line-height: 26px;
-  text-align: center;
-}
-
-.badge {
-  font-size: 0.7rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  padding: 0.15rem 0.5rem;
-  border-radius: 999px;
-  color: #fff;
-
-  &.level-medium {
-    background: #2f9e44;
-  }
-  &.level-hard {
-    background: #e8590c;
-  }
-  &.level-expert {
-    background: #c2255c;
-  }
-}
-
-.tag {
+  padding: 0.16rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--r-xs);
+  background: var(--surface-sunken);
+  color: var(--text-2);
   font-size: 0.72rem;
-  color: var(--text-secondary);
-  background: color-mix(in srgb, var(--text-secondary) 14%, transparent);
-  padding: 0.12rem 0.45rem;
-  border-radius: 6px;
+  font-weight: 550;
+  line-height: 1.5;
+  white-space: nowrap;
 }
 
-.q-id {
-  margin-left: auto;
-  font-size: 0.7rem;
-  font-family: ui-monospace, monospace;
-  color: color-mix(in srgb, var(--text-secondary) 70%, transparent);
+/* Level: colour as a signal, but typographic — no second chip competing. */
+.lvl {
+  flex: 0 0 auto;
+  font-size: 0.74rem;
+  font-weight: 600;
+  white-space: nowrap;
+
+  &--medium {
+    color: color-mix(in srgb, var(--level-medium) 65%, var(--text-3));
+  }
+  &--hard {
+    color: color-mix(in srgb, var(--level-hard) 65%, var(--text-3));
+  }
+  &--expert {
+    color: color-mix(in srgb, var(--level-expert) 65%, var(--text-3));
+  }
 }
 
-.q-progress {
+.chev {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  color: var(--text-3);
+  opacity: 0.65;
+  transition: transform var(--dur) var(--ease), color var(--dur) var(--ease),
+    opacity var(--dur) var(--ease);
+
+  svg {
+    width: 15px;
+    height: 15px;
+  }
+}
+
+.card-head:hover .chev {
+  color: var(--text-1);
+  opacity: 1;
+}
+
+.card.is-open .chev {
+  transform: rotate(180deg);
+  color: var(--accent);
+  opacity: 1;
+}
+
+/* --------------------------------------------------------------------------
+   Copy the question title — icon only, same reveal rules as the status pills
+   -------------------------------------------------------------------------- */
+.copy-q {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--r-xs);
+  background: transparent;
+  color: var(--text-3);
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity var(--dur) var(--ease), color var(--dur) var(--ease),
+    border-color var(--dur) var(--ease), background-color var(--dur) var(--ease);
+
+  svg {
+    width: 15px;
+    height: 15px;
+  }
+
+  &:hover {
+    border-color: var(--border-strong);
+    background: var(--surface-sunken);
+    color: var(--text-1);
+  }
+
+  &.is-copied {
+    opacity: 1;
+    border-color: color-mix(in srgb, var(--ok) 55%, transparent);
+    color: var(--ok);
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Status controls — out of the way until you reach for them
+   -------------------------------------------------------------------------- */
+.status-controls {
   display: flex;
-  gap: 0.4rem;
-  margin-top: 0.6rem;
+  gap: 0.3rem;
+  flex: 0 0 auto;
+  opacity: 0;
+  transition: opacity var(--dur) var(--ease);
+}
+
+.card:hover .status-controls,
+.card:focus-within .status-controls,
+.card.is-open .status-controls,
+.card.is-learning .status-controls,
+.card.is-known .status-controls,
+.card:hover .copy-q,
+.card:focus-within .copy-q,
+.card.is-open .copy-q {
+  opacity: 1;
+}
+
+// Nothing hovers on touch, so never hide them there.
+@media (hover: none) {
+  .status-controls,
+  .copy-q {
+    opacity: 1;
+  }
 }
 
 .status-btn {
-  padding: 0.22rem 0.7rem;
-  border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--text-secondary) 30%, transparent);
+  padding: 0.2rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: var(--r-full);
   background: transparent;
-  color: var(--text-secondary);
-  font-size: 0.76rem;
+  color: var(--text-3);
+  font-size: 0.73rem;
   font-weight: 600;
+  white-space: nowrap;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: background-color var(--dur) var(--ease), border-color var(--dur) var(--ease),
+    color var(--dur) var(--ease);
 
   &:hover {
-    color: var(--text-primary);
-    border-color: color-mix(in srgb, var(--text-primary) 40%, transparent);
+    border-color: var(--border-strong);
+    color: var(--text-1);
   }
 
-  &.learning.active {
-    background: #b45309;
-    border-color: #b45309;
-    color: #fff;
+  &--learning.is-active {
+    background: var(--warn-soft);
+    border-color: color-mix(in srgb, var(--warn) 55%, transparent);
+    color: var(--warn);
   }
 
-  &.known.active {
-    background: #15803d;
-    border-color: #15803d;
-    color: #fff;
-  }
-}
-
-.q-body {
-  padding: 0 1.1rem 1.1rem;
-}
-
-.q-answer {
-  color: var(--text-secondary);
-  line-height: 1.6;
-  font-size: 0.95rem;
-
-  :where(h2, h3, h4) {
-    color: var(--text-primary);
-    margin: 1rem 0 0.4rem;
-    font-size: 1rem;
-  }
-
-  :where(p) {
-    margin: 0.5rem 0;
-  }
-
-  :where(ul, ol) {
-    margin: 0.5rem 0;
-    padding-left: 1.4rem;
-  }
-
-  :where(li) {
-    margin: 0.2rem 0;
-  }
-
-  :where(strong) {
-    color: var(--text-primary);
-  }
-
-  :where(code) {
-    font-family: ui-monospace, monospace;
-    font-size: 0.85em;
-    background: color-mix(in srgb, var(--text-primary) 10%, transparent);
-    padding: 0.1rem 0.35rem;
-    border-radius: 5px;
-  }
-
-  :where(blockquote) {
-    margin: 0.6rem 0;
-    padding: 0.3rem 0.9rem;
-    border-left: 3px solid color-mix(in srgb, var(--text-primary) 30%, transparent);
-    color: var(--text-secondary);
-  }
-
-  :where(pre.md-code) {
-    margin: 0.75rem 0;
-    padding: 0.9rem 1rem;
-    overflow-x: auto;
-    background: color-mix(in srgb, var(--background) 90%, var(--text-primary));
-    border: 1px solid color-mix(in srgb, var(--text-secondary) 18%, transparent);
-    border-radius: 8px;
-
-    code {
-      background: none;
-      padding: 0;
-      white-space: pre;
-      color: var(--text-primary);
-      font-size: 0.82rem;
-    }
+  &--known.is-active {
+    background: var(--ok-soft);
+    border-color: color-mix(in srgb, var(--ok) 55%, transparent);
+    color: var(--ok);
   }
 }
 
-.q-snippet {
-  margin-top: 1rem;
+/* --------------------------------------------------------------------------
+   Body
+   -------------------------------------------------------------------------- */
+.card-body {
+  padding: 0.75rem 1rem 1.1rem;
+  border-top: 1px solid var(--border);
+  animation: card-reveal var(--dur-slow) var(--ease);
+}
 
-  .q-snippet-label {
-    font-size: 0.72rem;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--text-secondary);
-    margin-bottom: 0.3rem;
+@keyframes card-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
   }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem;
+  margin-bottom: 0.75rem;
+}
+
+.tag {
+  padding: 0.08rem 0.4rem;
+  border-radius: var(--r-xs);
+  background: var(--surface-sunken);
+  color: var(--text-3);
+  font-size: 0.7rem;
+
+  &::before {
+    content: '#';
+    opacity: 0.55;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Standalone code snippet.
+   Markdown-rendered code blocks are styled globally in styles.scss — they are
+   injected HTML and out of reach of component-scoped selectors.
+   -------------------------------------------------------------------------- */
+.snippet {
+  position: relative;
+  margin: 0.9rem 0 0;
 
   pre {
     margin: 0;
-    padding: 0.9rem 1rem;
+    padding: 0.85rem 1rem;
     overflow-x: auto;
-    background: color-mix(in srgb, var(--background) 90%, var(--text-primary));
-    border: 1px solid color-mix(in srgb, var(--text-secondary) 18%, transparent);
-    border-radius: 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    background: var(--surface-sunken);
 
     code {
+      color: var(--text-1);
+      font-size: 0.8rem;
+      line-height: 1.6;
       white-space: pre;
-      font-family: ui-monospace, monospace;
-      font-size: 0.82rem;
-      color: var(--text-primary);
     }
+  }
+}
+
+.snippet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.35rem;
+}
+
+.snippet-label {
+  color: var(--text-3);
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.snippet-copy {
+  padding: 0.15rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--r-xs);
+  background: transparent;
+  color: var(--text-3);
+  font-size: 0.68rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color var(--dur) var(--ease), border-color var(--dur) var(--ease);
+
+  &:hover {
+    color: var(--text-1);
+    border-color: var(--border-strong);
+  }
+
+  &.is-copied {
+    border-color: color-mix(in srgb, var(--ok) 55%, transparent);
+    color: var(--ok);
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Narrow screens: the row folds, and the module chip gives up its place first.
+   -------------------------------------------------------------------------- */
+@media (max-width: 760px) {
+  .q-cat {
+    display: none;
+  }
+}
+
+@media (max-width: 560px) {
+  .card-row {
+    flex-wrap: wrap;
+    padding: 0 0.75rem 0.6rem;
+  }
+
+  .card-head {
+    padding: 0.7rem 0.25rem 0.5rem;
+  }
+
+  .q-text {
+    white-space: normal;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+  }
+
+  .status-controls {
+    margin-inline-start: auto;
   }
 }

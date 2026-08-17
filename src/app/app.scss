@@ -1,208 +1,173 @@
-// Video background: fixed layer behind app, full viewport height
-.video-background {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  width: 100vw;
-  height: 100vh;
-  min-height: 100vh;
-  z-index: 0;
-  overflow: hidden;
-  pointer-events: none;
-
-  video {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    width: 100%;
-    height: 100%;
-    min-width: 100%;
-    min-height: 100%;
-    transform: translate(-50%, -50%);
-    object-fit: cover;
-  }
-}
-
 :host {
   display: block;
   min-height: 100vh;
-  height: 100%;
-  box-sizing: border-box;
+}
 
-  // Shared overlay over video: same darkening for header, sidebar, and content (no brightness jump)
-  --bg-overlay: color-mix(in srgb, var(--background) 90%, transparent);
+/* --------------------------------------------------------------------------
+   Aurora backdrop
+   Three soft radial washes on a fixed layer. Pure CSS, zero bytes over the
+   wire, and it keeps working offline in the PWA.
+   -------------------------------------------------------------------------- */
+.aurora {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(60rem 40rem at 12% -10%, var(--aurora-1), transparent 60%),
+    radial-gradient(50rem 36rem at 92% 8%, var(--aurora-2), transparent 62%),
+    radial-gradient(46rem 34rem at 55% 108%, var(--aurora-3), transparent 60%);
+  transition: background var(--dur-slow) var(--ease);
+}
 
-  *,
-  *::before,
-  *::after {
-    box-sizing: border-box;
+// A very slow drift keeps the page from feeling static without ever drawing
+// attention; disabled wholesale by the reduced-motion rule in styles.scss.
+.aurora::after {
+  content: '';
+  position: absolute;
+  inset: -20%;
+  background: radial-gradient(38rem 30rem at 30% 40%, var(--aurora-1), transparent 65%);
+  opacity: 0.55;
+  animation: aurora-drift 34s ease-in-out infinite alternate;
+}
+
+@keyframes aurora-drift {
+  from {
+    transform: translate3d(-4%, -2%, 0) scale(1);
+  }
+  to {
+    transform: translate3d(6%, 4%, 0) scale(1.12);
   }
 }
 
-// Layout: Grid (header + main) + Flex (sidebar + content)
-.app-wrapper {
-  position: relative;
-  z-index: 1;
-  display: grid;
-  grid-template-rows: auto 1fr;
-  height: 100vh;
-  min-height: 100vh;
-  box-sizing: border-box;
+/* --------------------------------------------------------------------------
+   Top bar
+   -------------------------------------------------------------------------- */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  background: var(--topbar-bg);
+  backdrop-filter: blur(16px) saturate(160%);
+  border-bottom: 1px solid var(--border);
+  transition: background-color var(--dur-slow) var(--ease),
+    border-color var(--dur-slow) var(--ease);
 }
 
-.app-header {
-  width: 100%;
-  height: 64px;
-  min-height: 64px;
-  flex-shrink: 0;
+.topbar-inner {
   display: flex;
   align-items: center;
-  justify-content: flex-start;
-  box-sizing: border-box;
+  gap: 1rem;
+  max-width: var(--page-max);
+  min-height: var(--topbar-h);
+  margin: 0 auto;
+  padding-inline: var(--gutter);
 }
 
-.main-container {
-  display: flex;
-  flex: 1;
-  min-height: 0;
-  overflow: hidden;
-  box-sizing: border-box;
-}
-
-.app-sidebar {
-  width: 260px;
-  min-width: 260px;
-  flex-shrink: 0;
-  height: 100%;
-  overflow-y: auto;
-  overflow-x: hidden;
-  box-sizing: border-box;
-  transition: width 0.3s ease, background-color 0.3s ease;
-  background: var(--bg-overlay);
-  position: relative;
-  z-index: 1;
-  border-right: 1px solid var(--sidebar-border);
-  box-shadow: var(--sidebar-shadow);
-
-  // Desktop: collapse to 0 width when closed so .app-content takes 100%
-  &.sidebar-closed {
-    width: 0;
-    min-width: 0;
-    overflow: hidden;
-    padding-inline: 0;
-  }
-}
-
-.app-content {
-  flex: 1;
-  min-width: 0;
-  height: 100%;
-  overflow-y: auto;
-  overflow-x: hidden;
-  box-sizing: border-box;
-  background: var(--bg-overlay);
-  position: relative;
-  z-index: 0;
-}
-
-// Disable sidebar transition during resize to avoid jump at 600px breakpoint (no !important; higher specificity)
-.app-wrapper.is-resizing .app-sidebar {
-  transition: none;
-}
-
-// Toolbar: same overlay as sidebar/content for consistent video darkening
-.app-header mat-toolbar.main-toolbar {
-  background: var(--bg-overlay);
-  color: var(--text-primary) !important;
-  transition: background-color 0.3s ease, color 0.3s ease;
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  width: 100%;
-  height: 64px;
-  min-height: 64px;
-  padding-inline: 0 8px;
-
-  .mat-mdc-button,
-  .mat-icon,
-  .lang-btn,
-  span {
-    color: inherit;
-  }
-}
-
-// Icon buttons: fixed square size, centered content — fixes hover/ripple offset
-.app-header .main-toolbar button[mat-icon-button] {
-  width: 48px;
-  height: 48px;
-  min-width: 48px;
-  min-height: 48px;
-  padding: 0;
+.brand {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
+  gap: 0.6rem;
+  flex: 0 0 auto;
+  color: var(--text-1);
+  font-weight: 680;
+  font-size: 0.95rem;
+  letter-spacing: -0.015em;
 
-  .mat-icon,
-  .lang-btn {
-    margin: 0;
-    padding: 0;
-  }
+  &:hover {
+    color: var(--text-1);
 
-  mat-icon {
-    margin: 0;
-    padding: 0;
-    width: 24px;
-    height: 24px;
-    font-size: 24px;
-    line-height: 1;
-  }
-
-  .lang-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    line-height: 1;
-  }
-}
-
-.spacer {
-  flex: 1 1 auto;
-}
-
-.lang-btn {
-  font-size: 0.875rem;
-  font-weight: 500;
-  min-width: 2rem;
-}
-
-// Mobile: sidebar overlays content; open/close via transform (specificity overrides .sidebar-closed width without !important)
-@media (max-width: 600px) {
-  .main-container .app-sidebar {
-    position: fixed;
-    top: 64px;
-    left: 0;
-    bottom: 0;
-    width: 260px;
-    min-width: 260px;
-    z-index: 10;
-    transform: translateX(-100%);
-    transition: transform 0.3s ease;
-
-    &.sidebar-open {
-      transform: translateX(0);
-    }
-
-    &.sidebar-closed {
-      width: 260px;
-      min-width: 260px;
-      overflow: hidden;
+    .brand-mark {
+      border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+      transform: translateY(-1px);
     }
   }
+}
 
-  .app-wrapper.is-resizing .main-container .app-sidebar {
-    transition: none;
+.brand-mark {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--border-strong);
+  border-radius: 9px;
+  background: linear-gradient(140deg, var(--accent-soft), transparent);
+  color: var(--accent);
+  transition: border-color var(--dur) var(--ease), transform var(--dur) var(--ease);
+
+  svg {
+    width: 16px;
+    height: 16px;
+  }
+}
+
+/* Section switcher. Scrolls rather than wraps, so the bar keeps one row. */
+.nav {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+.nav-link {
+  flex: 0 0 auto;
+  padding: 0.35rem 0.7rem;
+  border-radius: var(--r-sm);
+  color: var(--text-2);
+  font-size: 0.85rem;
+  font-weight: 550;
+  white-space: nowrap;
+  transition: background-color var(--dur) var(--ease), color var(--dur) var(--ease);
+
+  &:hover {
+    background: var(--surface-hover);
+    color: var(--text-1);
+  }
+
+  &.is-active {
+    background: var(--accent-soft);
+    color: var(--text-1);
+  }
+}
+
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  margin-inline-start: auto;
+  flex: 0 0 auto;
+}
+
+/* --------------------------------------------------------------------------
+   Content
+   -------------------------------------------------------------------------- */
+.shell-main {
+  display: block;
+  max-width: var(--page-max);
+  margin: 0 auto;
+  padding-inline: var(--gutter);
+}
+
+@media (max-width: 720px) {
+  .topbar-inner {
+    gap: 0.5rem;
+  }
+
+  .brand-text {
+    font-size: 0.9rem;
+  }
+}
+
+// Below this the brand wordmark and the nav fight for the same row; the mark
+// alone still identifies the app.
+@media (max-width: 520px) {
+  .brand-text {
+    display: none;
   }
 }

@@ -1,0 +1,231 @@
+<section class="page">
+  <!-- ── Hero ─────────────────────────────────────────────────────────────── -->
+  <header class="hero">
+    <div class="hero-copy">
+      <p class="eyebrow">
+        <span>{{ courses().length }} {{ 'NOTES_COURSES_UNIT' | translate }}</span>
+        <span class="dot" aria-hidden="true">·</span>
+        <span>{{ totalNotes() }} {{ 'NOTES_NOTES_UNIT' | translate }}</span>
+      </p>
+      <h1>{{ 'NOTES_TITLE' | translate }}</h1>
+      <p class="lede">{{ 'NOTES_SUBTITLE' | translate }}</p>
+    </div>
+
+    <div class="backup">
+      <div class="backup-actions">
+        <button type="button" class="ui-btn" (click)="exportNotes()">
+          {{ 'NOTES_EXPORT' | translate }}
+        </button>
+        <button type="button" class="ui-btn" (click)="fileInput.click()">
+          {{ 'NOTES_IMPORT' | translate }}
+        </button>
+        <input
+          #fileInput
+          type="file"
+          accept="application/json,.json"
+          hidden
+          (change)="onImportFile($event)"
+        />
+      </div>
+      @if (importResult(); as result) {
+        <p class="backup-msg" [class.is-error]="result === 'error'">
+          @if (result === 'error') {
+            {{ 'NOTES_IMPORT_FAIL' | translate }}
+          } @else {
+            {{ 'NOTES_IMPORT_OK' | translate: { courses: result.courses, notes: result.notes } }}
+          }
+        </p>
+      } @else {
+        <p class="backup-msg">{{ 'NOTES_STORAGE_HINT' | translate }}</p>
+      }
+    </div>
+  </header>
+
+  <div class="layout">
+    <!-- ── Courses ────────────────────────────────────────────────────────── -->
+    <aside class="courses">
+      <div class="courses-head">
+        <h2 class="section-title">{{ 'NOTES_COURSES' | translate }}</h2>
+        <button type="button" class="ui-btn ui-btn--primary" (click)="startCourse()">
+          <span aria-hidden="true">+</span>
+          {{ 'NOTES_NEW_COURSE' | translate }}
+        </button>
+      </div>
+
+      @if (courseFormOpen()) {
+        <form class="course-form ui-card" (submit)="submitCourse($event)">
+          <input
+            #courseTitleInput
+            type="text"
+            class="ui-field"
+            [value]="courseDraft().title"
+            (input)="setCourseField('title', $event)"
+            [placeholder]="'NOTES_COURSE_TITLE' | translate"
+            [attr.aria-label]="'NOTES_COURSE_TITLE' | translate"
+          />
+          <input
+            type="text"
+            class="ui-field"
+            [value]="courseDraft().provider"
+            (input)="setCourseField('provider', $event)"
+            [placeholder]="'NOTES_COURSE_PROVIDER' | translate"
+            [attr.aria-label]="'NOTES_COURSE_PROVIDER' | translate"
+          />
+          <input
+            type="url"
+            class="ui-field"
+            [value]="courseDraft().url"
+            (input)="setCourseField('url', $event)"
+            [placeholder]="'NOTES_COURSE_URL' | translate"
+            [attr.aria-label]="'NOTES_COURSE_URL' | translate"
+          />
+          <div class="form-actions">
+            <button
+              type="submit"
+              class="ui-btn ui-btn--primary"
+              [disabled]="!courseDraft().title.trim()"
+            >
+              {{ 'NOTES_SAVE' | translate }}
+            </button>
+            <button type="button" class="ui-btn" (click)="closeCourseForm()">
+              {{ 'NOTES_CANCEL' | translate }}
+            </button>
+          </div>
+        </form>
+      }
+
+      <ul class="course-list">
+        @for (course of courses(); track course.id) {
+          <li>
+            <button
+              type="button"
+              class="course"
+              [class.is-active]="course.id === activeCourse()?.id"
+              (click)="selectCourse(course.id)"
+            >
+              <span class="course-main">
+                <span class="course-title">{{ course.title }}</span>
+                @if (course.provider) {
+                  <span class="course-provider">{{ course.provider }}</span>
+                }
+              </span>
+              <span class="course-count">{{ noteCount(course.id) }}</span>
+            </button>
+          </li>
+        } @empty {
+          @if (!courseFormOpen()) {
+            <li class="courses-empty">{{ 'NOTES_NO_COURSES' | translate }}</li>
+          }
+        }
+      </ul>
+    </aside>
+
+    <!-- ── Notes of the open course ───────────────────────────────────────── -->
+    <div class="notes">
+      @if (activeCourse(); as course) {
+        <header class="course-head ui-card">
+          <div class="course-head-main">
+            <h2 class="course-name">{{ course.title }}</h2>
+            <p class="course-meta">
+              @if (course.provider) {
+                <span>{{ course.provider }}</span>
+                <span class="dot" aria-hidden="true">·</span>
+              }
+              <span>{{ course.createdAt | localDate: locale() }}</span>
+              <span class="dot" aria-hidden="true">·</span>
+              <span>{{ courseNotes().length }} {{ 'NOTES_NOTES_UNIT' | translate }}</span>
+            </p>
+            @if (course.url) {
+              <a class="course-link" [href]="course.url" target="_blank" rel="noopener noreferrer">
+                {{ 'NOTES_OPEN_LINK' | translate }} ↗
+              </a>
+            }
+          </div>
+
+          <div class="course-head-actions">
+            <button type="button" class="link-btn" (click)="editCourse(course)">
+              {{ 'NOTES_EDIT' | translate }}
+            </button>
+            <button
+              type="button"
+              class="link-btn"
+              [class.is-danger]="pendingDeleteId() === course.id"
+              (click)="removeCourse(course)"
+            >
+              {{
+                (pendingDeleteId() === course.id ? 'NOTES_CONFIRM_DELETE_COURSE' : 'NOTES_DELETE')
+                  | translate
+              }}
+            </button>
+          </div>
+        </header>
+
+        <div class="notes-toolbar">
+          <button type="button" class="ui-btn ui-btn--primary" (click)="startNote()">
+            <span aria-hidden="true">+</span>
+            {{ 'NOTES_ADD_NOTE' | translate }}
+          </button>
+
+          <input
+            type="search"
+            class="ui-field notes-search"
+            [value]="search()"
+            (input)="onSearch($event)"
+            [placeholder]="'NOTES_SEARCH_PLACEHOLDER' | translate"
+            [attr.aria-label]="'NOTES_SEARCH_PLACEHOLDER' | translate"
+          />
+
+          @if (filteredNotes().length) {
+            <button type="button" class="link-btn" (click)="toggleExpandAll()">
+              {{ (allExpanded() ? 'NOTES_COLLAPSE_ALL' : 'NOTES_EXPAND_ALL') | translate }}
+            </button>
+          }
+        </div>
+
+        @if (noteEditorOpen()) {
+          <app-note-editor
+            [note]="editingNote()"
+            (saved)="saveNote($event)"
+            (cancelled)="closeNoteEditor()"
+          />
+        }
+
+        @if (filteredNotes().length) {
+          <div class="note-list">
+            @for (note of filteredNotes(); track note.id) {
+              <app-note-card
+                [note]="note"
+                [expanded]="isExpanded(note.id)"
+                [confirmingDelete]="pendingDeleteId() === note.id"
+                (toggled)="toggleExpanded(note.id)"
+                (edited)="editNote(note)"
+                (removed)="removeNote(note)"
+              />
+            }
+          </div>
+        } @else if (!noteEditorOpen()) {
+          <div class="empty ui-card">
+            <span class="empty-icon" aria-hidden="true">{{ search() ? '🔍' : '📝' }}</span>
+            <p class="empty-text">
+              {{ (search() ? 'NOTES_NOTHING_FOUND' : 'NOTES_NO_NOTES') | translate }}
+            </p>
+            @if (!search()) {
+              <button type="button" class="ui-btn ui-btn--primary" (click)="startNote()">
+                {{ 'NOTES_ADD_NOTE' | translate }}
+              </button>
+            }
+          </div>
+        }
+      } @else {
+        <div class="empty ui-card">
+          <span class="empty-icon" aria-hidden="true">🎓</span>
+          <h2 class="empty-title">{{ 'NOTES_EMPTY_TITLE' | translate }}</h2>
+          <p class="empty-text">{{ 'NOTES_EMPTY_HINT' | translate }}</p>
+          <button type="button" class="ui-btn ui-btn--primary" (click)="startCourse()">
+            {{ 'NOTES_CREATE_FIRST' | translate }}
+          </button>
+        </div>
+      }
+    </div>
+  </div>
+</section>

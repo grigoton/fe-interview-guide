@@ -1,0 +1,65 @@
+<article class="card" [class.is-open]="expanded()">
+  <button
+    type="button"
+    class="card-head"
+    (click)="toggle()"
+    [attr.aria-expanded]="expanded()"
+    [attr.aria-controls]="'note-' + note().id"
+  >
+    <span class="head-main">
+      <span class="note-title">{{ note().title }}</span>
+      @if (!expanded() && excerpt()) {
+        <span class="note-excerpt">{{ excerpt() }}</span>
+      }
+    </span>
+    <span class="chev" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+           stroke-linecap="round" stroke-linejoin="round">
+        <path d="m6 9 6 6 6-6" />
+      </svg>
+    </span>
+  </button>
+
+  <div class="card-meta">
+    <span class="date">
+      @if (wasEdited()) {
+        {{ 'NOTES_UPDATED' | translate }} {{ note().updatedAt | localDate: locale() }}
+      } @else {
+        {{ note().createdAt | localDate: locale() }}
+      }
+    </span>
+
+    @for (tag of note().tags; track tag) {
+      <span class="tag">{{ tag }}</span>
+    }
+
+    <span class="meta-actions">
+      <button type="button" class="link-btn" (click)="onEdit($event)">
+        {{ 'NOTES_EDIT' | translate }}
+      </button>
+      <button
+        type="button"
+        class="link-btn"
+        [class.is-danger]="confirmingDelete()"
+        (click)="onRemove($event)"
+      >
+        {{ (confirmingDelete() ? 'NOTES_CONFIRM_DELETE' : 'NOTES_DELETE') | translate }}
+      </button>
+    </span>
+  </div>
+
+  @if (expanded()) {
+    <div class="card-body" [id]="'note-' + note().id">
+      @if (note().body.trim()) {
+        <!-- Copy buttons rendered by MarkdownPipe are handled by delegation. -->
+        <div
+          class="md-content"
+          (click)="onBodyClick($event)"
+          [innerHTML]="note().body | markdown: ('INT_COPY' | translate)"
+        ></div>
+      } @else {
+        <p class="body-empty">{{ 'NOTES_NOTE_EMPTY' | translate }}</p>
+      }
+    </div>
+  }
+</article>

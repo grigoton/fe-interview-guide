@@ -1,0 +1,139 @@
+:host {
+  display: block;
+}
+
+.card {
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  backdrop-filter: blur(12px);
+  overflow: hidden;
+  transition: border-color var(--dur) var(--ease), background-color var(--dur) var(--ease);
+
+  &:hover {
+    border-color: var(--border-strong);
+  }
+
+  &.is-open {
+    border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+  }
+}
+
+.card-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.85rem 1rem 0.5rem;
+  border: none;
+  background: none;
+  color: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.head-main {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.note-title {
+  color: var(--text-1);
+  font-size: 0.95rem;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.note-excerpt {
+  color: var(--text-3);
+  font-size: 0.82rem;
+  line-height: 1.5;
+  // Two lines is enough to recognise a note without turning the list into prose.
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.chev {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  color: var(--text-3);
+  transition: transform var(--dur) var(--ease), color var(--dur) var(--ease);
+
+  svg {
+    width: 15px;
+    height: 15px;
+  }
+}
+
+.card.is-open .chev {
+  transform: rotate(180deg);
+  color: var(--accent);
+}
+
+.card-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0 1rem 0.85rem;
+  color: var(--text-3);
+  font-size: 0.75rem;
+}
+
+.date {
+  font-variant-numeric: tabular-nums;
+}
+
+.tag {
+  padding: 0.05rem 0.45rem;
+  border: 1px solid var(--border);
+  border-radius: var(--r-full);
+  background: var(--surface-sunken);
+  font-size: 0.7rem;
+}
+
+.meta-actions {
+  display: flex;
+  gap: 0.75rem;
+  margin-inline-start: auto;
+}
+
+.link-btn {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-3);
+  font-size: 0.75rem;
+  font-weight: 550;
+  cursor: pointer;
+  transition: color var(--dur) var(--ease);
+
+  &:hover {
+    color: var(--accent);
+  }
+
+  &.is-danger {
+    color: var(--danger);
+    font-weight: 650;
+  }
+}
+
+.card-body {
+  padding: 0 1rem 1rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.65rem;
+}
+
+.body-empty {
+  color: var(--text-3);
+  font-size: 0.85rem;
+  font-style: italic;
+}

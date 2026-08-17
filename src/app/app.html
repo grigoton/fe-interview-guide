@@ -1,54 +1,72 @@
-<div class="video-background" aria-hidden="true">
-  <video
-    #bgVideo
-    autoplay
-    [muted]="true"
-    loop
-    playsinline
-    aria-label="Background video"
-    (loadeddata)="bgVideo.muted = true"
-  >
-    <source src="assets/video/main_bg.mp4" type="video/mp4" />
-  </video>
-</div>
-<div class="app-wrapper" [class.is-resizing]="isResizing()">
-  <header class="app-header">
-    <mat-toolbar color="primary" class="main-toolbar">
+<!-- Purely decorative gradient backdrop; replaces the old 29 MB video layer. -->
+<div class="aurora" aria-hidden="true"></div>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="brand" routerLink="/">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+             stroke-linecap="round" stroke-linejoin="round">
+          <path d="m8 6-6 6 6 6" />
+          <path d="m16 6 6 6-6 6" />
+        </svg>
+      </span>
+      <span class="brand-text">{{ 'APP_TITLE' | translate }}</span>
+    </a>
+
+    <nav class="nav" [attr.aria-label]="'ARIA_MAIN_NAV' | translate">
+      <a
+        class="nav-link"
+        routerLink="/"
+        routerLinkActive="is-active"
+        [routerLinkActiveOptions]="{ exact: true }"
+      >
+        {{ 'NAV_INTERVIEW' | translate }}
+      </a>
+      <a class="nav-link" routerLink="/notes" routerLinkActive="is-active">
+        {{ 'NAV_NOTES' | translate }}
+      </a>
+    </nav>
+
+    <div class="topbar-actions">
       <button
         type="button"
-        [attr.aria-label]="'ARIA_TOGGLE_SIDENAV' | translate"
-        mat-icon-button
-        (click)="toggleSidenav()"
-      >
-        <mat-icon>menu</mat-icon>
-      </button>
-      <span>{{ 'APP_TITLE' | translate }}</span>
-      <span class="spacer"></span>
-      <button
-        mat-icon-button
+        class="ui-icon-btn"
         (click)="locale.toggleLocale()"
         [attr.aria-label]="'ARIA_TOGGLE_LANG' | translate"
         [attr.title]="'ARIA_TOGGLE_LANG' | translate"
       >
-        <span class="lang-btn">{{ locale.currentLocale() === 'ru' ? 'EN' : 'RU' }}</span>
+        {{ locale.currentLocale() === 'ru' ? 'EN' : 'RU' }}
       </button>
+
       <button
-        mat-icon-button
+        type="button"
+        class="ui-icon-btn"
         (click)="toggleTheme()"
         [attr.aria-label]="
           (theme() === 'dark' ? 'ARIA_TOGGLE_THEME' : 'ARIA_TOGGLE_THEME_DARK') | translate
         "
+        [attr.title]="
+          (theme() === 'dark' ? 'ARIA_TOGGLE_THEME' : 'ARIA_TOGGLE_THEME_DARK') | translate
+        "
       >
-        <mat-icon>{{ theme() === 'dark' ? 'light_mode' : 'dark_mode' }}</mat-icon>
+        @if (theme() === 'dark') {
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="4" />
+            <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
+          </svg>
+        } @else {
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 3a6.4 6.4 0 0 0 9 9 9 9 0 1 1-9-9Z" />
+          </svg>
+        }
       </button>
-    </mat-toolbar>
-  </header>
-  <div class="main-container">
-    <aside class="app-sidebar" [class.sidebar-open]="sidenavOpen()" [class.sidebar-closed]="!sidenavOpen()">
-      <app-sidenav-content (navClick)="isHandset() && sidenavOpen.set(false)" />
-    </aside>
-    <main class="app-content">
-      <router-outlet />
-    </main>
+    </div>
   </div>
-</div>
+</header>
+
+<main class="shell-main">
+  <router-outlet />
+</main>

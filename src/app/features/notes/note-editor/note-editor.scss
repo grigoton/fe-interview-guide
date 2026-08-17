@@ -1,0 +1,95 @@
+:host {
+  display: block;
+}
+
+.editor {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 1rem 1.1rem 1.1rem;
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+}
+
+.editor-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.editor-title {
+  font-size: 0.9rem;
+}
+
+/* Write / preview switch — same shape as the interview refinement toggles. */
+.seg {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface-sunken);
+}
+
+.seg-item {
+  padding: 0.24rem 0.6rem;
+  border: none;
+  border-radius: 7px;
+  background: none;
+  color: var(--text-2);
+  font-size: 0.78rem;
+  font-weight: 550;
+  cursor: pointer;
+  transition: background-color var(--dur) var(--ease), color var(--dur) var(--ease);
+
+  &:hover {
+    color: var(--text-1);
+  }
+
+  &.is-active {
+    background: var(--surface-hover);
+    color: var(--text-1);
+    box-shadow: var(--shadow-1);
+  }
+}
+
+.body-field {
+  min-height: 14rem;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  line-height: 1.65;
+  resize: vertical;
+}
+
+.preview {
+  min-height: 14rem;
+  padding: 0.75rem 0.9rem;
+  border: 1px dashed var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface-sunken);
+}
+
+.preview--empty {
+  display: grid;
+  place-items: center;
+  color: var(--text-3);
+  font-size: 0.85rem;
+}
+
+.hint {
+  color: var(--text-3);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+.editor-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.15rem;
+
+  button[disabled] {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+}

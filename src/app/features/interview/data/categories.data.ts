@@ -1,32 +1,20 @@
 import { InterviewCategory } from '../interfaces/question.interface';
 
 /**
- * The five top-level interview modules, in the order presented in the UI.
+ * The top-level interview modules, in the order the filter sidebar lists them.
  * Display strings live in the i18n files under the `INT_CAT_*` keys.
  */
 export const INTERVIEW_CATEGORIES: InterviewCategory[] = [
   {
-    id: 'javascript-typescript',
-    titleKey: 'INT_CAT_javascript-typescript',
-    descriptionKey: 'INT_CAT_DESC_javascript-typescript',
-    icon: '🟨'
+    id: 'js-state',
+    titleKey: 'INT_CAT_js-state',
+    descriptionKey: 'INT_CAT_DESC_js-state',
+    icon: '🧠'
   },
   {
-    id: 'angular-core',
-    titleKey: 'INT_CAT_angular-core',
-    descriptionKey: 'INT_CAT_DESC_angular-core',
-    icon: '🅰️'
-  },
-  {
-    id: 'rxjs-state',
-    titleKey: 'INT_CAT_rxjs-state',
-    descriptionKey: 'INT_CAT_DESC_rxjs-state',
-    icon: '🔁'
-  },
-  {
-    id: 'web-performance',
-    titleKey: 'INT_CAT_web-performance',
-    descriptionKey: 'INT_CAT_DESC_web-performance',
+    id: 'html-css-performance',
+    titleKey: 'INT_CAT_html-css-performance',
+    descriptionKey: 'INT_CAT_DESC_html-css-performance',
     icon: '⚡'
   },
   {
@@ -36,9 +24,33 @@ export const INTERVIEW_CATEGORIES: InterviewCategory[] = [
     icon: '🏛️'
   },
   {
+    id: 'angular-signals',
+    titleKey: 'INT_CAT_angular-signals',
+    descriptionKey: 'INT_CAT_DESC_angular-signals',
+    icon: '🅰️'
+  },
+  {
     id: 'live-coding',
     titleKey: 'INT_CAT_live-coding',
     descriptionKey: 'INT_CAT_DESC_live-coding',
     icon: '💻'
+  },
+  {
+    id: 'typescript',
+    titleKey: 'INT_CAT_typescript',
+    descriptionKey: 'INT_CAT_DESC_typescript',
+    icon: '🔷'
+  },
+  {
+    id: 'network-browser',
+    titleKey: 'INT_CAT_network-browser',
+    descriptionKey: 'INT_CAT_DESC_network-browser',
+    icon: '🌐'
+  },
+  {
+    id: 'hr-questions',
+    titleKey: 'INT_CAT_hr-questions',
+    descriptionKey: 'INT_CAT_DESC_hr-questions',
+    icon: '🤝'
   }
 ];

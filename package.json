@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "scripts": {
     "ng": "ng",
-    "start": "ng serve",
+    "start": "ng serve --port 4300",
     "build": "ng build",
     "watch": "ng build --watch --configuration development",
     "test": "ng test"
@@ -24,16 +24,13 @@
   "packageManager": "npm@10.8.2",
   "dependencies": {
     "@angular/animations": "^21.1.4",
-    "@angular/cdk": "~21.1.4",
     "@angular/common": "^21.1.0",
     "@angular/compiler": "^21.1.0",
     "@angular/core": "^21.1.0",
     "@angular/forms": "^21.1.0",
-    "@angular/material": "~21.1.4",
     "@angular/platform-browser": "^21.1.0",
     "@angular/router": "^21.1.0",
     "@angular/service-worker": "^21.1.4",
-    "@google/generative-ai": "^0.24.1",
     "@ngx-translate/core": "^17.0.0",
     "@ngx-translate/http-loader": "^17.0.0",
     "@ngxs/devtools-plugin": "21.0.0",
@@ -49,7 +46,6 @@
     "@angular/cli": "^21.1.4",
     "@angular/compiler-cli": "^21.1.0",
     "@angular/localize": "^21.1.4",
-    "@angular/material": "^21.1.4",
     "@ngxs/store": "^21.0.0",
     "@tailwindcss/postcss": "^4.2.0",
     "jsdom": "^27.1.0",

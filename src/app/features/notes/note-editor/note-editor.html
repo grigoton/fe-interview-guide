@@ -1,0 +1,73 @@
+<form class="editor ui-card" (submit)="submit($event)" (keydown)="onKeydown($event)">
+  <div class="editor-head">
+    <h3 class="editor-title">
+      {{ (isEdit() ? 'NOTES_EDIT_NOTE' : 'NOTES_NEW_NOTE') | translate }}
+    </h3>
+
+    <div class="seg" role="group" [attr.aria-label]="'NOTES_PREVIEW' | translate">
+      <button
+        type="button"
+        class="seg-item"
+        [class.is-active]="!preview()"
+        (click)="togglePreview(false)"
+      >
+        {{ 'NOTES_WRITE' | translate }}
+      </button>
+      <button
+        type="button"
+        class="seg-item"
+        [class.is-active]="preview()"
+        (click)="togglePreview(true)"
+      >
+        {{ 'NOTES_PREVIEW' | translate }}
+      </button>
+    </div>
+  </div>
+
+  <input
+    #titleInput
+    type="text"
+    class="ui-field"
+    [value]="title()"
+    (input)="onTitle($event)"
+    [placeholder]="'NOTES_NOTE_TITLE' | translate"
+    [attr.aria-label]="'NOTES_NOTE_TITLE' | translate"
+  />
+
+  @if (preview()) {
+    @if (body().trim()) {
+      <div class="preview md-content" [innerHTML]="body() | markdown"></div>
+    } @else {
+      <p class="preview preview--empty">{{ 'NOTES_PREVIEW_EMPTY' | translate }}</p>
+    }
+  } @else {
+    <textarea
+      class="ui-field body-field"
+      rows="12"
+      [value]="body()"
+      (input)="onBody($event)"
+      [placeholder]="'NOTES_NOTE_BODY' | translate"
+      [attr.aria-label]="'NOTES_NOTE_BODY' | translate"
+    ></textarea>
+  }
+
+  <input
+    type="text"
+    class="ui-field"
+    [value]="tags()"
+    (input)="onTags($event)"
+    [placeholder]="'NOTES_NOTE_TAGS' | translate"
+    [attr.aria-label]="'NOTES_NOTE_TAGS' | translate"
+  />
+
+  <p class="hint">{{ 'NOTES_MARKDOWN_HINT' | translate }}</p>
+
+  <div class="editor-actions">
+    <button type="submit" class="ui-btn ui-btn--primary" [disabled]="!canSave()">
+      {{ 'NOTES_SAVE' | translate }}
+    </button>
+    <button type="button" class="ui-btn" (click)="cancel()">
+      {{ 'NOTES_CANCEL' | translate }}
+    </button>
+  </div>
+</form>

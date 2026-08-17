@@ -1,40 +1,20 @@
 import { Routes } from '@angular/router';
-import { environment } from '../environments/environment';
 
-const interviewRoute = {
-  path: 'interview',
-  loadChildren: () =>
-    import('./features/interview/interview.routes').then(m => m.interviewRoutes)
-};
-
-/** Full app — all features (used locally / non-deployed builds). */
-const fullRoutes: Routes = [
-  { path: '', redirectTo: 'topics', pathMatch: 'full' },
+/**
+ * The interview knowledge base is the whole site, so it lives at the root.
+ * `/interview` is kept as a redirect: the previously deployed build served the
+ * feature from that path, and installed PWAs / bookmarks still point there.
+ */
+export const routes: Routes = [
   {
-    path: 'topics',
-    loadChildren: () => import('./features/topics/topics.routes').then(m => m.topicsRoutes)
-  },
-  {
-    path: 'habits',
-    loadChildren: () => import('./features/habits/habits.routes').then(m => m.habitsRoutes)
-  },
-  interviewRoute,
-  {
-    path: 'practice',
-    loadChildren: () => import('./features/practice/practice.routes').then(m => m.practiceRoutes)
-  },
-  {
-    path: 'flashcards',
+    path: '',
     loadChildren: () =>
-      import('./features/flashcards/flashcards.routes').then(m => m.flashcardsRoutes)
-  }
+      import('./features/interview/interview.routes').then(m => m.interviewRoutes)
+  },
+  { path: 'interview', redirectTo: '', pathMatch: 'full' },
+  {
+    path: 'notes',
+    loadChildren: () => import('./features/notes/notes.routes').then(m => m.notesRoutes)
+  },
+  { path: '**', redirectTo: '' }
 ];
-
-/** Deployed build — only the Interview feature is reachable. */
-const interviewOnlyRoutes: Routes = [
-  { path: '', redirectTo: 'interview', pathMatch: 'full' },
-  interviewRoute,
-  { path: '**', redirectTo: 'interview' }
-];
-
-export const routes: Routes = environment.interviewOnly ? interviewOnlyRoutes : fullRoutes;

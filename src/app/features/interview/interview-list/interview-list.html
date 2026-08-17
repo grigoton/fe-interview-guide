@@ -1,134 +1,241 @@
-<section class="interview">
-  <header class="interview-header">
-    <h2>{{ 'INT_TITLE' | translate }}</h2>
-    <p class="interview-sub">{{ 'INT_SUBTITLE' | translate }}</p>
-  </header>
-
-  <div class="progress-panel">
-    <div class="progress-stats">
-      <span class="stat known">{{ 'INT_STATUS_KNOWN' | translate }}: <strong>{{ stats().known }}</strong></span>
-      <span class="stat learning">{{ 'INT_STATUS_LEARNING' | translate }}: <strong>{{ stats().learning }}</strong></span>
-      <span class="stat remaining">{{ 'INT_STATUS_REMAINING' | translate }}: <strong>{{ stats().remaining }}</strong></span>
-      <span class="stat total">/ {{ stats().total }}</span>
-      @if (stats().known + stats().learning > 0) {
-        <button type="button" class="reset-btn" (click)="resetProgress()">
-          {{ 'INT_RESET_PROGRESS' | translate }}
-        </button>
-      }
-    </div>
-    <div
-      class="progress-bar"
-      role="progressbar"
-      [attr.aria-valuenow]="stats().knownPct"
-      aria-valuemin="0"
-      aria-valuemax="100">
-      <span class="bar known" [style.width.%]="stats().knownPct"></span>
-      <span class="bar learning" [style.width.%]="stats().learningPct"></span>
-    </div>
-    <div class="progress-pct">{{ stats().knownPct }}% — {{ 'INT_PROGRESS_DONE' | translate }}</div>
-  </div>
-
-  <div class="filters">
-    <div class="chip-row" role="tablist" [attr.aria-label]="'INT_CATEGORY' | translate">
-      <button
-        type="button"
-        class="chip"
-        [class.active]="selectedCategory() === 'all'"
-        (click)="selectCategory('all')">
-        {{ 'INT_ALL' | translate }}
-        <span class="chip-count">{{ countByCategory()['all'] }}</span>
-      </button>
-      @for (cat of categories; track cat.id) {
-        <button
-          type="button"
-          class="chip"
-          [class.active]="selectedCategory() === cat.id"
-          (click)="selectCategory(cat.id)">
-          <span class="chip-icon">{{ cat.icon }}</span>
-          {{ cat.titleKey | translate }}
-          <span class="chip-count">{{ countByCategory()[cat.id] }}</span>
-        </button>
-      }
+<section class="page">
+  <!-- ── Hero: what this is, and how far you've got ───────────────────────── -->
+  <header class="hero">
+    <div class="hero-copy">
+      <p class="eyebrow">
+        <span>{{ stats().total }} {{ 'INT_QUESTIONS' | translate }}</span>
+        <span class="dot" aria-hidden="true">·</span>
+        <span>{{ categories.length }} {{ 'INT_MODULES' | translate }}</span>
+      </p>
+      <h1>{{ 'INT_TITLE' | translate }}</h1>
+      <p class="lede">{{ 'INT_SUBTITLE' | translate }}</p>
     </div>
 
-    <div class="filters-row">
-      <div class="level-row">
-        <button
-          type="button"
-          class="chip chip-sm"
-          [class.active]="selectedLevel() === 'all'"
-          (click)="selectLevel('all')">
-          {{ 'INT_ALL_LEVELS' | translate }}
-        </button>
-        @for (level of levels; track level) {
-          <button
-            type="button"
-            class="chip chip-sm"
-            [class.active]="selectedLevel() === level"
-            (click)="selectLevel(level)">
-            {{ level }}
+    <div class="progress-card ui-card">
+      <div
+        class="dial"
+        role="img"
+        [attr.aria-label]="stats().knownPct + '% ' + ('INT_PROGRESS_DONE' | translate)"
+      >
+        <svg viewBox="0 0 64 64" aria-hidden="true">
+          <circle class="dial-track" cx="32" cy="32" [attr.r]="ringRadius" />
+          <!-- Round caps turn a zero-length arc into a stray dot, so skip empty arcs. -->
+          @if (stats().knownPct + stats().learningPct > 0) {
+            <circle
+              class="dial-arc dial-arc--learning"
+              cx="32"
+              cy="32"
+              [attr.r]="ringRadius"
+              [attr.stroke-dasharray]="ringLearningDash() + ' ' + ringCircumference"
+            />
+          }
+          @if (stats().knownPct > 0) {
+            <circle
+              class="dial-arc dial-arc--known"
+              cx="32"
+              cy="32"
+              [attr.r]="ringRadius"
+              [attr.stroke-dasharray]="ringKnownDash() + ' ' + ringCircumference"
+            />
+          }
+        </svg>
+        <span class="dial-value">{{ stats().knownPct }}<small>%</small></span>
+      </div>
+
+      <div class="progress-legend">
+        <p class="progress-title">{{ 'INT_PROGRESS_DONE' | translate }}</p>
+        <ul class="legend">
+          <li><i class="swatch swatch--known" aria-hidden="true"></i>{{ 'INT_STATUS_KNOWN' | translate }}<b>{{ stats().known }}</b></li>
+          <li><i class="swatch swatch--learning" aria-hidden="true"></i>{{ 'INT_STATUS_LEARNING' | translate }}<b>{{ stats().learning }}</b></li>
+          <li><i class="swatch swatch--remaining" aria-hidden="true"></i>{{ 'INT_STATUS_REMAINING' | translate }}<b>{{ stats().remaining }}</b></li>
+        </ul>
+        @if (stats().known + stats().learning > 0) {
+          <button type="button" class="link-btn" (click)="resetProgress()">
+            {{ 'INT_RESET_PROGRESS' | translate }}
           </button>
         }
       </div>
-
-      <input
-        id="interview-search"
-        type="search"
-        class="search-input"
-        [value]="search()"
-        (input)="onSearch($event)"
-        [attr.aria-label]="'INT_SEARCH_PLACEHOLDER' | translate"
-        [placeholder]="'INT_SEARCH_PLACEHOLDER' | translate" />
     </div>
+  </header>
 
-    <div class="level-row status-row">
-      <button
-        type="button"
-        class="chip chip-sm"
-        [class.active]="selectedStatus() === 'all'"
-        (click)="selectStatus('all')">
-        {{ 'INT_ALL_STATUSES' | translate }}
-      </button>
-      <button
-        type="button"
-        class="chip chip-sm"
-        [class.active]="selectedStatus() === 'new'"
-        (click)="selectStatus('new')">
-        {{ 'INT_STATUS_NEW' | translate }}
-      </button>
-      <button
-        type="button"
-        class="chip chip-sm"
-        [class.active]="selectedStatus() === 'learning'"
-        (click)="selectStatus('learning')">
-        {{ 'INT_STATUS_LEARNING' | translate }}
-      </button>
-      <button
-        type="button"
-        class="chip chip-sm"
-        [class.active]="selectedStatus() === 'known'"
-        (click)="selectStatus('known')">
-        {{ 'INT_STATUS_KNOWN' | translate }}
-      </button>
-    </div>
-  </div>
+  <!-- ── Workspace: filters on the left, questions right beside them ──────── -->
+  <div class="workspace">
+    <aside class="filters ui-card" [class.is-open]="filtersOpen()">
+      <div class="filters-top">
+        <div class="search">
+          <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2" stroke-linecap="round" aria-hidden="true">
+            <circle cx="11" cy="11" r="7" />
+            <path d="m20 20-3.5-3.5" />
+          </svg>
+          <input
+            #searchInput
+            id="interview-search"
+            type="search"
+            class="ui-field search-field"
+            [value]="search()"
+            (input)="onSearch($event)"
+            [attr.aria-label]="'INT_SEARCH_PLACEHOLDER' | translate"
+            [placeholder]="'INT_SEARCH_SHORT' | translate"
+          />
+          @if (search()) {
+            <button
+              type="button"
+              class="search-clear"
+              (click)="clearSearch()"
+              [attr.aria-label]="'INT_CLEAR_SEARCH' | translate"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                   stroke-linecap="round" aria-hidden="true">
+                <path d="M6 6l12 12M18 6 6 18" />
+              </svg>
+            </button>
+          } @else {
+            <kbd class="search-kbd" aria-hidden="true">/</kbd>
+          }
+        </div>
 
-  <div class="result-bar">
-    <span>{{ 'INT_FOUND' | translate }}: <strong>{{ filtered().length }}</strong></span>
-    @if (selectedCategory() !== 'all' || selectedLevel() !== 'all' || selectedStatus() !== 'all' || search()) {
-      <button type="button" class="reset-btn" (click)="resetFilters()">
-        {{ 'INT_RESET' | translate }}
-      </button>
-    }
-  </div>
+        <!-- Narrow screens only: the rest of the sidebar folds behind this. -->
+        <button
+          type="button"
+          class="ui-btn filters-toggle"
+          (click)="toggleFilters()"
+          [attr.aria-expanded]="filtersOpen()"
+          aria-controls="interview-filters"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" aria-hidden="true">
+            <path d="M3 6h18M7 12h10M11 18h2" />
+          </svg>
+          {{ 'INT_FILTERS' | translate }}
+          @if (activeFilterCount()) {
+            <span class="filters-badge">{{ activeFilterCount() }}</span>
+          }
+        </button>
+      </div>
 
-  @if (filtered().length) {
-    <div class="q-list">
-      @for (q of filtered(); track q.id) {
-        <app-question-card [question]="q" />
+      <div class="filters-body" id="interview-filters">
+        <!-- Categories: one per line, so a long name never truncates and the
+             counts stack into a column the eye can compare. -->
+        <div class="f-group">
+          <div class="f-head">
+            <h2 class="f-label">{{ 'INT_CATEGORIES' | translate }}</h2>
+            @if (activeFilterCount()) {
+              <button type="button" class="link-btn" (click)="resetFilters()">
+                {{ 'INT_RESET_SHORT' | translate }}
+              </button>
+            }
+          </div>
+
+          <div class="f-list" role="group" [attr.aria-label]="'INT_CATEGORIES' | translate">
+            <button
+              type="button"
+              class="f-row"
+              [class.is-active]="selectedCategory() === 'all'"
+              [attr.aria-pressed]="selectedCategory() === 'all'"
+              (click)="selectCategory('all')"
+            >
+              <span class="f-name">{{ 'INT_ALL_CATEGORIES' | translate }}</span>
+              <span class="f-count">{{ countByCategory()['all'].total }}</span>
+            </button>
+            @for (cat of categories; track cat.id) {
+              <button
+                type="button"
+                class="f-row"
+                [class.is-active]="selectedCategory() === cat.id"
+                [attr.aria-pressed]="selectedCategory() === cat.id"
+                (click)="selectCategory(cat.id)"
+              >
+                <span class="f-icon" aria-hidden="true">{{ cat.icon }}</span>
+                <span class="f-name">{{ cat.titleKey | translate }}</span>
+                <span class="f-count">{{ countByCategory()[cat.id].total }}</span>
+              </button>
+            }
+          </div>
+        </div>
+
+        <div class="f-group">
+          <h2 class="f-label">{{ 'INT_LEVEL' | translate }}</h2>
+          <div class="seg" role="group" [attr.aria-label]="'INT_LEVEL' | translate">
+            <button
+              type="button"
+              class="seg-item"
+              [class.is-active]="selectedLevel() === 'all'"
+              [attr.aria-pressed]="selectedLevel() === 'all'"
+              (click)="selectLevel('all')"
+            >
+              {{ 'INT_ALL' | translate }}
+            </button>
+            @for (level of levels; track level) {
+              <button
+                type="button"
+                class="seg-item"
+                [class.is-active]="selectedLevel() === level"
+                [attr.aria-pressed]="selectedLevel() === level"
+                (click)="selectLevel(level)"
+              >
+                {{ level }}
+              </button>
+            }
+          </div>
+        </div>
+
+        <div class="f-group">
+          <h2 class="f-label">{{ 'INT_STUDY_STATUS' | translate }}</h2>
+          <div class="f-list" role="group" [attr.aria-label]="'INT_STUDY_STATUS' | translate">
+            @for (status of statuses; track status) {
+              <button
+                type="button"
+                class="f-row"
+                [class.is-active]="selectedStatus() === status"
+                [attr.aria-pressed]="selectedStatus() === status"
+                (click)="selectStatus(status)"
+              >
+                <span class="f-name">{{ statusLabelKey(status) | translate }}</span>
+                <span class="f-count">{{ countByStatus()[status] }}</span>
+              </button>
+            }
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ── Results ────────────────────────────────────────────────────────── -->
+    <div class="results">
+      <div class="result-bar">
+        <h2 class="result-title">{{ 'INT_QUESTIONS_HEADING' | translate }}</h2>
+
+        <div class="result-meta">
+          @if (filtered().length) {
+            <button type="button" class="link-btn" (click)="toggleExpandAll()">
+              {{ (allExpanded() ? 'INT_COLLAPSE_ALL' : 'INT_EXPAND_ALL') | translate }}
+            </button>
+          }
+          <span class="result-count">
+            {{ 'INT_FOUND' | translate }} <b>{{ filtered().length }}</b>
+          </span>
+        </div>
+      </div>
+
+      @if (filtered().length) {
+        <div class="q-list">
+          @for (q of filtered(); track q.id) {
+            <app-question-card
+              [question]="q"
+              [expanded]="isExpanded(q.id)"
+              (toggled)="toggleExpanded(q.id)"
+            />
+          }
+        </div>
+      } @else {
+        <div class="empty ui-card">
+          <span class="empty-icon" aria-hidden="true">🔍</span>
+          <p class="empty-text">{{ 'INT_EMPTY' | translate }}</p>
+          <button type="button" class="ui-btn ui-btn--primary" (click)="resetFilters()">
+            {{ 'INT_RESET' | translate }}
+          </button>
+        </div>
       }
     </div>
-  } @else {
-    <p class="empty">{{ 'INT_EMPTY' | translate }}</p>
-  }
+  </div>
 </section>
