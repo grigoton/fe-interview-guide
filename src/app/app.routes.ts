@@ -16,5 +16,10 @@ export const routes: Routes = [
     path: 'notes',
     loadChildren: () => import('./features/notes/notes.routes').then(m => m.notesRoutes)
   },
+  {
+    path: 'schedule',
+    loadChildren: () =>
+      import('./features/schedule/schedule.routes').then(m => m.scheduleRoutes)
+  },
   { path: '**', redirectTo: '' }
 ];

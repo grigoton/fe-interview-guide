@@ -1,0 +1,33 @@
+<section
+  class="day ui-card"
+  [class.is-active]="active()"
+  [class.is-weekend]="day().weekend"
+  [class.is-spare]="day().id === 'spare'"
+>
+  <header class="day-head">
+    <h3 class="day-name">{{ day().name[locale()] }}</h3>
+    <span class="day-tag">{{ day().tag[locale()] }}</span>
+  </header>
+
+  @if (day().hint; as hint) {
+    <p class="day-hint">{{ hint[locale()] }}</p>
+  }
+
+  @if (active()) {
+    <p class="day-now">
+      {{ 'SCH_TODAY' | translate }}
+      <span class="dot" aria-hidden="true">·</span>
+      {{ doneCount() }}/{{ timeline().length }} {{ 'SCH_DONE_OF' | translate }}
+    </p>
+  }
+
+  <div class="day-rows">
+    @for (entry of timeline(); track entry.block.id) {
+      <app-block-row
+        [entry]="entry"
+        [interactive]="active()"
+        (toggled)="state.toggle(entry.block.id)"
+      />
+    }
+  </div>
+</section>

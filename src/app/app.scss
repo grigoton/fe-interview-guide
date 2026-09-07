@@ -171,3 +171,22 @@
     display: none;
   }
 }
+
+// On a phone the three sections need the whole row: the brand goes (the first
+// tab leads to the same place) and the links tighten up, so the active one is
+// visible without swiping the rail.
+@media (max-width: 460px) {
+  .brand {
+    display: none;
+  }
+
+  .nav-link {
+    padding-inline: 0.45rem;
+    font-size: 0.8rem;
+  }
+
+  .ui-icon-btn {
+    width: 32px;
+    height: 32px;
+  }
+}

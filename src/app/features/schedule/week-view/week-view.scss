@@ -1,0 +1,98 @@
+.page {
+  padding-block: 2rem 3rem;
+}
+
+.hero {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.hero-copy h1 {
+  margin: 0.35rem 0 0.5rem;
+  font-size: clamp(1.7rem, 5vw, 2.4rem);
+}
+
+.eyebrow {
+  color: var(--text-3);
+  font-size: 0.8rem;
+  font-weight: 550;
+  text-transform: lowercase;
+}
+
+.lede {
+  max-width: 60ch;
+  color: var(--text-2);
+  font-size: 0.9rem;
+}
+
+/* One column on a phone, two from tablet, three on a wide screen — the grid
+   the plan was drawn on. */
+.week {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.9rem;
+}
+
+@media (min-width: 760px) {
+  .week {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1080px) {
+  .week {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+.foot-hint {
+  margin-top: 0.9rem;
+  color: var(--text-3);
+  font-size: 0.75rem;
+}
+
+.section-title {
+  margin-bottom: 0.9rem;
+  font-size: 1rem;
+  font-weight: 620;
+}
+
+.tally,
+.notes {
+  margin-top: 2.2rem;
+  padding-top: 1.4rem;
+  border-top: 1px solid var(--border);
+}
+
+.tally-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+  gap: 0.75rem 1.25rem;
+}
+
+.tally-item {
+  color: var(--text-2);
+  font-size: 0.82rem;
+
+  b {
+    display: block;
+    color: var(--text-1);
+    font-size: 1.05rem;
+    font-weight: 650;
+  }
+}
+
+.note {
+  max-width: 68ch;
+  margin-bottom: 0.75rem;
+  color: var(--text-2);
+  font-size: 0.88rem;
+
+  strong {
+    color: var(--text-1);
+    font-weight: 620;
+  }
+}

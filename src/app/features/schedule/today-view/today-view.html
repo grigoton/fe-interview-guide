@@ -1,0 +1,91 @@
+<section class="page">
+  <!-- ── Hero: what day it is, and what is running right now ──────────────── -->
+  <header class="hero">
+    <div class="hero-copy">
+      <p class="eyebrow">
+        <span>{{ dateLabel() }}</span>
+        <span class="dot" aria-hidden="true">·</span>
+        <span>{{ day().tag[locale()] }}</span>
+      </p>
+      <h1>{{ day().name[locale()] }}</h1>
+      @if (day().hint; as hint) {
+        <p class="lede">{{ hint[locale()] }}</p>
+      } @else {
+        <p class="lede">{{ 'SCH_SUBTITLE' | translate }}</p>
+      }
+
+      <div class="controls">
+        <button
+          type="button"
+          class="ui-chip"
+          role="switch"
+          [class.is-active]="state.spareDay()"
+          [attr.aria-checked]="state.spareDay()"
+          (click)="state.toggleSpareDay()"
+        >
+          {{ 'SCH_SPARE' | translate }}
+        </button>
+
+        @if (doneCount()) {
+          <button type="button" class="ui-btn ui-btn--ghost" (click)="state.clearDone()">
+            {{ 'SCH_RESET' | translate }}
+          </button>
+        }
+
+        <a class="ui-btn" routerLink="/schedule/week">
+          {{ 'SCH_WEEK_LINK' | translate }}
+          <span aria-hidden="true">→</span>
+        </a>
+      </div>
+    </div>
+
+    <div class="now-card ui-card">
+      <p class="now-label">{{ 'SCH_NOW' | translate }}</p>
+
+      @if (current(); as entry) {
+        <p class="now-title">{{ entry.block.title[locale()] }}</p>
+        <p class="now-time">
+          <span>{{ currentRange() }}</span>
+          @if (remaining(); as left) {
+            <span class="now-left">{{ 'SCH_LEFT' | translate }} {{ left }}</span>
+          } @else {
+            <span class="now-left is-open">{{ 'SCH_OPEN_END' | translate }}</span>
+          }
+        </p>
+      } @else {
+        <p class="now-title is-idle">{{ 'SCH_NOT_STARTED' | translate }}</p>
+      }
+
+      @if (next()) {
+        <p class="now-next">
+          <span class="now-next-label">{{ 'SCH_NEXT' | translate }}</span>
+          {{ nextLabel() }}
+        </p>
+      }
+
+      <div
+        class="bar"
+        role="progressbar"
+        [attr.aria-valuenow]="progress()"
+        aria-valuemin="0"
+        aria-valuemax="100"
+        [attr.aria-label]="'SCH_DAY_PROGRESS' | translate"
+      >
+        <span class="bar-fill" [style.width.%]="progress()"></span>
+      </div>
+      <p class="bar-legend">
+        <span>{{ 'SCH_DAY_PROGRESS' | translate }} — {{ progress() }}%</span>
+        <span>{{ doneCount() }}/{{ timeline().length }} {{ 'SCH_DONE_OF' | translate }}</span>
+      </p>
+    </div>
+  </header>
+
+  <!-- ── The day itself ───────────────────────────────────────────────────── -->
+  <div class="list ui-card">
+    @for (entry of timeline(); track entry.block.id) {
+      <app-block-row [entry]="entry" (toggled)="state.toggle(entry.block.id)" />
+    }
+  </div>
+
+  <p class="foot-hint">{{ 'SCH_STORAGE_HINT' | translate }}</p>
+</section>

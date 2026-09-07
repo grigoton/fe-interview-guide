@@ -6,6 +6,7 @@
   "ARIA_MAIN_NAV": "Site sections",
   "NAV_INTERVIEW": "Knowledge base",
   "NAV_NOTES": "Course notes",
+  "NAV_SCHEDULE": "Schedule",
 
   "NOTES_TITLE": "Course notes",
   "NOTES_SUBTITLE": "Your courses and the notes you take on them. Notes are written in Markdown and stored locally in this browser.",
@@ -99,5 +100,26 @@
   "INT_COLLAPSE_ALL": "Collapse all",
   "INT_COPY": "Copy",
   "INT_COPY_QUESTION": "Copy question",
-  "INT_COPIED": "Copied"
+  "INT_COPIED": "Copied",
+
+  "SCH_TITLE": "Daily routine",
+  "SCH_SUBTITLE": "A fixed week: what is on now and what comes next. The schedule is not editable — tick off what is done.",
+  "SCH_NOW": "Now",
+  "SCH_NEXT": "Next",
+  "SCH_LEFT": "left",
+  "SCH_OPEN_END": "end is not shown",
+  "SCH_NOT_STARTED": "The day has not started yet",
+  "SCH_DAY_PROGRESS": "Day elapsed",
+  "SCH_DONE_OF": "ticked",
+  "SCH_TODAY": "today",
+  "SCH_SPARE": "Spare day",
+  "SCH_RESET": "Clear ticks",
+  "SCH_WEEK_LINK": "Whole week",
+  "SCH_BACK_TODAY": "Today",
+  "SCH_WEEK_TITLE": "The whole week",
+  "SCH_WEEK_SUBTITLE": "Seven days plus the spare day after a late session. Today is highlighted — it is the only one you can tick.",
+  "SCH_LOCKED_HINT": "Ticks live until the end of the day and are stored in this browser only, so only the current day can be ticked.",
+  "SCH_STORAGE_HINT": "Ticks reset when the day rolls over and are stored in this browser only.",
+  "SCH_TALLY": "What the week adds up to",
+  "SCH_NOTES": "Priorities, and what is arranged around them"
 }

@@ -1,3 +1,5 @@
+import { LocalizedText } from '../../../shared/interfaces/localized-text';
+
 /**
  * Difficulty level of an interview question.
  * - Medium  — solid mid-level understanding expected.
@@ -32,14 +34,9 @@ export type InterviewCategoryId =
  */
 export type ProgressStatus = 'new' | 'learning' | 'known';
 
-/**
- * A piece of text available in both supported locales.
- * The active locale is resolved at render time via {@link LocaleService}.
- */
-export interface LocalizedText {
-  ru: string;
-  en: string;
-}
+// Shared with the schedule feature; re-exported so the existing
+// `LocalizedText` imports from this file keep working.
+export type { LocalizedText };
 
 /**
  * A single interview question with a deep, bilingual answer.

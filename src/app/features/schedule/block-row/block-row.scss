@@ -1,0 +1,152 @@
+:host {
+  display: block;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: auto 3.4rem 1fr;
+  align-items: start;
+  gap: 0.6rem;
+  padding: 0.45rem 0.6rem;
+  border-radius: var(--r-sm);
+  border-inline-start: 3px solid transparent;
+  cursor: pointer;
+  transition: background-color var(--dur) var(--ease), opacity var(--dur) var(--ease);
+
+  &:hover {
+    background: var(--surface-hover);
+  }
+
+  &.is-locked {
+    cursor: default;
+
+    &:hover {
+      background: transparent;
+    }
+  }
+}
+
+/* Native box, recoloured — it already carries the right semantics and the
+   right keyboard behaviour. */
+.row-box {
+  width: 17px;
+  height: 17px;
+  margin: 0.15rem 0 0;
+  flex: 0 0 auto;
+  accent-color: var(--accent);
+  cursor: inherit;
+
+  &:disabled {
+    opacity: 0.45;
+  }
+}
+
+.row-time {
+  color: var(--text-3);
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5;
+  padding-top: 0.06rem;
+  white-space: nowrap;
+}
+
+.row-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.row-title {
+  color: var(--text-1);
+  font-size: 0.88rem;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.row-note {
+  color: var(--text-3);
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+/* --------------------------------------------------------------------------
+   Block types — the spec's own colour language: the day's anchor is gold,
+   work is blue, the session is violet, free time is green.
+   -------------------------------------------------------------------------- */
+.row.is-anchor {
+  border-inline-start-color: var(--sch-anchor);
+  background: var(--sch-anchor-soft);
+
+  .row-title {
+    color: var(--sch-anchor-text);
+    font-weight: 600;
+  }
+}
+
+.row.is-work {
+  border-inline-start-color: var(--sch-work);
+  background: var(--sch-work-soft);
+
+  .row-title {
+    color: var(--sch-work-text);
+  }
+}
+
+.row.is-session {
+  border-inline-start-color: var(--sch-session);
+  background: var(--sch-session-soft);
+
+  .row-title {
+    color: var(--sch-session-text);
+    font-weight: 600;
+  }
+
+  .row-time {
+    color: var(--sch-session);
+    font-weight: 600;
+  }
+}
+
+.row.is-project {
+  border-inline-start-color: var(--sch-project);
+
+  .row-title {
+    color: var(--text-1);
+  }
+}
+
+.row.is-busy {
+  border-inline-start-color: var(--sch-rest);
+
+  .row-title {
+    color: var(--sch-rest-text);
+  }
+}
+
+.row.is-free .row-title,
+.row.is-meal .row-title,
+.row.is-chores .row-title {
+  color: var(--text-2);
+  font-weight: 450;
+}
+
+/* --------------------------------------------------------------------------
+   Status against the clock
+   -------------------------------------------------------------------------- */
+.row.is-past {
+  opacity: 0.5;
+}
+
+.row.is-current {
+  box-shadow: inset 0 0 0 1px var(--accent-ring);
+}
+
+/* A ticked row is spent — struck through and dimmed, whatever its type. */
+.row.is-done {
+  opacity: 0.55;
+
+  .row-title {
+    text-decoration: line-through;
+    text-decoration-color: var(--text-3);
+  }
+}

@@ -1,0 +1,16 @@
+<label class="row" [class]="rowClass()">
+  <input
+    type="checkbox"
+    class="row-box"
+    [checked]="entry().done"
+    [disabled]="!interactive()"
+    (change)="toggled.emit()"
+  />
+  <span class="row-time">{{ time() }}</span>
+  <span class="row-body">
+    <span class="row-title">{{ entry().block.title[locale()] }}</span>
+    @if (entry().block.note; as note) {
+      <span class="row-note">{{ note[locale()] }}</span>
+    }
+  </span>
+</label>

@@ -93,6 +93,22 @@ html {
   --aurora-1: rgba(127, 108, 255, 0.22);
   --aurora-2: rgba(45, 212, 191, 0.14);
   --aurora-3: rgba(244, 114, 182, 0.1);
+
+  // Schedule blocks — the plan's own colour language: the day's anchor is
+  // gold, work is blue, the poker session violet, free/off time green.
+  --sch-anchor: #d9a85e;
+  --sch-anchor-text: #f0dcbb;
+  --sch-anchor-soft: rgba(217, 168, 94, 0.09);
+  --sch-work: #6f97c7;
+  --sch-work-text: #c3d6ec;
+  --sch-work-soft: rgba(111, 151, 199, 0.09);
+  --sch-session: #8c79c4;
+  --sch-session-text: #cfc3ec;
+  --sch-session-soft: rgba(140, 121, 196, 0.1);
+  --sch-rest: #5e9e8b;
+  --sch-rest-text: #9bd0bf;
+  // Resolved at use time, so it follows whichever accent the theme sets.
+  --sch-project: var(--accent);
 }
 
 /* --------------------------------------------------------------------------
@@ -141,6 +157,19 @@ html[data-theme='light'] {
   --aurora-1: rgba(91, 69, 240, 0.13);
   --aurora-2: rgba(13, 148, 136, 0.1);
   --aurora-3: rgba(219, 39, 119, 0.07);
+
+  // Same four hues, darkened until they hold up on a light background.
+  --sch-anchor: #a4711b;
+  --sch-anchor-text: #7a5312;
+  --sch-anchor-soft: rgba(164, 113, 27, 0.1);
+  --sch-work: #35618f;
+  --sch-work-text: #2b4f74;
+  --sch-work-soft: rgba(53, 97, 143, 0.09);
+  --sch-session: #6247a6;
+  --sch-session-text: #4e3888;
+  --sch-session-soft: rgba(98, 71, 166, 0.1);
+  --sch-rest: #2f7a66;
+  --sch-rest-text: #24614f;
 }
 
 /* --------------------------------------------------------------------------

@@ -1,0 +1,49 @@
+<section class="page">
+  <header class="hero">
+    <div class="hero-copy">
+      <p class="eyebrow">
+        <span>{{ 'SCH_TITLE' | translate }}</span>
+      </p>
+      <h1>{{ 'SCH_WEEK_TITLE' | translate }}</h1>
+      <p class="lede">{{ 'SCH_WEEK_SUBTITLE' | translate }}</p>
+    </div>
+
+    <a class="ui-btn" routerLink="/schedule">
+      <span aria-hidden="true">←</span>
+      {{ 'SCH_BACK_TODAY' | translate }}
+    </a>
+  </header>
+
+  <div class="week">
+    @for (day of week; track day.id) {
+      <app-day-card [day]="day" [active]="isActive(day)" />
+    }
+    <app-day-card [day]="spareDay" [active]="state.spareDay()" />
+  </div>
+
+  <p class="foot-hint">{{ 'SCH_LOCKED_HINT' | translate }}</p>
+
+  <!-- ── What the week adds up to ─────────────────────────────────────────── -->
+  <section class="tally">
+    <h2 class="section-title">{{ 'SCH_TALLY' | translate }}</h2>
+    <div class="tally-grid">
+      @for (item of tally; track item.label.en) {
+        <div class="tally-item">
+          <b>{{ item.value[locale()] }}</b>
+          {{ item.label[locale()] }}
+        </div>
+      }
+    </div>
+  </section>
+
+  <!-- ── Why the grid looks like this ─────────────────────────────────────── -->
+  <section class="notes">
+    <h2 class="section-title">{{ 'SCH_NOTES' | translate }}</h2>
+    @for (note of notes; track note.lead.en) {
+      <p class="note">
+        <strong>{{ note.lead[locale()] }}</strong>
+        {{ note.text[locale()] }}
+      </p>
+    }
+  </section>
+</section>

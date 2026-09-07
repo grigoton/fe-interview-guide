@@ -1,0 +1,84 @@
+:host {
+  display: block;
+}
+
+.day {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 1rem 0.9rem 0.9rem;
+  transition: border-color var(--dur) var(--ease), background-color var(--dur) var(--ease);
+}
+
+.day.is-weekend {
+  background: var(--surface-sunken);
+}
+
+/* The day being lived: the one card you can actually tick. */
+.day.is-active {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.day.is-spare {
+  border-color: color-mix(in srgb, var(--sch-session) 45%, transparent);
+}
+
+.day-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.6rem;
+  margin-bottom: 0.55rem;
+  padding-inline: 0.6rem;
+}
+
+.day-name {
+  font-size: 1.02rem;
+  font-weight: 660;
+}
+
+.day-tag {
+  flex: 0 0 auto;
+  padding: 0.1rem 0.55rem;
+  border: 1px solid color-mix(in srgb, var(--sch-anchor) 35%, transparent);
+  border-radius: var(--r-full);
+  color: var(--sch-anchor);
+  font-size: 0.72rem;
+  line-height: 1.5;
+  text-align: end;
+}
+
+.day.is-weekend .day-tag {
+  border-color: color-mix(in srgb, var(--sch-rest) 40%, transparent);
+  color: var(--sch-rest);
+}
+
+.day.is-spare .day-tag {
+  border-color: color-mix(in srgb, var(--sch-session) 45%, transparent);
+  color: var(--sch-session);
+}
+
+.day-hint,
+.day-now {
+  margin: 0 0 0.5rem;
+  padding-inline: 0.6rem;
+  color: var(--text-3);
+  font-size: 0.76rem;
+  line-height: 1.5;
+}
+
+.day-now {
+  color: var(--accent);
+  font-weight: 550;
+}
+
+.day-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.dot {
+  color: var(--text-3);
+}
