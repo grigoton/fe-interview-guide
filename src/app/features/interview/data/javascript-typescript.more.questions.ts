@@ -1553,13 +1553,76 @@ obj?.method(fn());   // fn() НЕ вызвана, calls остался 0
 
 Формы записи: \`a?.b\` (свойство), \`a?.[key]\` (динамический ключ), \`a?.()\` (вызов функции, которой может не быть).
 
-## Логические присваивания
+## Логические присваивания: ??=, ||=, &&=
 
-\`??=\`, \`||=\`, \`&&=\` — присваивают только при выполнении условия, и тоже с коротким замыканием:
+Это не «посчитать выражение и присвоить», а **условное присваивание**: если условие не выполнено, **записи не происходит вообще**.
+
+- \`a ??= b\` → \`a ?? (a = b)\` — присвоит, только если \`a\` это \`null\` или \`undefined\`.
+- \`a ||= b\` → \`a || (a = b)\` — присвоит на любое falsy: \`0\`, \`''\`, \`NaN\`, \`false\`.
+- \`a &&= b\` → \`a && (a = b)\` — присвоит, только если \`a\` truthy.
+
+**\`??=\` — дефолты, которые не затирают \`0\` и \`''\`:**
 
 \`\`\`js
-opts.timeout ??= 5000;   // присвоит, только если было null/undefined
+const opts = { retries: 0, name: '', timeout: null };
+
+opts.retries ??= 3;        // 0      — ноль осмыслен, оставили
+opts.name    ??= 'guest';  // ''     — оставили
+opts.timeout ??= 5000;     // 5000   — было null, подставили
 \`\`\`
+
+**\`||=\` — когда «пустое» действительно значит «нет значения»:**
+
+\`\`\`js
+let title = '';
+title ||= 'Без названия';   // 'Без названия' — то, что нужно
+
+const cfg = { retries: 0 };
+cfg.retries ||= 3;          // 3 — БАГ: ноль был валидной настройкой
+\`\`\`
+
+**\`&&=\` — «обнови только то, что уже есть»:**
+
+\`\`\`js
+const form = { email: '  A@b.COM  ', phone: '' };
+
+form.email &&= form.email.trim().toLowerCase();  // 'a@b.com'
+form.phone &&= form.phone.trim();                // '' — пустое не трогаем
+
+// Частый приём: почистить только заполненные поля, не создавая новых.
+\`\`\`
+
+**Ленивое кеширование.** Правая часть не вычисляется, если присваивание не нужно:
+
+\`\`\`js
+const cache = {};
+const heavy = (key) => { console.log('считаю', key); return key.length; };
+
+cache.a ??= heavy('a');   // 'считаю a' — посчитали один раз
+cache.a ??= heavy('a');   // тишина: heavy() даже не вызвана
+\`\`\`
+
+**Главная тонкость: при коротком замыкании сеттер не дёргается.** \`x ??= v\` и \`x = x ?? v\` — не одно и то же:
+
+\`\`\`js
+const obj = {
+  _v: 1,
+  get v() { return this._v; },
+  set v(next) { console.log('setter', next); this._v = next; },
+};
+
+obj.v ??= 42;          // тишина: v не nullish, записи не было
+obj.v = obj.v ?? 42;   // 'setter 1' — записали то же самое значение, зря
+\`\`\`
+
+Это важно везде, где запись не бесплатна: сеттеры, \`Proxy\`, реактивность (signals, Vue), DOM-свойства, обёртки над хранилищами. Лишняя запись — лишний ререндер или лишний запрос.
+
+**Ловушки:**
+
+- \`const a = 1; a ??= 2\` — **не ошибка**: присваивания не произошло, значит \`const\` не нарушен. А \`const a = null; a ??= 2\` бросит \`TypeError: Assignment to constant variable\`.
+- \`obj?.prop ??= 1\` — \`SyntaxError\`: опциональная цепочка не может быть целью присваивания.
+- \`x ??= 1\` для необъявленной \`x\` — \`ReferenceError\`: оператор не создаёт переменную.
+- \`||=\` на счётчиках, флагах и индексах — классический источник багов: \`count ||= 10\` затрёт валидный \`0\`. Для дефолтов по умолчанию берите \`??=\`.
 
 ## Что сказать на собеседовании
 
@@ -1609,13 +1672,76 @@ obj?.method(fn());   // fn() is NOT called, calls stays 0
 
 The forms are: \`a?.b\` (property), \`a?.[key]\` (computed key) and \`a?.()\` (calling a function that might not exist).
 
-## Logical assignments
+## Logical assignments: ??=, ||=, &&=
 
-\`??=\`, \`||=\` and \`&&=\` assign only when the condition holds, with the same short-circuiting:
+These are not "evaluate and assign" but **conditional assignment**: when the condition doesn't hold, **no write happens at all**.
+
+- \`a ??= b\` → \`a ?? (a = b)\` — assigns only when \`a\` is \`null\` or \`undefined\`.
+- \`a ||= b\` → \`a || (a = b)\` — assigns on any falsy value: \`0\`, \`''\`, \`NaN\`, \`false\`.
+- \`a &&= b\` → \`a && (a = b)\` — assigns only when \`a\` is truthy.
+
+**\`??=\` — defaults that don't wipe out \`0\` and \`''\`:**
 
 \`\`\`js
-opts.timeout ??= 5000;   // assigns only if it was null/undefined
+const opts = { retries: 0, name: '', timeout: null };
+
+opts.retries ??= 3;        // 0      — zero is meaningful, kept
+opts.name    ??= 'guest';  // ''     — kept
+opts.timeout ??= 5000;     // 5000   — it was null, filled in
 \`\`\`
+
+**\`||=\` — when "empty" really does mean "missing":**
+
+\`\`\`js
+let title = '';
+title ||= 'Untitled';   // 'Untitled' — exactly what you want
+
+const cfg = { retries: 0 };
+cfg.retries ||= 3;      // 3 — BUG: zero was a valid setting
+\`\`\`
+
+**\`&&=\` — "update only what is already there":**
+
+\`\`\`js
+const form = { email: '  A@b.COM  ', phone: '' };
+
+form.email &&= form.email.trim().toLowerCase();  // 'a@b.com'
+form.phone &&= form.phone.trim();                // '' — left alone
+
+// A common trick: normalise the filled fields without creating new ones.
+\`\`\`
+
+**Lazy caching.** The right-hand side isn't evaluated when the assignment isn't needed:
+
+\`\`\`js
+const cache = {};
+const heavy = (key) => { console.log('computing', key); return key.length; };
+
+cache.a ??= heavy('a');   // 'computing a' — computed once
+cache.a ??= heavy('a');   // silence: heavy() is never called
+\`\`\`
+
+**The main subtlety: a short circuit skips the setter.** \`x ??= v\` is not the same as \`x = x ?? v\`:
+
+\`\`\`js
+const obj = {
+  _v: 1,
+  get v() { return this._v; },
+  set v(next) { console.log('setter', next); this._v = next; },
+};
+
+obj.v ??= 42;          // silence: v isn't nullish, nothing was written
+obj.v = obj.v ?? 42;   // 'setter 1' — wrote the same value for nothing
+\`\`\`
+
+That matters anywhere a write isn't free: setters, \`Proxy\`, reactivity (signals, Vue), DOM properties, storage wrappers. A pointless write is a pointless re-render or request.
+
+**Gotchas:**
+
+- \`const a = 1; a ??= 2\` is **not an error**: no assignment happened, so \`const\` was never violated. But \`const a = null; a ??= 2\` throws \`TypeError: Assignment to constant variable\`.
+- \`obj?.prop ??= 1\` is a \`SyntaxError\`: an optional chain can't be an assignment target.
+- \`x ??= 1\` on an undeclared \`x\` throws \`ReferenceError\` — the operator doesn't create the variable.
+- \`||=\` on counters, flags and indices is a classic bug source: \`count ||= 10\` overwrites a valid \`0\`. For defaults, reach for \`??=\`.
 
 ## What to say in the interview
 
