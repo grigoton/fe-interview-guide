@@ -2,6 +2,9 @@ import {
   ChangeDetectionStrategy,
   Component,
   DestroyRef,
+  ElementRef,
+  Injector,
+  afterNextRender,
   computed,
   inject,
   input,
@@ -40,11 +43,21 @@ export class QuestionCardComponent {
   private readonly localeService = inject(LocaleService);
   private readonly progress = inject(ProgressService);
   private readonly destroyRef = inject(DestroyRef);
+  private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
+  private readonly injector = inject(Injector);
 
   readonly question = input.required<InterviewQuestion>();
   readonly expanded = input(false);
 
   readonly toggled = output<void>();
+  /**
+   * "Collapse, record this status and move on to the next question."
+   *
+   * Handled by the list, not here: it owns the open set *and* needs to know
+   * which card comes next before the status changes — a new status can drop
+   * this card out of the filtered list altogether.
+   */
+  readonly advanced = output<ProgressStatus>();
 
   protected readonly locale = this.localeService.currentLocale;
   protected readonly snippetCopied = signal(false);
@@ -69,6 +82,46 @@ export class QuestionCardComponent {
 
   protected toggle(): void {
     this.toggled.emit();
+  }
+
+  /**
+   * Collapse from the foot of the answer.
+   *
+   * A long answer leaves the scroll position far below the card's header, and
+   * losing the body would drop the reader somewhere arbitrary — so once the
+   * card has shrunk, put its header back under the sticky top bar.
+   */
+  protected collapse(): void {
+    this.toggled.emit();
+
+    afterNextRender(() => this.revealHeader({ onlyIfAbove: true }), {
+      injector: this.injector,
+    });
+  }
+
+  /** Foot buttons: decide "learning" / "known" and let the list open the next one. */
+  protected advance(status: ProgressStatus): void {
+    this.advanced.emit(status);
+  }
+
+  /**
+   * Scroll so the card's header sits just under the sticky top bar.
+   *
+   * With `onlyIfAbove`, a header that is still on screen is left alone: the
+   * reader has not lost their place, so the page should not move under them.
+   */
+  revealHeader(options: { onlyIfAbove?: boolean } = {}): void {
+    const rect = this.host.nativeElement.getBoundingClientRect();
+    const offset = this.stickyOffset();
+    if (options.onlyIfAbove && rect.top >= offset) return;
+    window.scrollTo({ top: rect.top + window.scrollY - offset });
+  }
+
+  /** Height of the sticky top bar, plus a little air. */
+  private stickyOffset(): number {
+    const raw = getComputedStyle(document.documentElement).getPropertyValue('--topbar-h');
+    const height = Number.parseFloat(raw);
+    return (Number.isFinite(height) ? height : 60) + 8;
   }
 
   protected setStatus(status: ProgressStatus, event: Event): void {

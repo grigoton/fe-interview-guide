@@ -279,6 +279,50 @@
   }
 }
 
+/* Foot of a long answer: the way back out without scrolling to the header,
+   plus "learning" / "known" verdicts that also carry you to the next card. */
+.card-foot {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.5rem;
+  margin-top: 1rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--border);
+}
+
+.foot-btn {
+  gap: 0.35rem;
+
+  svg {
+    width: 15px;
+    height: 15px;
+  }
+
+  // Same colour language as the status pills in the header row.
+  &--learning {
+    border-color: color-mix(in srgb, var(--warn) 45%, transparent);
+    color: var(--warn);
+
+    &:hover {
+      background: var(--warn-soft);
+      border-color: var(--warn);
+      color: var(--warn);
+    }
+  }
+
+  &--known {
+    border-color: color-mix(in srgb, var(--ok) 45%, transparent);
+    color: var(--ok);
+
+    &:hover {
+      background: var(--ok-soft);
+      border-color: var(--ok);
+      color: var(--ok);
+    }
+  }
+}
+
 .tags {
   display: flex;
   flex-wrap: wrap;

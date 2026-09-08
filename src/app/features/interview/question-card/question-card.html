@@ -93,6 +93,42 @@
           <pre><code>{{ snippet }}</code></pre>
         </div>
       }
+
+      <!-- Read to the end? Close it from here instead of scrolling back up —
+           or decide "learning" / "known" and go straight to the next question. -->
+      <div class="card-foot">
+        <button type="button" class="ui-btn foot-btn" (click)="collapse()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="m6 15 6-6 6 6" />
+          </svg>
+          {{ 'INT_COLLAPSE' | translate }}
+        </button>
+        <button
+          type="button"
+          class="ui-btn foot-btn foot-btn--learning"
+          [title]="'INT_NEXT_LEARNING_HINT' | translate"
+          (click)="advance('learning')"
+        >
+          {{ 'INT_NEXT_LEARNING' | translate }}
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M5 12h14M13 6l6 6-6 6" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          class="ui-btn foot-btn foot-btn--known"
+          [title]="'INT_NEXT_KNOWN_HINT' | translate"
+          (click)="advance('known')"
+        >
+          {{ 'INT_NEXT_KNOWN' | translate }}
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M5 12h14M13 6l6 6-6 6" />
+          </svg>
+        </button>
+      </div>
     </div>
   }
 </article>

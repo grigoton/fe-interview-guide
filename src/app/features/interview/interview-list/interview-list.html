@@ -224,6 +224,7 @@
               [question]="q"
               [expanded]="isExpanded(q.id)"
               (toggled)="toggleExpanded(q.id)"
+              (advanced)="advance(q.id, $event)"
             />
           }
         </div>

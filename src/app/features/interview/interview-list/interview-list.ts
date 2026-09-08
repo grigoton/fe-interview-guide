@@ -2,10 +2,13 @@ import {
   ChangeDetectionStrategy,
   Component,
   ElementRef,
+  Injector,
+  afterNextRender,
   computed,
   inject,
   signal,
   viewChild,
+  viewChildren,
 } from '@angular/core';
 import { TranslateModule } from '@ngx-translate/core';
 import { LocaleService } from '../../../core/services/locale.service';
@@ -46,8 +49,10 @@ const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
 export class InterviewListComponent {
   private readonly localeService = inject(LocaleService);
   private readonly progress = inject(ProgressService);
+  private readonly injector = inject(Injector);
 
   private readonly searchInput = viewChild<ElementRef<HTMLInputElement>>('searchInput');
+  private readonly cards = viewChildren(QuestionCardComponent);
 
   protected readonly locale = this.localeService.currentLocale;
   protected readonly categories = INTERVIEW_CATEGORIES;
@@ -198,6 +203,41 @@ export class InterviewListComponent {
       if (!next.delete(id)) next.add(id);
       return next;
     });
+  }
+
+  /**
+   * Foot-of-card verdict: record `status`, collapse the card and open the
+   * next visible question — then bring that question's header into view.
+   *
+   * "Next" is read off the visible list *before* the status is written: with a
+   * status filter active, the new status may remove this card from the list.
+   */
+  protected advance(id: string, status: ProgressStatus): void {
+    const visible = this.filtered();
+    const next = visible[visible.findIndex((q) => q.id === id) + 1];
+
+    this.progress.setStatus(id, status);
+    this.expandedIds.update((current) => {
+      const open = new Set(current);
+      open.delete(id);
+      if (next) open.add(next.id);
+      return open;
+    });
+
+    // Only after the render has shrunk this card and grown the next one do
+    // the positions mean anything.
+    afterNextRender(
+      () => {
+        const card = (target: string) => this.cards().find((c) => c.question().id === target);
+        if (next) {
+          card(next.id)?.revealHeader();
+        } else {
+          // Last question: behave like a plain collapse, if the card is still here.
+          card(id)?.revealHeader({ onlyIfAbove: true });
+        }
+      },
+      { injector: this.injector },
+    );
   }
 
   /** Expand every visible question, or collapse them if they are all open. */
