@@ -236,7 +236,7 @@ function fromResize(el: Element): Observable<DOMRectReadOnly> {
     id: 'rxjs-003',
     category: 'js-state',
     level: 'Medium',
-    tags: ['hot-cold', 'multicasting'],
+    tags: ['hot-cold', 'multicasting', 'share', 'sharereplay', 'connectable'],
     question: {
       ru: 'В чём разница между hot и cold Observable? Как сделать cold-поток горячим?',
       en: 'What is the difference between hot and cold Observables? How do you make a cold stream hot?'
@@ -244,84 +244,336 @@ function fromResize(el: Element): Observable<DOMRectReadOnly> {
     answer: {
       ru: `## Коротко
 
-Вопрос простой: **где живёт продюсер данных**. Если он рождается внутри Observable и заново на каждую подписку — поток **cold**. Если он живёт снаружи и один на всех — поток **hot**.
+Всё сводится к одному вопросу: **где живёт продюсер данных** — тот, кто реально создаёт значения (таймер, HTTP-запрос, сокет, DOM-события).
 
-Аналогия: cold — это **личная запись фильма**: каждый включает с первой минуты, у каждого своя копия. Hot — **прямой эфир**: включился в середине — начало пропустил, и эфир идёт один на всех зрителей.
+- **Cold**: продюсер создаётся **внутри** Observable, **заново на каждую подписку**. Два подписчика — два таймера, два запроса. Каждый получает **свою** копию значений **с самого начала**.
+- **Hot**: продюсер живёт **снаружи** и он **один на всех**. Подписчик подключается к тому, что уже идёт, и видит только то, что случится **после** подписки.
 
-## Как это работает по шагам
+Аналогия: cold — **фильм по ссылке**: каждый нажимает play и смотрит с первой минуты, у каждого своя копия. Hot — **прямой эфир**: включился в середине — начало пропустил, и эфир один на всех зрителей.
 
-1. У cold-потока функция подписки создаёт продюсера: \`interval\` заводит свой таймер, \`http.get\` шлёт свой запрос.
-2. Второй подписчик → второй таймер, второй запрос. Значения у подписчиков **свои** и с самого начала.
-3. У hot-потока продюсер уже существует: клики в документе идут независимо от того, слушает их кто-то или нет.
-4. Подписчик просто **подключается к идущему эфиру** и ловит то, что случится дальше. Всё, что было до, он не увидит.
-5. Чтобы сделать cold горячим, между источником и подписчиками ставят \`Subject\` — это и есть **multicasting**.
-6. Источник подписывается **один раз**, \`Subject\` раздаёт его значения всем: одно выполнение на многих.
+Сделать cold горячим — значит **поставить между источником и подписчиками \`Subject\`**: источник подписывается один раз, а Subject раздаёт значения всем. Это называется **multicasting**, и для него есть готовые операторы: \`share\`, \`shareReplay\`, \`connectable\`.
 
-## Пример
+## Cold на пальцах
+
+Observable — это **функция**, которая выполняется на каждый \`subscribe()\`. Всё, что вы написали внутри, повторится для каждого подписчика:
 
 \`\`\`ts
-const cold$ = interval(1000);
-const hot$ = cold$.pipe(share()); // multicast с refCount
+const cold$ = new Observable<number>(subscriber => {
+  console.log('продюсер создан');            // выполнится на КАЖДЫЙ subscribe
+  let i = 0;
+  const id = setInterval(() => subscriber.next(i++), 1000);
+  return () => clearInterval(id);            // teardown — свой у каждой подписки
+});
 
-hot$.subscribe(x => console.log('A', x));
-setTimeout(() => hot$.subscribe(x => console.log('B', x)), 2500);
-// A 0, A 1, A 2 / B 2, A 3 / B 3 ...
+cold$.subscribe(v => console.log('A', v));   // «продюсер создан», таймер №1
+setTimeout(() => {
+  cold$.subscribe(v => console.log('B', v)); // «продюсер создан», таймер №2
+}, 2500);
+// A 0, A 1, A 2, B 0, A 3, B 1 ... — B начал с нуля, у него свой таймер
 \`\`\`
 
-Почему так: без \`share()\` у B был бы **свой** таймер и он начал бы с нуля. С \`share()\` таймер один, поэтому B подключается «в середине эфира» и сразу видит \`2\`.
+То же самое с \`HttpClient\`, и это самый частый баг в Angular:
+
+\`\`\`ts
+users$ = this.http.get<User[]>('/api/users');   // cold: рецепт запроса, а не сам запрос
+\`\`\`
+
+\`\`\`html
+<p>Всего: {{ (users$ | async)?.length }}</p>
+<ul>
+  @for (u of users$ | async; track u.id) { <li>{{ u.name }}</li> }
+</ul>
+<!-- два async = две подписки = ДВА реальных HTTP-запроса -->
+\`\`\`
+
+Типичные cold-источники: \`of\`, \`from\`, \`interval\`, \`timer\`, \`defer\`, \`HttpClient.get/post\`, \`fromFetch\`, \`ajax\`. Признак: **пока никто не подписался — ничего не происходит**, а каждая подписка запускает работу заново.
+
+## Hot на пальцах
+
+Продюсер уже существует и работает сам по себе. Observable лишь **подключает** вас к нему.
+
+\`\`\`ts
+const subject = new Subject<number>();
+
+subject.next(1);                                // слушателей нет — значение потеряно
+subject.subscribe(v => console.log('A', v));
+subject.next(2);                                // A 2
+subject.subscribe(v => console.log('B', v));
+subject.next(3);                                // A 3, B 3 — B никогда не увидит 1 и 2
+\`\`\`
+
+\`\`\`ts
+const clicks$ = fromEvent(document, 'click');   // клики происходят, слушаете вы или нет
+clicks$.subscribe(() => console.log('A'));      // подключились к «эфиру» кликов
+clicks$.subscribe(() => console.log('B'));      // второй слушатель того же эфира: один клик — A и B
+\`\`\`
+
+Типичные hot-источники: \`Subject\` и его наследники, \`fromEvent\`, WebSocket, в Angular — \`form.valueChanges\`, \`router.events\`, \`EventEmitter\` за \`@Output()\`. Признак: **значения могут появляться без подписчиков**, и опоздавший их не получит.
+
+Быстрый тест на собеседовании: «если я подпишусь дважды — работа выполнится дважды?» Да → cold. «Если я подпишусь поздно — я что-то пропущу?» Да → hot.
+
+## Как сделать cold горячим: Subject посередине
+
+\`Subject\` одновременно и Observer (у него есть \`next\`), и Observable (на него можно подписаться). Поэтому его можно **подписать на источник** и раздавать значения дальше:
+
+\`\`\`ts
+const source$ = interval(1000);                 // cold
+const subject = new Subject<number>();          // «тройник»
+
+subject.subscribe(v => console.log('A', v));
+subject.subscribe(v => console.log('B', v));
+source$.subscribe(subject);                     // ОДНА подписка на источник, один таймер
+// A 0, B 0, A 1, B 1 ... — оба видят одни и те же значения
+\`\`\`
+
+Это и есть multicasting вручную. Минус: вы сами следите, когда подписаться на источник и когда отписаться. Операторы ниже делают это за вас — различаются они только тем, **когда стартуют, когда останавливаются и помнят ли историю**.
+
+### share() — общий эфир со счётчиком слушателей
+
+\`share()\` ставит внутри обычный \`Subject\` и считает подписчиков (refCount): **первый подписчик запускает источник, последний ушедший — останавливает**. Истории нет: опоздавший видит только новые значения.
+
+\`\`\`ts
+const hot$ = interval(1000).pipe(share());
+
+hot$.subscribe(v => console.log('A', v));                        // источник стартовал
+setTimeout(() => hot$.subscribe(v => console.log('B', v)), 2500);
+// A 0, A 1, A 2, B 2, A 3, B 3 ... — B подключился «в середине» и сразу видит 2
+\`\`\`
+
+После ухода **всех** подписчиков \`share()\` отписывается от источника и сбрасывает Subject; следующий подписчик запустит источник **заново с нуля**. В RxJS 7 это настраивается: \`share({ resetOnRefCountZero: false, resetOnComplete: false, resetOnError: false, connector: () => new ReplaySubject(1) })\`.
+
+Когда брать: несколько потребителей одного **живого** потока, история не нужна — сообщения из сокета, тяжёлая обработка событий мыши.
+
+### shareReplay() — эфир плюс запись для опоздавших
+
+\`shareReplay(n)\` — тот же \`share\`, но внутри \`ReplaySubject\`: он **помнит последние n значений** и мгновенно проигрывает их каждому новому подписчику. Поэтому это стандартный **кэш HTTP-ответа**:
+
+\`\`\`ts
+config$ = this.http.get<Config>('/api/config').pipe(shareReplay(1));
+
+this.config$.subscribe(a);                     // запрос ушёл
+this.config$.subscribe(b);                     // запроса нет: b ждёт тот же ответ
+// ...ответ пришёл, поток завершился...
+setTimeout(() => this.config$.subscribe(c), 5000); // запроса нет: c получает ответ из буфера
+\`\`\`
+
+С обычным \`share()\` подписчик \`c\` **отправил бы новый запрос**: поток уже завершился, \`share\` сбросился, а истории у него нет.
+
+Важная разница: \`shareReplay(1)\` — это \`{ bufferSize: 1, refCount: false }\`, то есть **от источника он не отписывается никогда**, даже если все ушли. Для одноразового HTTP это то, что нужно. Для бесконечного источника это утечка — там пишите \`shareReplay({ bufferSize: 1, refCount: true })\`.
+
+Когда брать: кэш запроса, «текущее состояние» для тех, кто подписался позже (пользователь, конфиг, справочники).
+
+### connectable() — эфир с ручным рубильником
+
+\`connectable(source$)\` тоже ставит Subject посередине, но **не подписывается на источник сам**. Подписчики подключаются к Subject и молча ждут, пока вы не вызовете \`connect()\`. Нужен, когда важно, чтобы **все подписались до первой эмиссии** — например, у синхронного источника:
+
+\`\`\`ts
+const src$ = of(1, 2, 3);                      // выдаёт всё синхронно и завершается
+
+const shared$ = src$.pipe(share());
+shared$.subscribe(v => console.log('A', v));   // A 1, A 2, A 3 — и поток уже завершён
+shared$.subscribe(v => console.log('B', v));   // share сбросился → источник запущен ЗАНОВО: B 1, B 2, B 3
+
+const conn$ = connectable(src$);
+conn$.subscribe(v => console.log('A', v));     // тишина
+conn$.subscribe(v => console.log('B', v));     // тишина
+const sub = conn$.connect();                   // A 1, B 1, A 2, B 2, A 3, B 3 — один прогон на всех
+sub.unsubscribe();                             // останавливаем тоже вручную
+\`\`\`
+
+Вид Subject задаётся опцией: \`connectable(src$, { connector: () => new ReplaySubject(1) })\`. Это современная замена \`multicast\`/\`publish\`/\`refCount\`, которые в RxJS 7 помечены deprecated.
+
+Когда брать: редко — когда старт и стоп должны контролироваться кодом, а не подписчиками.
+
+## Сравнение на одной ладони
+
+- **Subject вручную** — старт и стоп ваши, буфер зависит от типа Subject.
+- **\`share()\`** — старт по первому подписчику, стоп и сброс по последнему, буфера нет.
+- **\`shareReplay(n)\`** — старт по первому, буфер из n значений, по умолчанию **не останавливается** (\`refCount: false\`).
+- **\`connectable()\`** — старт по \`connect()\`, стоп по отписке от него, буфер задаёт \`connector\`.
 
 ## Что сказать на собеседовании
 
-> Разница в том, где находится продюсер значений. У cold Observable продюсер создаётся внутри функции подписки и заново на каждый \`subscribe\`, поэтому каждый подписчик получает независимое выполнение с начала — это \`of\`, \`from\`, \`HttpClient.get\`, \`interval\`. У hot Observable продюсер существует вне потока и разделяется, поэтому подписчики видят только те значения, что пришли после подключения, и ранние эмиссии могут пропустить — это \`Subject\`, \`fromEvent\`, WebSocket. Превращают cold в hot мультикастингом: \`share\`, \`shareReplay\`, \`connectable\` — или устаревший \`multicast\` — вставляют между источником и подписчиками Subject, источник запускается один раз, а Subject раздаёт значения всем. Практически это важно, чтобы два \`| async\` на один HTTP-запрос не превращались в два реальных запроса.
+> Разница в том, где живёт продюсер значений. У cold Observable он создаётся заново на каждый \`subscribe\`, и каждый подписчик получает своё выполнение: \`of\`, \`interval\`, \`HttpClient.get\`. У hot Observable продюсер живёт снаружи и один на всех: подписчик подключается к идущему потоку и видит только новые значения — \`Subject\`, \`fromEvent\`, WebSocket. Cold делают hot мультикастингом: между источником и подписчиками ставят Subject, источник подписывается один раз, а Subject раздаёт значения всем. \`share\` стартует по первому подписчику, сбрасывается по последнему и историю не хранит; \`shareReplay\` через ReplaySubject доигрывает опоздавшим последние значения — это кэш HTTP-ответа; \`connectable\` запускают вручную через \`connect()\`, когда все должны подписаться до первой эмиссии. Практически это про то, чтобы два \`async\` не стали двумя запросами.
 
 ## Ловушки
 
-- **\`HttpClient.get()\` — cold**. Каждая подписка — новый запрос; «он же выполнился один раз» — типичная ошибка.
-- **\`share()\` не хранит историю**: подписался позже — предыдущие значения не получишь. Нужна история — \`shareReplay\`.
-- **Hot ≠ «уже запущен»**: \`share()\` стартует источник только с приходом первого подписчика (refCount).
-- **Отписались все → \`share()\` сбрасывается**, и следующий подписчик запустит источник заново. Иногда это сюрприз.
-- **Спросят следом**: warm/connectable — поток, который multicast, но стартует вручную по \`connect()\`.
-- **И ещё**: Subject — это hot по определению, поэтому значения, отправленные до подписки, теряются навсегда.`,
+- **\`HttpClient.get()\` — cold.** Каждая подписка — новый запрос. «Он же уже выполнился» — типичная ошибка; лечится \`shareReplay(1)\` или одним \`async\` с \`as\`.
+- **\`share()\` не хранит историю**: подписался позже — предыдущие значения не получишь. Нужна история — \`shareReplay\` или \`share({ connector: () => new ReplaySubject(1) })\`.
+- **Hot ≠ «уже запущен»**: \`share()\` стартует источник только с приходом первого подписчика. Такой поток иногда называют warm.
+- **Отписались все → \`share()\` сбрасывается**, следующий подписчик запустит источник заново. Для завершившегося HTTP это значит **новый запрос** — поэтому для кэша нужен именно \`shareReplay\`.
+- **\`shareReplay(1)\` на бесконечном источнике без \`refCount: true\`** — утечка: источник крутится, даже когда все ушли.
+- **Синхронный источник + \`share()\`**: первый подписчик заберёт всё до того, как подпишется второй. Нужны все сразу — \`connectable\` и \`connect()\`.
+- **\`connectable\` без \`connect()\` молчит** — подписчики висят и ничего не получают.
+- **Hot не всегда значит «всё пропустил»**: \`BehaviorSubject\` и \`ReplaySubject\` — hot, но опоздавшему выдают текущее или последние значения.
+- **\`from(promise)\` ведёт себя как hot**: промис уже запущен в момент создания, подписка ничего не перезапускает; для повторов и отмены — \`defer\` или \`fromFetch\`.
+- **Спросят следом**: чем \`share\` отличается от \`shareReplay\`. Только внутренним Subject и тем, что \`shareReplay\` не сбрасывается по завершении и по умолчанию не отписывается от источника.`,
       en: `## In short
 
-The question is simple: **where does the producer live**. If it is born inside the Observable, freshly on every subscription, the stream is **cold**. If it lives outside and there is only one of it, the stream is **hot**.
+It all comes down to one question: **where does the producer live** — the thing that actually creates values (a timer, an HTTP request, a socket, DOM events).
 
-Analogy: cold is your **personal recording of a film** — everyone starts at minute one, everyone has their own copy. Hot is a **live broadcast**: tune in halfway and you missed the beginning, and the same broadcast serves every viewer.
+- **Cold**: the producer is created **inside** the Observable, **anew for every subscription**. Two subscribers mean two timers, two requests. Each one gets **its own** copy of the values, **from the very beginning**.
+- **Hot**: the producer lives **outside** and there is **one for everyone**. A subscriber joins whatever is already running and only sees what happens **after** subscribing.
 
-## How it works, step by step
+Analogy: cold is a **film by link** — everyone presses play and watches from minute one, each with their own copy. Hot is a **live broadcast**: tune in halfway and you missed the beginning, and one broadcast serves every viewer.
 
-1. In a cold stream the subscribe function creates the producer: \`interval\` starts its own timer, \`http.get\` sends its own request.
-2. A second subscriber → a second timer, a second request. Each subscriber gets **its own** values, from the beginning.
-3. In a hot stream the producer already exists: document clicks happen whether or not anyone is listening.
-4. A subscriber simply **tunes into the ongoing broadcast** and catches what happens next. Anything earlier is gone for them.
-5. To turn cold into hot you put a \`Subject\` between the source and the subscribers — that is **multicasting**.
-6. The source is subscribed **once**, and the \`Subject\` fans its values out: one execution, many consumers.
+Making a cold stream hot means **putting a \`Subject\` between the source and the subscribers**: the source is subscribed once and the Subject fans values out to everyone. That is called **multicasting**, and there are ready-made operators for it: \`share\`, \`shareReplay\`, \`connectable\`.
 
-## Example
+## Cold, explained simply
+
+An Observable is a **function** that runs on every \`subscribe()\`. Whatever you wrote inside repeats for each subscriber:
 
 \`\`\`ts
-const cold$ = interval(1000);
-const hot$ = cold$.pipe(share()); // multicast with refCount
+const cold$ = new Observable<number>(subscriber => {
+  console.log('producer created');           // runs on EVERY subscribe
+  let i = 0;
+  const id = setInterval(() => subscriber.next(i++), 1000);
+  return () => clearInterval(id);            // teardown — one per subscription
+});
 
-hot$.subscribe(x => console.log('A', x));
-setTimeout(() => hot$.subscribe(x => console.log('B', x)), 2500);
-// A 0, A 1, A 2 / B 2, A 3 / B 3 ...
+cold$.subscribe(v => console.log('A', v));   // "producer created", timer #1
+setTimeout(() => {
+  cold$.subscribe(v => console.log('B', v)); // "producer created", timer #2
+}, 2500);
+// A 0, A 1, A 2, B 0, A 3, B 1 ... — B started from zero on its own timer
 \`\`\`
 
-Why: without \`share()\`, B would get **its own** timer and start from zero. With \`share()\` there is a single timer, so B joins "mid-broadcast" and immediately sees \`2\`.
+The same is true for \`HttpClient\`, and it is the most common bug in Angular:
+
+\`\`\`ts
+users$ = this.http.get<User[]>('/api/users');   // cold: a recipe for a request, not the request
+\`\`\`
+
+\`\`\`html
+<p>Total: {{ (users$ | async)?.length }}</p>
+<ul>
+  @for (u of users$ | async; track u.id) { <li>{{ u.name }}</li> }
+</ul>
+<!-- two async pipes = two subscriptions = TWO real HTTP requests -->
+\`\`\`
+
+Typical cold sources: \`of\`, \`from\`, \`interval\`, \`timer\`, \`defer\`, \`HttpClient.get/post\`, \`fromFetch\`, \`ajax\`. The tell: **nothing happens until someone subscribes**, and every subscription starts the work over.
+
+## Hot, explained simply
+
+The producer already exists and runs on its own. The Observable merely **plugs you into it**.
+
+\`\`\`ts
+const subject = new Subject<number>();
+
+subject.next(1);                                // nobody listening — the value is lost
+subject.subscribe(v => console.log('A', v));
+subject.next(2);                                // A 2
+subject.subscribe(v => console.log('B', v));
+subject.next(3);                                // A 3, B 3 — B will never see 1 and 2
+\`\`\`
+
+\`\`\`ts
+const clicks$ = fromEvent(document, 'click');   // clicks happen whether you listen or not
+clicks$.subscribe(() => console.log('A'));      // tuned into the click "broadcast"
+clicks$.subscribe(() => console.log('B'));      // second listener of the same broadcast: one click — A and B
+\`\`\`
+
+Typical hot sources: \`Subject\` and its subclasses, \`fromEvent\`, WebSocket; in Angular — \`form.valueChanges\`, \`router.events\`, the \`EventEmitter\` behind \`@Output()\`. The tell: **values can appear with no subscribers**, and a latecomer never gets them.
+
+A quick interview test: "if I subscribe twice, does the work run twice?" Yes → cold. "If I subscribe late, do I miss something?" Yes → hot.
+
+## Making cold hot: a Subject in the middle
+
+A \`Subject\` is both an Observer (it has \`next\`) and an Observable (you can subscribe to it). So you can **subscribe it to the source** and let it pass the values on:
+
+\`\`\`ts
+const source$ = interval(1000);                 // cold
+const subject = new Subject<number>();          // the "splitter"
+
+subject.subscribe(v => console.log('A', v));
+subject.subscribe(v => console.log('B', v));
+source$.subscribe(subject);                     // ONE subscription to the source, one timer
+// A 0, B 0, A 1, B 1 ... — both see the same values
+\`\`\`
+
+That is multicasting by hand. The downside: you track when to subscribe to the source and when to unsubscribe yourself. The operators below do it for you — they differ only in **when they start, when they stop and whether they remember history**.
+
+### share() — one broadcast with a listener counter
+
+\`share()\` puts a plain \`Subject\` inside and counts subscribers (refCount): **the first subscriber starts the source, the last one to leave stops it**. No history: a latecomer only sees new values.
+
+\`\`\`ts
+const hot$ = interval(1000).pipe(share());
+
+hot$.subscribe(v => console.log('A', v));                        // the source started
+setTimeout(() => hot$.subscribe(v => console.log('B', v)), 2500);
+// A 0, A 1, A 2, B 2, A 3, B 3 ... — B joined "mid-broadcast" and immediately sees 2
+\`\`\`
+
+Once **all** subscribers are gone, \`share()\` unsubscribes from the source and resets its Subject; the next subscriber starts the source **again from scratch**. In RxJS 7 this is configurable: \`share({ resetOnRefCountZero: false, resetOnComplete: false, resetOnError: false, connector: () => new ReplaySubject(1) })\`.
+
+When to use: several consumers of one **live** stream and no history needed — socket messages, expensive processing of mouse events.
+
+### shareReplay() — the broadcast plus a recording for latecomers
+
+\`shareReplay(n)\` is the same \`share\`, but with a \`ReplaySubject\` inside: it **remembers the last n values** and replays them instantly to every new subscriber. That is why it is the standard **HTTP response cache**:
+
+\`\`\`ts
+config$ = this.http.get<Config>('/api/config').pipe(shareReplay(1));
+
+this.config$.subscribe(a);                     // the request goes out
+this.config$.subscribe(b);                     // no request: b waits for the same response
+// ...the response arrived, the stream completed...
+setTimeout(() => this.config$.subscribe(c), 5000); // no request: c gets the response from the buffer
+\`\`\`
+
+With a plain \`share()\` subscriber \`c\` **would fire a new request**: the stream had completed, \`share\` had reset, and it keeps no history.
+
+An important difference: \`shareReplay(1)\` means \`{ bufferSize: 1, refCount: false }\`, i.e. **it never unsubscribes from the source**, even when everyone has left. For a one-shot HTTP call that is exactly what you want. For an endless source it is a leak — there write \`shareReplay({ bufferSize: 1, refCount: true })\`.
+
+When to use: request caching, "current state" for whoever subscribes later (user, config, lookup tables).
+
+### connectable() — the broadcast with a manual switch
+
+\`connectable(source$)\` also puts a Subject in the middle but **does not subscribe to the source by itself**. Subscribers attach to the Subject and wait silently until you call \`connect()\`. You need it when **everyone must be subscribed before the first emission** — for example with a synchronous source:
+
+\`\`\`ts
+const src$ = of(1, 2, 3);                      // emits everything synchronously and completes
+
+const shared$ = src$.pipe(share());
+shared$.subscribe(v => console.log('A', v));   // A 1, A 2, A 3 — and the stream has already completed
+shared$.subscribe(v => console.log('B', v));   // share reset → the source runs AGAIN: B 1, B 2, B 3
+
+const conn$ = connectable(src$);
+conn$.subscribe(v => console.log('A', v));     // silence
+conn$.subscribe(v => console.log('B', v));     // silence
+const sub = conn$.connect();                   // A 1, B 1, A 2, B 2, A 3, B 3 — one run for everyone
+sub.unsubscribe();                             // stopping is manual too
+\`\`\`
+
+The kind of Subject is an option: \`connectable(src$, { connector: () => new ReplaySubject(1) })\`. This is the modern replacement for \`multicast\`/\`publish\`/\`refCount\`, which are deprecated in RxJS 7.
+
+When to use: rarely — when start and stop must be controlled by code, not by subscribers.
+
+## Side by side
+
+- **Manual Subject** — you start and stop; the buffer depends on the Subject type.
+- **\`share()\`** — starts on the first subscriber, stops and resets on the last one, no buffer.
+- **\`shareReplay(n)\`** — starts on the first subscriber, buffers n values, **does not stop** by default (\`refCount: false\`).
+- **\`connectable()\`** — starts on \`connect()\`, stops when you unsubscribe from it, buffer set by \`connector\`.
 
 ## What to say in the interview
 
-> The difference is where the producer of values lives. In a cold Observable the producer is created inside the subscribe function, anew on every \`subscribe\`, so each subscriber gets an independent execution from the start — that is \`of\`, \`from\`, \`HttpClient.get\`, \`interval\`. In a hot Observable the producer exists outside the stream and is shared, so subscribers only see values emitted after they connect and may miss earlier ones — that is \`Subject\`, \`fromEvent\`, WebSockets. You turn cold into hot with multicasting: \`share\`, \`shareReplay\`, \`connectable\` — or the deprecated \`multicast\` — insert a Subject between source and subscribers, the source runs once, and the Subject distributes values to everyone. In practice this matters so that two \`| async\` bindings on one HTTP call do not become two real requests.
+> The difference is where the producer of values lives. In a cold Observable it is created inside the subscribe function, anew on every \`subscribe\`, so each subscriber gets its own execution from the start: \`of\`, \`interval\`, \`HttpClient.get\` — two subscribers mean two requests. In a hot Observable the producer lives outside and is shared: a subscriber joins a stream that is already running and only sees what comes after — \`Subject\`, \`fromEvent\`, WebSocket, \`valueChanges\`. You turn cold into hot with multicasting: a Subject goes between the source and the subscribers, the source is subscribed once and the Subject fans values out. \`share\` starts on the first subscriber, resets on the last and keeps no history; \`shareReplay\` replays the last values to latecomers through a ReplaySubject, which makes it the standard HTTP cache; \`connectable\` is started manually with \`connect()\` when everyone must subscribe before the first emission. In practice this is about two \`async\` pipes in a template not turning into two requests.
 
 ## Gotchas
 
-- **\`HttpClient.get()\` is cold**. Every subscription is a new request; "but it already ran once" is the classic mistake.
-- **\`share()\` keeps no history**: subscribe late and earlier values are gone. Need history? Use \`shareReplay\`.
-- **Hot does not mean "already started"**: \`share()\` only starts the source when the first subscriber arrives (refCount).
-- **Everyone unsubscribes → \`share()\` resets**, and the next subscriber restarts the source. That surprises people.
-- **Follow-up question**: warm/connectable — a stream that is multicast but starts manually via \`connect()\`.
-- **And another**: a Subject is hot by definition, so anything emitted before you subscribed is lost forever.`
+- **\`HttpClient.get()\` is cold.** Every subscription is a new request. "But it already ran" is the classic mistake; the fix is \`shareReplay(1)\` or a single \`async\` with \`as\`.
+- **\`share()\` keeps no history**: subscribe late and earlier values are gone. Need history? \`shareReplay\` or \`share({ connector: () => new ReplaySubject(1) })\`.
+- **Hot does not mean "already started"**: \`share()\` only starts the source when the first subscriber arrives. Such a stream is sometimes called warm.
+- **Everyone unsubscribes → \`share()\` resets**, and the next subscriber restarts the source. For a completed HTTP call that means **a new request** — which is why caching needs \`shareReplay\`.
+- **\`shareReplay(1)\` on an endless source without \`refCount: true\`** is a leak: the source keeps running after everyone has left.
+- **A synchronous source + \`share()\`**: the first subscriber drains everything before the second one subscribes. Need everyone at once? \`connectable\` and \`connect()\`.
+- **\`connectable\` without \`connect()\` is silent** — subscribers hang and receive nothing.
+- **Hot does not always mean "missed everything"**: \`BehaviorSubject\` and \`ReplaySubject\` are hot, yet they hand a latecomer the current or the last values.
+- **\`from(promise)\` behaves like hot**: the promise is already running when it is created, and subscribing restarts nothing; for retries and cancellation use \`defer\` or \`fromFetch\`.
+- **Follow-up question**: how \`share\` differs from \`shareReplay\`. Only by the inner Subject, and by the fact that \`shareReplay\` does not reset on completion and by default never unsubscribes from the source.`
     }
   },
   {
