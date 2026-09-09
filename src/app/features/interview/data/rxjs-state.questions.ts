@@ -1062,6 +1062,8 @@ Why: if the first example used \`combineLatest\`, a request would also fire on e
 
 Аналогия с трубами: \`merge\` — несколько труб **сливаются в одну**, всё течёт одновременно и вперемешку. \`concat\` — трубы **соединены последовательно**: пока не опустеет первая, вторая даже не откроется.
 
+Те же две стратегии живут внутри \`mergeMap\` и \`concatMap\` — там они применяются к потокам, которые создаются из значений. Третий сосед — \`forkJoin\`: подписывается на всё сразу, как \`merge\`, но отдаёт только последние значения и один раз. Разбор с примерами ниже.
+
 ## Как это работает по шагам
 
 1. \`merge(a$, b$, c$)\` подписывается на **все** источники немедленно.
@@ -1083,6 +1085,177 @@ concat(cache$, network$).subscribe(render);
 
 Почему так: кнопке, автосохранению и горячей клавише всё равно, кто первый — их нужно слушать одновременно, это \`merge\`. А в паре «кэш → сеть» порядок принципиален: сначала мгновенно нарисовали старое, потом обновили свежим, это \`concat\`.
 
+## merge и concat на таймерах
+
+Чтобы увидеть разницу глазами, возьмём два источника с разной скоростью:
+
+\`\`\`ts
+const a$ = interval(1000).pipe(map(i => 'A' + i), take(3)); // A0 A1 A2 — раз в секунду
+const b$ = interval(400).pipe(map(i => 'B' + i), take(3));  // B0 B1 B2 — раз в 0.4 с
+
+merge(a$, b$).subscribe(console.log);
+// B0 B1 A0 B2 A1 A2 — оба таймера идут одновременно, порядок задаёт только время
+// complete через ~3 с — когда завершился более долгий a$
+
+concat(a$, b$).subscribe(console.log);
+// A0 A1 A2 B0 B1 B2 — таймер b$ был создан только после complete у a$
+// complete через ~4.2 с — 3 с на a$ плюс 1.2 с на b$
+
+merge(a$, b$, 1).subscribe(console.log);
+// A0 A1 A2 B0 B1 B2 — лимит конкурентности 1 превращает merge в concat
+\`\`\`
+
+## От merge к mergeMap, от concat к concatMap
+
+\`merge\` и \`concat\` склеивают **уже готовые** потоки. Но в реальном коде поток часто **рождается из значения**: пришёл клик с \`id\` — нужно создать HTTP-запрос за этим \`id\`. Обычный \`map\` тут даёт «поток потоков», подписываться на который неудобно:
+
+\`\`\`ts
+clicks$.pipe(map(id => this.http.get(\`/api/items/\${id}\`)));
+// Observable<Observable<Item>> — снаружи летят не данные, а неподписанные запросы
+
+clicks$.pipe(mergeMap(id => this.http.get(\`/api/items/\${id}\`)));
+// Observable<Item> — оператор сам подписался на внутренний поток и отдал его значения наружу
+\`\`\`
+
+Операторы \`*Map\` делают два дела: \`map\` (значение → внутренний поток) плюс «сплющивание» внутренних потоков в один. Вопрос только в том, **как** сплющивать — и вариантов ровно те же два: \`mergeMap = map + mergeAll\`, \`concatMap = map + concatAll\`.
+
+### mergeMap — каждый внутренний поток запускаем сразу
+
+Пришло значение — внутренний поток создаётся и подписывается **немедленно**, не дожидаясь предыдущих. Результаты выходят по мере готовности, порядок не гарантирован:
+
+\`\`\`ts
+const delays: Record<number, number> = { 1: 300, 2: 100, 3: 200 };
+
+of(1, 2, 3).pipe(
+  mergeMap(n => of(\`ответ \${n}\`).pipe(delay(delays[n])))
+).subscribe(console.log);
+// ответ 2, ответ 3, ответ 1 — все три «запроса» ушли сразу, первым вернулся самый быстрый
+// всё завершилось через ~300 мс
+\`\`\`
+
+Типичный боевой случай — независимые действия, где не важно, кто ответит первым, но ни одно нельзя потерять:
+
+\`\`\`ts
+// Каждый клик «лайк» — отдельный запрос. Ждать предыдущий незачем, отменять нельзя
+likeClicks$.pipe(
+  mergeMap(postId => this.api.like(postId).pipe(
+    catchError(() => EMPTY)              // один упавший лайк не должен ронять всю ленту
+  ))
+).subscribe(res => this.showToast(res));
+\`\`\`
+
+Второй аргумент ограничивает число одновременных внутренних потоков — лишние встают в очередь:
+
+\`\`\`ts
+// 100 файлов, но не больше 3 загрузок одновременно
+from(files).pipe(
+  mergeMap(file => this.upload(file), 3)
+).subscribe();
+// mergeMap(fn, 1) — это и есть concatMap
+\`\`\`
+
+Когда брать: параллельные независимые операции — лайки, удаление нескольких строк, отправка метрик, параллельная загрузка с лимитом. Не брать для поиска-подсказки: ответ на старый запрос может прийти позже нового и перерисовать список устаревшими данными — там нужен \`switchMap\`.
+
+### concatMap — внутренние потоки строго по очереди
+
+Значение пришло, но внутренний поток для него создаётся **только после complete предыдущего**. Пока очередь не дошла, значение просто ждёт в буфере. Порядок сохраняется, ничего не теряется:
+
+\`\`\`ts
+of(1, 2, 3).pipe(
+  concatMap(n => of(\`ответ \${n}\`).pipe(delay(delays[n])))
+).subscribe(console.log);
+// ответ 1, ответ 2, ответ 3 — «запрос 2» ушёл только после «ответа 1»
+// всё завершилось через ~600 мс: 300 + 100 + 200
+\`\`\`
+
+Боевой случай номер один — **запись на сервер**, где порядок принципиален:
+
+\`\`\`ts
+// Автосохранение формы: каждый PUT уходит после ответа на предыдущий.
+// С mergeMap старый PUT мог бы «обогнать» новый и перезаписать его на сервере
+formChanges$.pipe(
+  debounceTime(500),
+  concatMap(value => this.api.save(value))
+).subscribe();
+\`\`\`
+
+Второй — всё, что должно **показываться по одному**:
+
+\`\`\`ts
+// Уведомления по очереди: следующее появляется, когда предыдущее скрылось.
+// show() возвращает Observable, который завершается после закрытия тоста
+notifications$.pipe(
+  concatMap(msg => this.toast.show(msg))
+).subscribe();
+\`\`\`
+
+Когда брать: изменяющие операции (create/update/delete одной сущности), пошаговые сценарии, очереди показа. Цена — скорость: медленный внутренний поток копит за собой очередь, а внутренний поток **без complete** остановит её навсегда — ровно та же ловушка, что бесконечный первый источник в \`concat\`.
+
+### Для полноты картины: switchMap и exhaustMap
+
+У «сплющивания» есть ещё две стратегии, о которых спросят следом:
+
+\`\`\`ts
+// switchMap: новое значение ОТМЕНЯЕТ незавершённый внутренний поток
+searchInput$.pipe(
+  switchMap(q => this.api.search(q))   // печатаем «ab», потом «abc» — запрос за «ab» отменён
+).subscribe(list => this.render(list));
+
+// exhaustMap: пока внутренний поток идёт, новые значения ИГНОРИРУЮТСЯ
+submitClicks$.pipe(
+  exhaustMap(() => this.api.submitOrder(form))   // двойной клик не отправит заказ дважды
+).subscribe();
+\`\`\`
+
+## forkJoin — третий способ склеить готовые потоки
+
+\`forkJoin\` — это «\`Promise.all\` для потоков». Подписывается на все источники сразу (как \`merge\`), но наружу ничего не пропускает, пока **каждый** не завершится. Затем эмитит **один раз** массив (или объект) из последних значений и завершается:
+
+\`\`\`ts
+forkJoin([a$, b$]).subscribe(console.log);
+// ['A2', 'B2'] — один раз, через ~3 с, когда завершился более долгий a$
+// промежуточные A0, A1, B0, B1 наружу не попали
+
+forkJoin({ user: this.http.get('/api/user'), settings: this.http.get('/api/settings') })
+  .subscribe(({ user, settings }) => this.init(user, settings));
+// оба запроса ушли параллельно; обработчик вызван один раз, когда пришли оба
+\`\`\`
+
+Три правила, на которых ловят:
+
+\`\`\`ts
+// 1. Источник без complete → forkJoin не эмитит НИКОГДА
+forkJoin([this.http.get('/api/a'), interval(1000)]).subscribe(console.log);   // тишина навсегда
+
+// 2. Ошибка в одном → ошибка всего forkJoin, остальные ответы потеряны
+forkJoin([
+  this.http.get('/api/a').pipe(catchError(() => of(null))),   // ловим на каждом входе
+  this.http.get('/api/b').pipe(catchError(() => of(null)))
+]).subscribe(([a, b]) => this.render(a, b));                   // [null, {...}] вместо падения
+
+// 3. Пустой массив → complete сразу, без единого значения
+forkJoin([]).subscribe({ next: console.log, complete: () => console.log('done') }); // done
+\`\`\`
+
+Для бесконечных потоков берите \`combineLatest\`: он не ждёт complete и пересчитывает результат при каждом изменении **любого** входа:
+
+\`\`\`ts
+combineLatest([a$, b$]).subscribe(console.log);
+// ['A0','B1'] ['A0','B2'] ['A1','B2'] ['A2','B2'] — как только у каждого есть хоть одно значение, пара при любом изменении
+\`\`\`
+
+Когда брать: несколько **одноразовых** запросов, ответы нужны вместе — загрузка страницы (пользователь + справочники), сохранение нескольких сущностей перед переходом. Не брать для бесконечных потоков — они не завершаются, и \`forkJoin\` промолчит.
+
+## Сравнение на одной ладони
+
+- **\`merge\` / \`mergeMap\`** — всё параллельно, порядок по времени ответа, все значения наружу.
+- **\`merge(…, n)\` / \`mergeMap(fn, n)\`** — параллельно, но не больше n одновременно.
+- **\`concat\` / \`concatMap\`** — строго по очереди, порядок сохраняется, ничего не теряется, но медленнее.
+- **\`forkJoin\`** — параллельно, но наружу только последние значения, один раз и после complete всех.
+- **\`combineLatest\`** — параллельно, отдаёт свежую комбинацию при каждом изменении, complete не ждёт.
+- **\`switchMap\`** — новое отменяет старое: чтение, поиск, навигация.
+- **\`exhaustMap\`** — старое блокирует новое: защита от повторной отправки.
+
 ## Что сказать на собеседовании
 
 > \`merge\` подписывается на все источники сразу и эмитит значения по мере поступления, поэтому они чередуются, а общий поток завершается, когда завершились все входы — это способ свести несколько источников событий в один обработчик. \`concat\` подписывается на источники строго по очереди: следующий стартует только после \`complete\` предыдущего, поэтому порядок источников сохраняется, и это правильный выбор для последовательных шагов вроде «сначала кэш, потом сеть». Ключевой нюанс: если первый источник в \`concat\` бесконечен, до второго очередь не дойдёт никогда — это частый баг. И полезная связка для памяти: \`mergeMap\` относится к \`merge\` так же, как \`concatMap\` к \`concat\` — те же самые стратегии конкурентности, только применённые к higher-order проекции, где внутренние потоки создаются из значений внешнего.
@@ -1094,12 +1267,19 @@ concat(cache$, network$).subscribe(render);
 - **\`concat\` не запускает второй источник заранее** — если это HTTP, запрос уйдёт только после завершения первого, параллелизма не будет.
 - **\`merge\` с ошибкой в одном источнике** роняет весь объединённый поток; нужен \`catchError\` на каждом входе.
 - **\`merge\` умеет ограничивать конкурентность** вторым аргументом-числом — про это забывают.
+- **\`mergeMap\` для поиска-подсказки** — гонка ответов: старый ответ может прийти после нового и перерисовать список. Для «читающих» запросов по вводу нужен \`switchMap\`.
+- **\`mergeMap\` без лимита на большой массив** — \`from(ids).pipe(mergeMap(load))\` для 1000 id даёт 1000 параллельных запросов; ставьте второй аргумент.
+- **\`concatMap\` с внутренним потоком без \`complete\`** — очередь встанет навсегда, следующие значения так и останутся в буфере.
+- **\`forkJoin\` с источником без \`complete\`** (Subject, interval, сокет) — не эмитит никогда; для бесконечных потоков нужен \`combineLatest\`.
+- **\`forkJoin\` и ошибка в одном входе** — падает весь результат, остальные ответы потеряны; \`catchError\` ставится на каждый вход.
 - **Спросят следом**: чем \`concat\` отличается от \`forkJoin\`? \`concat\` отдаёт **все** значения по очереди, \`forkJoin\` — только **последние** и разом.`,
       en: `## In short
 
 Both glue several existing streams into one. The difference is whether you **subscribe to them all at once or one at a time**.
 
 The plumbing analogy: \`merge\` is several pipes **feeding one**, everything flowing simultaneously and interleaved. \`concat\` is pipes **connected end to end**: until the first one runs dry, the second does not even open.
+
+The same two strategies live inside \`mergeMap\` and \`concatMap\`, where they are applied to streams created from values. The third neighbour is \`forkJoin\`: it subscribes to everything at once like \`merge\`, but hands out only the last values, once. The breakdown with examples is below.
 
 ## How it works, step by step
 
@@ -1122,6 +1302,177 @@ concat(cache$, network$).subscribe(render);
 
 Why: the button, the autosave, and the hotkey do not care who goes first — they must be listened to simultaneously, so \`merge\`. In the "cache then network" pair the order is the whole point: paint the stale data instantly, then refresh it, so \`concat\`.
 
+## merge and concat on timers
+
+To see the difference with your own eyes, take two sources with different speeds:
+
+\`\`\`ts
+const a$ = interval(1000).pipe(map(i => 'A' + i), take(3)); // A0 A1 A2 — once a second
+const b$ = interval(400).pipe(map(i => 'B' + i), take(3));  // B0 B1 B2 — every 0.4 s
+
+merge(a$, b$).subscribe(console.log);
+// B0 B1 A0 B2 A1 A2 — both timers run at the same time, only timing decides the order
+// completes after ~3 s — when the slower a$ is done
+
+concat(a$, b$).subscribe(console.log);
+// A0 A1 A2 B0 B1 B2 — the b$ timer was created only after a$ completed
+// completes after ~4.2 s — 3 s for a$ plus 1.2 s for b$
+
+merge(a$, b$, 1).subscribe(console.log);
+// A0 A1 A2 B0 B1 B2 — a concurrency limit of 1 turns merge into concat
+\`\`\`
+
+## From merge to mergeMap, from concat to concatMap
+
+\`merge\` and \`concat\` glue **ready-made** streams. In real code a stream is often **born from a value**: a click arrives with an \`id\`, and you need to create an HTTP request for that \`id\`. A plain \`map\` gives you a "stream of streams", which is awkward to subscribe to:
+
+\`\`\`ts
+clicks$.pipe(map(id => this.http.get(\`/api/items/\${id}\`)));
+// Observable<Observable<Item>> — what comes out is not data but unsubscribed requests
+
+clicks$.pipe(mergeMap(id => this.http.get(\`/api/items/\${id}\`)));
+// Observable<Item> — the operator subscribed to the inner stream itself and passed its values out
+\`\`\`
+
+The \`*Map\` operators do two jobs: \`map\` (value → inner stream) plus "flattening" the inner streams into one. The only question is **how** to flatten, and there are exactly the same two options: \`mergeMap = map + mergeAll\`, \`concatMap = map + concatAll\`.
+
+### mergeMap — start every inner stream right away
+
+A value arrives, and its inner stream is created and subscribed **immediately**, without waiting for the previous ones. Results come out as they are ready; order is not guaranteed:
+
+\`\`\`ts
+const delays: Record<number, number> = { 1: 300, 2: 100, 3: 200 };
+
+of(1, 2, 3).pipe(
+  mergeMap(n => of(\`answer \${n}\`).pipe(delay(delays[n])))
+).subscribe(console.log);
+// answer 2, answer 3, answer 1 — all three "requests" went out at once, the fastest came back first
+// everything completed after ~300 ms
+\`\`\`
+
+The typical production case is independent actions where nobody cares who answers first, but none may be lost:
+
+\`\`\`ts
+// Every "like" click is its own request. No reason to wait for the previous one, no reason to cancel it
+likeClicks$.pipe(
+  mergeMap(postId => this.api.like(postId).pipe(
+    catchError(() => EMPTY)              // one failed like must not kill the whole feed
+  ))
+).subscribe(res => this.showToast(res));
+\`\`\`
+
+The second argument caps the number of simultaneous inner streams; the rest wait in a queue:
+
+\`\`\`ts
+// 100 files, but no more than 3 uploads at a time
+from(files).pipe(
+  mergeMap(file => this.upload(file), 3)
+).subscribe();
+// mergeMap(fn, 1) is exactly concatMap
+\`\`\`
+
+When to use: parallel independent operations — likes, deleting several rows, sending metrics, parallel uploads with a cap. Do not use it for type-ahead search: the response to an old request can arrive after the new one and repaint the list with stale data — that is \`switchMap\` territory.
+
+### concatMap — inner streams strictly one at a time
+
+A value arrives, but its inner stream is created **only after the previous one completes**. Until its turn comes, the value simply waits in a buffer. Order is preserved, nothing is lost:
+
+\`\`\`ts
+of(1, 2, 3).pipe(
+  concatMap(n => of(\`answer \${n}\`).pipe(delay(delays[n])))
+).subscribe(console.log);
+// answer 1, answer 2, answer 3 — "request 2" went out only after "answer 1"
+// everything completed after ~600 ms: 300 + 100 + 200
+\`\`\`
+
+Production case number one is **writing to the server**, where order is the whole point:
+
+\`\`\`ts
+// Form autosave: each PUT goes out after the response to the previous one.
+// With mergeMap an old PUT could "overtake" a newer one and overwrite it on the server
+formChanges$.pipe(
+  debounceTime(500),
+  concatMap(value => this.api.save(value))
+).subscribe();
+\`\`\`
+
+Number two is anything that must be **shown one at a time**:
+
+\`\`\`ts
+// Notifications in a queue: the next appears once the previous has been dismissed.
+// show() returns an Observable that completes when the toast closes
+notifications$.pipe(
+  concatMap(msg => this.toast.show(msg))
+).subscribe();
+\`\`\`
+
+When to use: mutating operations (create/update/delete of one entity), step-by-step scenarios, display queues. The price is speed: a slow inner stream builds a backlog behind it, and an inner stream that **never completes** stalls the queue forever — exactly the same trap as an infinite first source in \`concat\`.
+
+### For the full picture: switchMap and exhaustMap
+
+Flattening has two more strategies, and they are the next question:
+
+\`\`\`ts
+// switchMap: a new value CANCELS the unfinished inner stream
+searchInput$.pipe(
+  switchMap(q => this.api.search(q))   // type "ab", then "abc" — the request for "ab" is cancelled
+).subscribe(list => this.render(list));
+
+// exhaustMap: while an inner stream is running, new values are IGNORED
+submitClicks$.pipe(
+  exhaustMap(() => this.api.submitOrder(form))   // a double click does not submit the order twice
+).subscribe();
+\`\`\`
+
+## forkJoin — the third way to glue ready-made streams
+
+\`forkJoin\` is "\`Promise.all\` for streams". It subscribes to all sources at once (like \`merge\`), but lets nothing out until **every** one of them completes. Then it emits **once** an array (or an object) of the last values and completes:
+
+\`\`\`ts
+forkJoin([a$, b$]).subscribe(console.log);
+// ['A2', 'B2'] — once, after ~3 s, when the slower a$ has completed
+// the intermediate A0, A1, B0, B1 never made it out
+
+forkJoin({ user: this.http.get('/api/user'), settings: this.http.get('/api/settings') })
+  .subscribe(({ user, settings }) => this.init(user, settings));
+// both requests went out in parallel; the handler is called once, when both have arrived
+\`\`\`
+
+Three rules people get caught on:
+
+\`\`\`ts
+// 1. A source that never completes → forkJoin NEVER emits
+forkJoin([this.http.get('/api/a'), interval(1000)]).subscribe(console.log);   // silence forever
+
+// 2. An error in one input → the whole forkJoin errors, the other responses are lost
+forkJoin([
+  this.http.get('/api/a').pipe(catchError(() => of(null))),   // catch on every input
+  this.http.get('/api/b').pipe(catchError(() => of(null)))
+]).subscribe(([a, b]) => this.render(a, b));                   // [null, {...}] instead of a crash
+
+// 3. An empty array → completes immediately, without a single value
+forkJoin([]).subscribe({ next: console.log, complete: () => console.log('done') }); // done
+\`\`\`
+
+For infinite streams take \`combineLatest\` instead: it does not wait for completion and recomputes the result whenever **any** input changes:
+
+\`\`\`ts
+combineLatest([a$, b$]).subscribe(console.log);
+// ['A0','B1'] ['A0','B2'] ['A1','B2'] ['A2','B2'] — once every input has at least one value, a pair on every change
+\`\`\`
+
+When to use: several **one-shot** requests whose results are needed together — page bootstrap (user + reference data), saving several entities before navigating away. Not for infinite streams — they never complete, so \`forkJoin\` stays silent.
+
+## Side by side
+
+- **\`merge\` / \`mergeMap\`** — everything in parallel, order by response time, every value comes out.
+- **\`merge(…, n)\` / \`mergeMap(fn, n)\`** — parallel, but at most n at a time.
+- **\`concat\` / \`concatMap\`** — strictly one at a time, order preserved, nothing lost, but slower.
+- **\`forkJoin\`** — parallel, but only the last values come out, once, after every input completes.
+- **\`combineLatest\`** — parallel, a fresh combination on every change, does not wait for completion.
+- **\`switchMap\`** — new cancels old: reads, search, navigation.
+- **\`exhaustMap\`** — old blocks new: protection against double submit.
+
 ## What to say in the interview
 
 > \`merge\` subscribes to all sources at once and emits values as they arrive, so emissions interleave, and the combined stream completes when every input has completed — that is how you funnel several event sources into one handler. \`concat\` subscribes to sources strictly in order: the next starts only after the previous completes, so source order is preserved, which makes it the right choice for sequential steps like "cache first, then network". The key nuance is that if the first source in a \`concat\` is infinite, the second is never reached — a common bug. And a useful mnemonic: \`mergeMap\` is to \`merge\` what \`concatMap\` is to \`concat\` — the very same concurrency strategies, just applied to higher-order projection where inner streams are created from outer values.
@@ -1133,6 +1484,11 @@ Why: the button, the autosave, and the hotkey do not care who goes first — the
 - **\`concat\` does not warm up the second source** — if it is HTTP, the request only goes out after the first completes, so there is no parallelism.
 - **An error in one \`merge\` input** kills the whole combined stream; you need \`catchError\` on each input.
 - **\`merge\` can cap concurrency** with a numeric second argument — people forget this exists.
+- **\`mergeMap\` for type-ahead search** — a response race: an old response can arrive after the new one and repaint the list. For "reading" requests driven by input use \`switchMap\`.
+- **\`mergeMap\` without a cap on a big array** — \`from(ids).pipe(mergeMap(load))\` for 1000 ids fires 1000 parallel requests; pass the second argument.
+- **\`concatMap\` with an inner stream that never \`complete\`s** — the queue stalls forever, the following values stay in the buffer.
+- **\`forkJoin\` with a source that never \`complete\`s** (Subject, interval, socket) — never emits; infinite streams need \`combineLatest\`.
+- **\`forkJoin\` and an error in one input** — the whole result fails, the other responses are lost; put \`catchError\` on every input.
 - **Follow-up question**: how does \`concat\` differ from \`forkJoin\`? \`concat\` delivers **all** values in sequence; \`forkJoin\` delivers only the **last** ones, all at once.`
     }
   },
