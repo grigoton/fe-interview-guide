@@ -3,7 +3,7 @@ import { InterviewQuestion } from '../interfaces/question.interface';
 export const RXJS_STATE_QUESTIONS_MORE: InterviewQuestion[] = [
   {
     id: 'rxjs-037',
-    category: 'js-state',
+    category: 'rxjs',
     level: 'Hard',
     tags: ['scan', 'reduce', 'mergescan'],
     question: {
@@ -129,7 +129,7 @@ const items$ = loadMore$.pipe(
   },
   {
     id: 'rxjs-038',
-    category: 'js-state',
+    category: 'rxjs',
     level: 'Expert',
     tags: ['expand', 'recursion', 'pagination'],
     question: {
@@ -227,7 +227,7 @@ Why this way: a plain \`mergeMap\` can fetch the next page **once**, whereas \`e
   },
   {
     id: 'rxjs-039',
-    category: 'js-state',
+    category: 'rxjs',
     level: 'Hard',
     tags: ['groupby', 'partition', 'higher-order'],
     question: {
@@ -325,7 +325,7 @@ Why this way: without \`groupBy\` the \`throttleTime\` would be **shared by ever
   },
   {
     id: 'rxjs-040',
-    category: 'js-state',
+    category: 'rxjs',
     level: 'Hard',
     tags: ['buffer', 'window', 'bufferpattern'],
     question: {
@@ -458,7 +458,7 @@ const batch$ = events$.pipe(
   },
   {
     id: 'rxjs-041',
-    category: 'js-state',
+    category: 'rxjs',
     level: 'Medium',
     tags: ['pairwise', 'startwith', 'state'],
     question: {
@@ -572,7 +572,7 @@ Why this way: without \`startWith\` the first delta would be **lost** — \`pair
   },
   {
     id: 'rxjs-042',
-    category: 'js-state',
+    category: 'rxjs',
     level: 'Medium',
     tags: ['delay', 'delaywhen', 'timing'],
     question: {
@@ -686,7 +686,7 @@ Why this way: \`delay\` cannot look at the value — it has one number for every
   },
   {
     id: 'rxjs-043',
-    category: 'js-state',
+    category: 'rxjs',
     level: 'Hard',
     tags: ['repeat', 'repeatwhen', 'polling'],
     question: {
@@ -786,7 +786,7 @@ Why this way: the first option ticks by the clock, so if a request takes longer 
   },
   {
     id: 'rxjs-044',
-    category: 'js-state',
+    category: 'rxjs',
     level: 'Medium',
     tags: ['timeout', 'defaultifempty', 'throwifempty'],
     question: {
@@ -896,7 +896,7 @@ Why this way: \`timeout\` with \`with\` does not break the UI, it degrades to ca
   },
   {
     id: 'rxjs-045',
-    category: 'js-state',
+    category: 'rxjs',
     level: 'Hard',
     tags: ['defer', 'iif', 'cold'],
     question: {
@@ -1003,7 +1003,7 @@ const authedRequest$ = defer(() => {
   },
   {
     id: 'rxjs-046',
-    category: 'js-state',
+    category: 'rxjs',
     level: 'Medium',
     tags: ['race', 'fromevent', 'fromfetch'],
     question: {
@@ -1109,7 +1109,7 @@ Why this way: \`from(fetch(...))\` cancels **nothing** on unsubscribe — a prom
   },
   {
     id: 'rxjs-047',
-    category: 'js-state',
+    category: 'rxjs',
     level: 'Hard',
     tags: ['subscription', 'teardown', 'composition'],
     question: {
@@ -1199,7 +1199,7 @@ Why this way: instead of an array of subscriptions and a loop in \`ngOnDestroy\`
   },
   {
     id: 'rxjs-048',
-    category: 'js-state',
+    category: 'rxjs',
     level: 'Expert',
     tags: ['connectable', 'connect', 'multicasting'],
     question: {
@@ -1303,7 +1303,7 @@ Why this way: \`connect\` guarantees that **every branch is subscribed** to the 
   },
   {
     id: 'rxjs-049',
-    category: 'js-state',
+    category: 'ngrx',
     level: 'Expert',
     tags: ['ngrx', 'meta-reducers', 'runtime-checks'],
     question: {
@@ -1437,7 +1437,7 @@ Why this way: the logger touches no feature reducer at all — it simply wraps a
   },
   {
     id: 'rxjs-050',
-    category: 'js-state',
+    category: 'ngrx',
     level: 'Hard',
     tags: ['ngrx', 'component-store', 'local-state'],
     question: {
@@ -1587,7 +1587,7 @@ Why this way: \`load\` is an effect rather than a method with a manual subscript
   },
   {
     id: 'rxjs-051',
-    category: 'js-state',
+    category: 'ngrx',
     level: 'Expert',
     tags: ['ngrx', 'effects', 'error-handling'],
     question: {
@@ -1695,7 +1695,7 @@ Why this way: \`catchError\` on the inside absorbs the error before it can leave
   },
   {
     id: 'rxjs-052',
-    category: 'js-state',
+    category: 'ngrx',
     level: 'Expert',
     tags: ['ngrx', 'signal-store', 'rxmethod'],
     question: {

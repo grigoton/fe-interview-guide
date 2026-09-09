@@ -3,7 +3,7 @@ import { InterviewQuestion } from '../interfaces/question.interface';
 export const RXJS_STATE_QUESTIONS: InterviewQuestion[] = [
   {
     id: 'rxjs-001',
-    category: 'js-state',
+    category: 'rxjs',
     level: 'Hard',
     tags: ['observable', 'internals', 'lazy', 'unicast'],
     question: {
@@ -125,7 +125,7 @@ Why: \`next(2)\` is lost because the \`Subscriber\` is closed after \`complete()
   },
   {
     id: 'rxjs-002',
-    category: 'js-state',
+    category: 'rxjs',
     level: 'Hard',
     tags: ['teardown', 'subscription', 'memory-leak'],
     question: {
@@ -234,7 +234,7 @@ function fromResize(el: Element): Observable<DOMRectReadOnly> {
   },
   {
     id: 'rxjs-003',
-    category: 'js-state',
+    category: 'rxjs',
     level: 'Medium',
     tags: ['hot-cold', 'multicasting', 'share', 'sharereplay', 'connectable'],
     question: {
@@ -578,7 +578,7 @@ When to use: rarely — when start and stop must be controlled by code, not by s
   },
   {
     id: 'rxjs-004',
-    category: 'js-state',
+    category: 'rxjs',
     level: 'Hard',
     tags: ['subjects', 'behaviorsubject', 'replaysubject'],
     question: {
@@ -684,7 +684,7 @@ Why: \`BehaviorSubject\` hands the "current" value to whoever arrives, while \`A
   },
   {
     id: 'rxjs-005',
-    category: 'js-state',
+    category: 'rxjs',
     level: 'Expert',
     tags: ['sharereplay', 'multicasting', 'memory-leak'],
     question: {
@@ -782,7 +782,7 @@ Why: \`interval\` never completes, so without \`refCount: true\` the timer keeps
   },
   {
     id: 'rxjs-006',
-    category: 'js-state',
+    category: 'rxjs',
     level: 'Hard',
     tags: ['switchmap', 'mergemap', 'concatmap', 'exhaustmap'],
     question: {
@@ -926,7 +926,7 @@ Why: in search you only want the answer to the latest input, so \`switchMap\` ca
   },
   {
     id: 'rxjs-007',
-    category: 'js-state',
+    category: 'rxjs',
     level: 'Hard',
     tags: ['combinelatest', 'forkjoin', 'zip', 'withlatestfrom'],
     question: {
@@ -1048,7 +1048,7 @@ Why: if the first example used \`combineLatest\`, a request would also fire on e
   },
   {
     id: 'rxjs-008',
-    category: 'js-state',
+    category: 'rxjs',
     level: 'Medium',
     tags: ['merge', 'concat', 'combination'],
     question: {
@@ -1494,7 +1494,7 @@ When to use: several **one-shot** requests whose results are needed together —
   },
   {
     id: 'rxjs-009',
-    category: 'js-state',
+    category: 'rxjs',
     level: 'Hard',
     tags: ['error-handling', 'catcherror', 'retry'],
     question: {
@@ -1628,7 +1628,7 @@ Why: first three attempts with a growing pause (\`retry({ count, delay })\` is t
   },
   {
     id: 'rxjs-010',
-    category: 'js-state',
+    category: 'rxjs',
     level: 'Hard',
     tags: ['retrywhen', 'backoff', 'error-handling'],
     question: {
@@ -1748,7 +1748,7 @@ Why: a server that is down needs mercy, not more hammering. And note — the "re
   },
   {
     id: 'rxjs-011',
-    category: 'js-state',
+    category: 'rxjs',
     level: 'Medium',
     tags: ['finalize', 'teardown', 'cleanup'],
     question: {
@@ -1858,7 +1858,7 @@ Why: even if the user navigates away mid-request, \`takeUntilDestroyed\` trigger
   },
   {
     id: 'rxjs-012',
-    category: 'js-state',
+    category: 'rxjs',
     level: 'Expert',
     tags: ['schedulers', 'subscribeon', 'observeon'],
     question: {
@@ -1962,7 +1962,7 @@ Why: \`subscribeOn\` shifts the **start** of the source so it does not block the
   },
   {
     id: 'rxjs-013',
-    category: 'js-state',
+    category: 'rxjs',
     level: 'Expert',
     tags: ['custom-operator', 'operatorfunction', 'pipe'],
     question: {
@@ -2092,7 +2092,7 @@ Why: in the first case we write no logic at all — we only reuse. In the second
   },
   {
     id: 'rxjs-014',
-    category: 'js-state',
+    category: 'rxjs',
     level: 'Hard',
     tags: ['memory-leak', 'takeuntil', 'unsubscription'],
     question: {
@@ -2202,7 +2202,7 @@ Why: \`takeUntil\`/\`takeUntilDestroyed\` must be **last** in the pipe. If other
   },
   {
     id: 'rxjs-015',
-    category: 'js-state',
+    category: 'rxjs',
     level: 'Medium',
     tags: ['debouncetime', 'throttletime', 'audittime', 'sampletime'],
     question: {
@@ -2320,7 +2320,7 @@ Why: in search, extra requests cost money and create races, so we wait for the p
   },
   {
     id: 'rxjs-016',
-    category: 'js-state',
+    category: 'rxjs',
     level: 'Medium',
     tags: ['distinctuntilchanged', 'comparison'],
     question: {
@@ -2450,7 +2450,7 @@ Why: the selector \`state => state.user.name\` reduces the object to a string, a
   },
   {
     id: 'rxjs-017',
-    category: 'js-state',
+    category: 'rxjs',
     level: 'Hard',
     tags: ['share', 'connectable', 'multicasting'],
     question: {
@@ -2568,7 +2568,7 @@ Why: with a plain \`share()\`, subscriber \`a\` would start the source immediate
   },
   {
     id: 'rxjs-018',
-    category: 'js-state',
+    category: 'rxjs',
     level: 'Hard',
     tags: ['cold-to-hot', 'subject', 'pattern'],
     question: {
@@ -2684,7 +2684,7 @@ Why: the three things people usually hand-code — cancelling the stale request,
   },
   {
     id: 'rxjs-019',
-    category: 'js-state',
+    category: 'rxjs',
     level: 'Expert',
     tags: ['marble-testing', 'testscheduler', 'testing'],
     question: {
@@ -2822,7 +2822,7 @@ Why: \`a\` and \`b\` do not survive — fewer than three frames of silence follo
   },
   {
     id: 'rxjs-020',
-    category: 'js-state',
+    category: 'ngrx',
     level: 'Hard',
     tags: ['ngrx', 'store', 'actions', 'reducers'],
     question: {
@@ -2926,7 +2926,7 @@ Why: the reducer knows nothing about HTTP or components — it only describes a 
   },
   {
     id: 'rxjs-021',
-    category: 'js-state',
+    category: 'ngrx',
     level: 'Hard',
     tags: ['ngrx', 'effects', 'side-effects'],
     question: {
@@ -3068,7 +3068,7 @@ Why: \`catchError\` inside \`switchMap\` turns the error into an **ordinary acti
   },
   {
     id: 'rxjs-022',
-    category: 'js-state',
+    category: 'ngrx',
     level: 'Hard',
     tags: ['ngrx', 'selectors', 'memoization'],
     question: {
@@ -3174,7 +3174,7 @@ Why: if \`state.cart\` changes, \`selectUsers\` and \`selectFilter\` return the 
   },
   {
     id: 'rxjs-023',
-    category: 'js-state',
+    category: 'ngrx',
     level: 'Medium',
     tags: ['ngrx', 'entity-adapter', 'normalization'],
     question: {
@@ -3306,7 +3306,7 @@ Why: the reducer is three lines and contains not a single array spread. Every op
   },
   {
     id: 'rxjs-024',
-    category: 'js-state',
+    category: 'ngrx',
     level: 'Medium',
     tags: ['ngrx', 'createfeature', 'boilerplate'],
     question: {
@@ -3430,7 +3430,7 @@ Why: plain field selectors are pure noise and there is no reason to hand-write t
   },
   {
     id: 'rxjs-025',
-    category: 'js-state',
+    category: 'ngrx',
     level: 'Expert',
     tags: ['ngrx', 'signal-store', 'signals'],
     question: {
@@ -3544,7 +3544,7 @@ Why: in the template this reads synchronously — \`store.users()\`, \`store.cou
   },
   {
     id: 'rxjs-026',
-    category: 'js-state',
+    category: 'ngrx',
     level: 'Medium',
     tags: ['ngrx', 'facade', 'pattern'],
     question: {
@@ -3680,7 +3680,7 @@ Why: the component imports neither \`Store\` nor the actions and selectors files
   },
   {
     id: 'rxjs-027',
-    category: 'js-state',
+    category: 'ngrx',
     level: 'Hard',
     tags: ['ngxs', 'state-management'],
     question: {
@@ -3808,7 +3808,7 @@ Why: a single class here holds the "reducer" (\`patchState\`), the "effect" (\`t
   },
   {
     id: 'rxjs-028',
-    category: 'js-state',
+    category: 'rxjs',
     level: 'Hard',
     tags: ['signals', 'rxjs', 'tosignal', 'interop'],
     question: {
@@ -3948,7 +3948,7 @@ Why: \`debounceTime\` and \`switchMap\` cannot be expressed on bare signals — 
   },
   {
     id: 'rxjs-029',
-    category: 'js-state',
+    category: 'rxjs',
     level: 'Hard',
     tags: ['takeuntildestroyed', 'unsubscription', 'angular'],
     question: {
@@ -4062,7 +4062,7 @@ Why: a field initialiser runs in an injection context, \`ngOnInit\` does not. Ca
   },
   {
     id: 'rxjs-030',
-    category: 'js-state',
+    category: 'rxjs',
     level: 'Expert',
     tags: ['async-pipe', 'change-detection', 'internals'],
     question: {
@@ -4166,7 +4166,7 @@ Why: the stream lives **in a field**. Had the template said \`{{ service.getCoun
   },
   {
     id: 'rxjs-031',
-    category: 'js-state',
+    category: 'rxjs',
     level: 'Medium',
     tags: ['signals', 'rxjs', 'when-to-use'],
     question: {
@@ -4288,7 +4288,7 @@ Why: this is the workhorse pattern — **RxJS fetches and transforms the data, a
   },
   {
     id: 'rxjs-032',
-    category: 'js-state',
+    category: 'rxjs',
     level: 'Expert',
     tags: ['observable', 'subscriber', 'internals'],
     question: {
@@ -4388,7 +4388,7 @@ Why: an operator does not "process a stream" — it **creates a new Observable**
   },
   {
     id: 'rxjs-033',
-    category: 'js-state',
+    category: 'ngrx',
     level: 'Medium',
     tags: ['startwith', 'scan', 'state'],
     question: {
@@ -4532,7 +4532,7 @@ Why: \`startWith\` is needed because \`scan\` **does not emit its seed** on its 
   },
   {
     id: 'rxjs-034',
-    category: 'js-state',
+    category: 'rxjs',
     level: 'Expert',
     tags: ['glitch', 'combinelatest', 'gotcha'],
     question: {
@@ -4660,7 +4660,7 @@ Why: \`auditTime(0)\` does not "wait zero milliseconds" pointlessly — it defer
   },
   {
     id: 'rxjs-035',
-    category: 'js-state',
+    category: 'rxjs',
     level: 'Hard',
     tags: ['mergemap', 'backpressure', 'concurrency'],
     question: {
@@ -4764,7 +4764,7 @@ Why: without the second argument, \`mergeMap\` over a thousand ids opens **a tho
   },
   {
     id: 'rxjs-036',
-    category: 'js-state',
+    category: 'ngrx',
     level: 'Hard',
     tags: ['architecture', 'state-management', 'patterns'],
     question: {

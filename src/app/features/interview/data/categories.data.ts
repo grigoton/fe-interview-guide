@@ -12,6 +12,18 @@ export const INTERVIEW_CATEGORIES: InterviewCategory[] = [
     icon: '🧠'
   },
   {
+    id: 'rxjs',
+    titleKey: 'INT_CAT_rxjs',
+    descriptionKey: 'INT_CAT_DESC_rxjs',
+    icon: '🔀'
+  },
+  {
+    id: 'ngrx',
+    titleKey: 'INT_CAT_ngrx',
+    descriptionKey: 'INT_CAT_DESC_ngrx',
+    icon: '🗃️'
+  },
+  {
     id: 'html-css-performance',
     titleKey: 'INT_CAT_html-css-performance',
     descriptionKey: 'INT_CAT_DESC_html-css-performance',

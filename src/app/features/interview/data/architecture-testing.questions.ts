@@ -473,7 +473,7 @@ Why this works: the component has no \`inject()\` at all, so its test is "pass a
   },
   {
     id: 'arch-006',
-    category: 'architecture-testing',
+    category: 'ngrx',
     level: 'Hard',
     tags: ['design-patterns', 'facade', 'state-management'],
     question: {
@@ -835,7 +835,7 @@ Why this works: both branches live in the same bundle and both compile, so the o
   },
   {
     id: 'arch-010',
-    category: 'architecture-testing',
+    category: 'ngrx',
     level: 'Hard',
     tags: ['state-management', 'decision-making', 'ngrx'],
     question: {
@@ -1395,7 +1395,7 @@ Why this works: \`mockResolvedValue\` is the stub half (it supplies the answer),
   },
   {
     id: 'arch-016',
-    category: 'architecture-testing',
+    category: 'rxjs',
     level: 'Expert',
     tags: ['rxjs', 'marble-testing', 'testscheduler'],
     question: {

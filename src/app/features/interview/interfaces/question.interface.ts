@@ -11,13 +11,17 @@ export type QuestionLevel = 'Medium' | 'Hard' | 'Expert';
 /**
  * Stable identifiers for the top-level interview modules.
  *
- * Ordered as the filter sidebar presents them. The language, the framework and
- * the platform are separate modules: TypeScript-only theory is not mixed into
- * `js-state`, and transport/browser topics live in `network-browser` rather
- * than being scattered across performance and architecture.
+ * Ordered as the filter sidebar presents them. The language, the reactive
+ * library, the state library, the framework and the platform are separate
+ * modules: TypeScript-only theory is not mixed into `js-state`, RxJS and NgRx
+ * have their own modules rather than sharing the JS one, and transport/browser
+ * topics live in `network-browser` rather than being scattered across
+ * performance and architecture.
  */
 export type InterviewCategoryId =
   | 'js-state'
+  | 'rxjs'
+  | 'ngrx'
   | 'html-css-performance'
   | 'architecture-testing'
   | 'angular-signals'
