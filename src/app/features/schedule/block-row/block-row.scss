@@ -2,33 +2,43 @@
   display: block;
 }
 
+/* The wrapper carries the block's colour and status; the label inside it is
+   the part you click. Goals live outside that label on purpose. */
+.wrap {
+  border-radius: var(--r-sm);
+  border-inline-start: 3px solid transparent;
+  transition:
+    background-color var(--dur) var(--ease),
+    opacity var(--dur) var(--ease);
+}
+
 .row {
   display: grid;
   grid-template-columns: auto 3.4rem 1fr;
   align-items: start;
   gap: 0.6rem;
   padding: 0.45rem 0.6rem;
-  border-radius: var(--r-sm);
-  border-inline-start: 3px solid transparent;
+  border-radius: inherit;
   cursor: pointer;
-  transition: background-color var(--dur) var(--ease), opacity var(--dur) var(--ease);
+  transition: background-color var(--dur) var(--ease);
 
   &:hover {
     background: var(--surface-hover);
   }
+}
 
-  &.is-locked {
-    cursor: default;
+.wrap.is-locked .row {
+  cursor: default;
 
-    &:hover {
-      background: transparent;
-    }
+  &:hover {
+    background: transparent;
   }
 }
 
 /* Native box, recoloured — it already carries the right semantics and the
    right keyboard behaviour. */
-.row-box {
+.row-box,
+.goal-box {
   width: 17px;
   height: 17px;
   margin: 0.15rem 0 0;
@@ -70,10 +80,90 @@
 }
 
 /* --------------------------------------------------------------------------
-   Block types — the spec's own colour language: the day's anchor is gold,
-   work is blue, the session is violet, free time is green.
+   Goals of a productive window
    -------------------------------------------------------------------------- */
-.row.is-anchor {
+.goals {
+  list-style: none;
+  margin: 0 0 0.35rem;
+  /* Lines up with the row's title column: box + gap + time column + gap. */
+  padding: 0 0.6rem 0 calc(5.2rem + 20px);
+}
+
+/* Two columns, not a wrapping row: the box has to stay pinned to the first
+   line of the title, however narrow the card gets. */
+.goal {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 0.4rem;
+  padding: 0.2rem 0.4rem;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+
+  &:hover {
+    background: var(--surface-hover);
+  }
+}
+
+.goal-body {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.15rem 0.4rem;
+  min-width: 0;
+}
+
+.wrap.is-locked .goal {
+  cursor: default;
+
+  &:hover {
+    background: transparent;
+  }
+}
+
+.goal-box {
+  margin-top: 0.13rem;
+}
+
+.goal-title {
+  color: var(--text-2);
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+.goal-note {
+  color: var(--text-3);
+  font-size: 0.74rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* "Only if the rest closed early" — the goal is real, but it yields. */
+.goal-extra {
+  padding: 0 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: var(--r-full);
+  color: var(--text-3);
+  font-size: 0.68rem;
+  line-height: 1.6;
+}
+
+.goal.is-extra .goal-title {
+  color: var(--text-3);
+}
+
+.goal.is-done {
+  .goal-title {
+    color: var(--text-3);
+    text-decoration: line-through;
+    text-decoration-color: var(--text-3);
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Block types — the spec's own colour language: the day's anchor is gold,
+   the productive window is blue, the session is violet, free time is green.
+   -------------------------------------------------------------------------- */
+.wrap.is-anchor {
   border-inline-start-color: var(--sch-anchor);
   background: var(--sch-anchor-soft);
 
@@ -83,16 +173,17 @@
   }
 }
 
-.row.is-work {
+.wrap.is-work {
   border-inline-start-color: var(--sch-work);
   background: var(--sch-work-soft);
 
   .row-title {
     color: var(--sch-work-text);
+    font-weight: 600;
   }
 }
 
-.row.is-session {
+.wrap.is-session {
   border-inline-start-color: var(--sch-session);
   background: var(--sch-session-soft);
 
@@ -107,25 +198,8 @@
   }
 }
 
-.row.is-project {
-  border-inline-start-color: var(--sch-project);
-
-  .row-title {
-    color: var(--text-1);
-  }
-}
-
-.row.is-busy {
-  border-inline-start-color: var(--sch-rest);
-
-  .row-title {
-    color: var(--sch-rest-text);
-  }
-}
-
-.row.is-free .row-title,
-.row.is-meal .row-title,
-.row.is-chores .row-title {
+.wrap.is-free .row-title,
+.wrap.is-meal .row-title {
   color: var(--text-2);
   font-weight: 450;
 }
@@ -133,20 +207,29 @@
 /* --------------------------------------------------------------------------
    Status against the clock
    -------------------------------------------------------------------------- */
-.row.is-past {
+.wrap.is-past {
   opacity: 0.5;
 }
 
-.row.is-current {
+.wrap.is-current {
   box-shadow: inset 0 0 0 1px var(--accent-ring);
 }
 
-/* A ticked row is spent — struck through and dimmed, whatever its type. */
-.row.is-done {
-  opacity: 0.55;
+/* A ticked block is spent — struck through and dimmed, whatever its type. The
+   goals keep their own marks: the block can be closed with one still open. */
+.wrap.is-done {
+  .row {
+    opacity: 0.55;
+  }
 
   .row-title {
     text-decoration: line-through;
     text-decoration-color: var(--text-3);
+  }
+}
+
+@media (max-width: 560px) {
+  .goals {
+    padding-inline-start: 1.6rem;
   }
 }

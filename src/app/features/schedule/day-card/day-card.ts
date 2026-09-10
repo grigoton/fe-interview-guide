@@ -5,7 +5,7 @@ import { BlockRowComponent } from '../block-row/block-row';
 import { ClockService } from '../services/clock.service';
 import { ScheduleStateService } from '../services/schedule-state.service';
 import { ScheduleDay } from '../interfaces/schedule.interface';
-import { buildTimeline, minutesOfDay } from '../schedule.util';
+import { buildTimeline, countTicks, minutesOfDay } from '../schedule.util';
 
 /**
  * One day of the week grid.
@@ -38,10 +38,10 @@ export class DayCardComponent {
       this.day(),
       this.active() ? minutesOfDay(this.clock.now()) : null,
       this.state.done(),
+      this.state.workload(),
     ),
   );
 
-  protected readonly doneCount = computed(
-    () => this.timeline().filter((entry) => entry.done).length,
-  );
+  /** Ticks and tickables of this card, goals included. */
+  protected readonly ticks = computed(() => countTicks(this.timeline()));
 }

@@ -107,8 +107,6 @@ html {
   --sch-session-soft: rgba(140, 121, 196, 0.1);
   --sch-rest: #5e9e8b;
   --sch-rest-text: #9bd0bf;
-  // Resolved at use time, so it follows whichever accent the theme sets.
-  --sch-project: var(--accent);
 }
 
 /* --------------------------------------------------------------------------
@@ -196,7 +194,9 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
-  transition: background-color var(--dur-slow) var(--ease), color var(--dur-slow) var(--ease);
+  transition:
+    background-color var(--dur-slow) var(--ease),
+    color var(--dur-slow) var(--ease);
 }
 
 h1,
@@ -306,8 +306,11 @@ kbd {
   line-height: 1.2;
   cursor: pointer;
   white-space: nowrap;
-  transition: background-color var(--dur) var(--ease), border-color var(--dur) var(--ease),
-    color var(--dur) var(--ease), transform var(--dur) var(--ease);
+  transition:
+    background-color var(--dur) var(--ease),
+    border-color var(--dur) var(--ease),
+    color var(--dur) var(--ease),
+    transform var(--dur) var(--ease);
 
   &:hover {
     background: var(--surface-hover);
@@ -358,7 +361,9 @@ kbd {
   font-size: 0.8rem;
   font-weight: 650;
   cursor: pointer;
-  transition: background-color var(--dur) var(--ease), color var(--dur) var(--ease),
+  transition:
+    background-color var(--dur) var(--ease),
+    color var(--dur) var(--ease),
     border-color var(--dur) var(--ease);
 
   svg {
@@ -388,7 +393,9 @@ kbd {
   line-height: 1.2;
   white-space: nowrap;
   cursor: pointer;
-  transition: background-color var(--dur) var(--ease), border-color var(--dur) var(--ease),
+  transition:
+    background-color var(--dur) var(--ease),
+    border-color var(--dur) var(--ease),
     color var(--dur) var(--ease);
 
   &:hover {
@@ -414,7 +421,9 @@ kbd {
   color: var(--text-1);
   font-family: inherit;
   font-size: 0.9rem;
-  transition: border-color var(--dur) var(--ease), background-color var(--dur) var(--ease);
+  transition:
+    border-color var(--dur) var(--ease),
+    background-color var(--dur) var(--ease);
 
   &::placeholder {
     color: var(--text-3);
@@ -561,7 +570,9 @@ kbd {
     font-weight: 600;
     cursor: pointer;
     opacity: 0;
-    transition: opacity var(--dur) var(--ease), color var(--dur) var(--ease);
+    transition:
+      opacity var(--dur) var(--ease),
+      color var(--dur) var(--ease);
 
     &:hover {
       color: var(--text-1);

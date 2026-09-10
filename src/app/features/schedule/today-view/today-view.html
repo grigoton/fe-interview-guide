@@ -14,19 +14,35 @@
         <p class="lede">{{ 'SCH_SUBTITLE' | translate }}</p>
       }
 
+      <!-- The one question the day is asked: is there work today or not? It
+           does not move a single block, it only picks the goals inside the
+           productive window. -->
       <div class="controls">
-        <button
-          type="button"
-          class="ui-chip"
-          role="switch"
-          [class.is-active]="state.spareDay()"
-          [attr.aria-checked]="state.spareDay()"
-          (click)="state.toggleSpareDay()"
-        >
-          {{ 'SCH_SPARE' | translate }}
-        </button>
+        <div class="seg" role="radiogroup" [attr.aria-label]="'SCH_WORKLOAD' | translate">
+          <span class="seg-label">{{ 'SCH_WORKLOAD' | translate }}</span>
+          <button
+            type="button"
+            role="radio"
+            class="ui-chip"
+            [class.is-active]="state.workload() === 'heavy'"
+            [attr.aria-checked]="state.workload() === 'heavy'"
+            (click)="state.setWorkload('heavy')"
+          >
+            {{ 'SCH_WORK_HEAVY' | translate }}
+          </button>
+          <button
+            type="button"
+            role="radio"
+            class="ui-chip"
+            [class.is-active]="state.workload() === 'light'"
+            [attr.aria-checked]="state.workload() === 'light'"
+            (click)="state.setWorkload('light')"
+          >
+            {{ 'SCH_WORK_LIGHT' | translate }}
+          </button>
+        </div>
 
-        @if (doneCount()) {
+        @if (ticks().done) {
           <button type="button" class="ui-btn ui-btn--ghost" (click)="state.clearDone()">
             {{ 'SCH_RESET' | translate }}
           </button>
@@ -75,7 +91,7 @@
       </div>
       <p class="bar-legend">
         <span>{{ 'SCH_DAY_PROGRESS' | translate }} — {{ progress() }}%</span>
-        <span>{{ doneCount() }}/{{ timeline().length }} {{ 'SCH_DONE_OF' | translate }}</span>
+        <span>{{ ticks().done }}/{{ ticks().total }} {{ 'SCH_DONE_OF' | translate }}</span>
       </p>
     </div>
   </header>
@@ -83,7 +99,11 @@
   <!-- ── The day itself ───────────────────────────────────────────────────── -->
   <div class="list ui-card">
     @for (entry of timeline(); track entry.block.id) {
-      <app-block-row [entry]="entry" (toggled)="state.toggle(entry.block.id)" />
+      <app-block-row
+        [entry]="entry"
+        (toggled)="state.toggle(entry.block.id)"
+        (goalToggled)="state.toggle($event)"
+      />
     }
   </div>
 

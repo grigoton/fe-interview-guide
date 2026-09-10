@@ -1,4 +1,4 @@
-import { ScheduleBlock, ScheduleDay } from '../interfaces/schedule.interface';
+import { BlockGoal, ScheduleBlock, ScheduleDay, Workload } from '../interfaces/schedule.interface';
 
 /**
  * The fixed week, exactly as written in the spec.
@@ -8,92 +8,192 @@ import { ScheduleBlock, ScheduleDay } from '../interfaces/schedule.interface';
  *
  * Rules baked into the numbers below (they are not enforced at runtime — the
  * data already satisfies them):
- * - the work block and the 17:00 session start never move;
- * - on a session day everything before 17:00 finishes before 17:00;
- * - a session's end is unknown and is never displayed anywhere.
+ * - the morning chain is identical on all seven days, 06:55 → 08:50;
+ * - the gym days (Mon, Wed, Fri) push breakfast to 11:00 and the productive
+ *   window to 12:00; the session days (Tue, Thu) start it at 10:00;
+ * - a session's end is unknown and is never displayed anywhere;
+ * - the productive window never changes length — only its goals do, and which
+ *   list applies is the one thing the day is asked about.
  */
 
-/** Weekday mornings are identical: warm-up 07:00, dog 07:15, shower 07:55. */
-function weekdayMorning(day: string): ScheduleBlock[] {
+/**
+ * 06:55 → 08:50, the same every day of the week.
+ *
+ * Getting out of bed and the bathroom are one block on purpose: the spec gives
+ * them the same 07:05, and a block that ends the moment it starts could never
+ * be shown as running.
+ */
+function morning(day: string): ScheduleBlock[] {
   return [
     {
-      id: `${day}-0700`,
-      start: '07:00',
+      id: `${day}-0655`,
+      start: '06:55',
       type: 'routine',
-      title: { ru: 'Разминка', en: 'Warm-up' },
-      note: { ru: '15 мин', en: '15 min' },
+      title: { ru: 'Будильник, пробуждение', en: 'Alarm, wake up' },
+      note: { ru: '10 минут до подъёма', en: '10 minutes before getting up' },
+    },
+    {
+      id: `${day}-0705`,
+      start: '07:05',
+      type: 'routine',
+      title: { ru: 'Подъём, утренний туалет', en: 'Out of bed, bathroom' },
+      note: { ru: '10 мин', en: '10 min' },
     },
     {
       id: `${day}-0715`,
       start: '07:15',
       type: 'routine',
-      title: { ru: 'Собака', en: 'Dog walk' },
-      note: { ru: '40 мин', en: '40 min' },
+      title: { ru: 'Разминка', en: 'Warm-up' },
+      note: { ru: '10 мин', en: '10 min' },
     },
     {
-      id: `${day}-0755`,
-      start: '07:55',
+      id: `${day}-0725`,
+      start: '07:25',
+      type: 'routine',
+      title: { ru: 'Сборы на прогулку', en: 'Getting ready for the walk' },
+      note: { ru: '10 мин', en: '10 min' },
+    },
+    {
+      id: `${day}-0735`,
+      start: '07:35',
+      type: 'routine',
+      title: { ru: 'Выход с собакой', en: 'Out with the dog' },
+      note: { ru: '50 мин', en: '50 min' },
+    },
+    {
+      id: `${day}-0825`,
+      start: '08:25',
+      type: 'routine',
+      title: { ru: 'Дома: помыть собаку, раздеться', en: 'Home: wash the dog, get changed' },
+      note: { ru: '15 мин', en: '15 min' },
+    },
+    {
+      id: `${day}-0840`,
+      start: '08:40',
       type: 'routine',
       title: { ru: 'Душ', en: 'Shower' },
+      note: { ru: '10 мин', en: '10 min' },
     },
   ];
 }
+
+/** The gym morning: 09:00 → 11:00, then breakfast until noon. */
+function gymMorning(day: string): ScheduleBlock[] {
+  return [
+    {
+      id: `${day}-0900`,
+      start: '09:00',
+      type: 'anchor',
+      title: { ru: 'Зал', en: 'Gym' },
+      note: { ru: '2 ч', en: '2 h' },
+    },
+    {
+      id: `${day}-1100`,
+      start: '11:00',
+      type: 'meal',
+      title: { ru: 'Завтрак', en: 'Breakfast' },
+      note: { ru: '1 ч', en: '1 h' },
+    },
+  ];
+}
+
+/** Course and interview prep, the two goals that appear on every weekday. */
+function goal(
+  id: string,
+  title: { ru: string; en: string },
+  note: { ru: string; en: string },
+): BlockGoal {
+  return { id, title, note };
+}
+
+const COURSE = { ru: 'Курс по ИИ', en: 'AI course' };
+const PREP = { ru: 'Подготовка к собесам', en: 'Interview prep' };
+const POKER_SITE = { ru: 'Работа над покерным сайтом', en: 'Work on the poker site' };
+const MAX_WORK = { ru: 'Работа по максимуму', en: 'Work, as much as there is' };
+
+/**
+ * A heavy day is the same on all five weekdays: work fills the window, and an
+ * hour of the course and an hour of prep are still due inside it.
+ */
+function heavyGoals(day: string): BlockGoal[] {
+  return [
+    goal(`${day}-g-work`, MAX_WORK, { ru: 'сколько её есть', en: 'however much there is' }),
+    goal(`${day}-g-course`, COURSE, { ru: '1 ч', en: '1 h' }),
+    goal(`${day}-g-prep`, PREP, { ru: '1 ч', en: '1 h' }),
+  ];
+}
+
+/**
+ * Goals of a gym day's window (Mon, Wed, Fri) — seven hours, so a light day
+ * also has room for the poker site.
+ *
+ * `pokerSiteExtra` marks Wednesday: the window is an hour shorter there, so the
+ * site is only picked up if the rest closed early.
+ */
+function longDayGoals(day: string, pokerSiteExtra = false): Record<Workload, BlockGoal[]> {
+  return {
+    heavy: heavyGoals(day),
+    light: [
+      goal(`${day}-g-course-l`, COURSE, { ru: '2 ч', en: '2 h' }),
+      goal(`${day}-g-prep-l`, PREP, { ru: '1,5 ч', en: '1.5 h' }),
+      {
+        ...goal(`${day}-g-site-l`, POKER_SITE, { ru: '1 ч', en: '1 h' }),
+        extra: pokerSiteExtra,
+      },
+    ],
+  };
+}
+
+/**
+ * Goals of a session day's window (Tue, Thu) — half an hour shorter and with a
+ * session waiting at the end of it, so a light day stops at the two hours and
+ * a half that always have to happen.
+ */
+function sessionDayGoals(day: string): Record<Workload, BlockGoal[]> {
+  return {
+    heavy: heavyGoals(day),
+    light: [
+      goal(`${day}-g-course-l`, COURSE, { ru: '1,5 ч', en: '1.5 h' }),
+      goal(`${day}-g-prep-l`, PREP, { ru: '1,5 ч', en: '1.5 h' }),
+    ],
+  };
+}
+
+/** The poker session — the one block whose finish is never predicted. */
+function session(day: string, start: string, note: { ru: string; en: string }): ScheduleBlock {
+  return {
+    id: `${day}-session`,
+    start,
+    type: 'session',
+    title: { ru: 'Покерная сессия', en: 'Poker session' },
+    note,
+    flexible: true,
+  };
+}
+
+const OPEN_END = { ru: 'конец непредсказуем', en: 'end is unpredictable' };
 
 const MONDAY: ScheduleDay = {
   id: 'mon',
   weekday: 1,
   name: { ru: 'Понедельник', en: 'Monday' },
-  tag: { ru: 'зал, сессия', en: 'gym, session' },
+  tag: { ru: 'зал, длинный день', en: 'gym, long day' },
   blocks: [
-    ...weekdayMorning('mon'),
+    ...morning('mon'),
+    ...gymMorning('mon'),
     {
-      id: 'mon-0815',
-      start: '08:15',
-      type: 'anchor',
-      title: { ru: 'Зал', en: 'Gym' },
-      note: { ru: '1:50 с дорогой', en: '1:50 incl. travel' },
-    },
-    {
-      id: 'mon-1005',
-      start: '10:05',
-      type: 'meal',
-      title: { ru: 'Завтрак', en: 'Breakfast' },
-      note: { ru: '45 мин', en: '45 min' },
-    },
-    {
-      id: 'mon-1050',
-      start: '10:50',
+      id: 'mon-1200',
+      start: '12:00',
       type: 'work',
-      title: { ru: 'Работа', en: 'Work' },
-      note: { ru: '3 ч', en: '3 h' },
+      title: { ru: 'Продуктивное время', en: 'Productive time' },
+      note: { ru: '7 ч, до 19:00', en: '7 h, until 19:00' },
+      goals: longDayGoals('mon'),
     },
     {
-      id: 'mon-1350',
-      start: '13:50',
-      type: 'meal',
-      title: { ru: 'Обед и собака', en: 'Lunch and dog' },
-      note: { ru: '45 мин', en: '45 min' },
-    },
-    {
-      id: 'mon-1435',
-      start: '14:35',
-      type: 'work',
-      title: { ru: 'Работа', en: 'Work' },
-      note: { ru: '2 ч — итого 5 ч', en: '2 h — 5 h in total' },
-    },
-    {
-      id: 'mon-1635',
-      start: '16:35',
-      type: 'meal',
-      title: { ru: 'Ужин', en: 'Dinner' },
-      note: { ru: 'перед сессией', en: 'before the session' },
-    },
-    {
-      id: 'mon-1700',
-      start: '17:00',
-      type: 'session',
-      title: { ru: 'Покерная сессия', en: 'Poker session' },
-      note: { ru: 'конец непредсказуем', en: 'end is unpredictable' },
+      id: 'mon-1900',
+      start: '19:00',
+      type: 'free',
+      title: { ru: 'Вечер свободен', en: 'The evening is free' },
       flexible: true,
     },
   ],
@@ -103,66 +203,25 @@ const TUESDAY: ScheduleDay = {
   id: 'tue',
   weekday: 2,
   name: { ru: 'Вторник', en: 'Tuesday' },
-  tag: { ru: 'курс и поиск работы', en: 'course and job search' },
+  tag: { ru: 'сессия в 16:30', en: 'session at 16:30' },
   blocks: [
-    ...weekdayMorning('tue'),
-    {
-      id: 'tue-0815',
-      start: '08:15',
-      type: 'meal',
-      title: { ru: 'Завтрак', en: 'Breakfast' },
-      note: { ru: '45 мин', en: '45 min' },
-    },
+    ...morning('tue'),
     {
       id: 'tue-0900',
       start: '09:00',
-      type: 'work',
-      title: { ru: 'Работа', en: 'Work' },
-      note: { ru: '3 ч', en: '3 h' },
-    },
-    {
-      id: 'tue-1200',
-      start: '12:00',
       type: 'meal',
-      title: { ru: 'Обед и собака', en: 'Lunch and dog' },
-      note: { ru: '45 мин', en: '45 min' },
+      title: { ru: 'Завтрак', en: 'Breakfast' },
+      note: { ru: '1 ч', en: '1 h' },
     },
     {
-      id: 'tue-1245',
-      start: '12:45',
+      id: 'tue-1000',
+      start: '10:00',
       type: 'work',
-      title: { ru: 'Работа', en: 'Work' },
-      note: { ru: '2 ч — итого 5 ч', en: '2 h — 5 h in total' },
+      title: { ru: 'Продуктивное время', en: 'Productive time' },
+      note: { ru: '6 ч 30 мин, до 16:30', en: '6 h 30 min, until 16:30' },
+      goals: sessionDayGoals('tue'),
     },
-    {
-      id: 'tue-1445',
-      start: '14:45',
-      type: 'anchor',
-      title: { ru: 'Курс Anthropic', en: 'Anthropic course' },
-      note: { ru: '2 ч', en: '2 h' },
-    },
-    {
-      id: 'tue-1645',
-      start: '16:45',
-      type: 'meal',
-      title: { ru: 'Ужин', en: 'Dinner' },
-      note: { ru: '45 мин', en: '45 min' },
-    },
-    {
-      id: 'tue-1730',
-      start: '17:30',
-      type: 'anchor',
-      title: { ru: 'Поиск работы', en: 'Job search' },
-      note: { ru: '2 ч 15 мин', en: '2 h 15 min' },
-    },
-    {
-      id: 'tue-1945',
-      start: '19:45',
-      type: 'free',
-      title: { ru: 'Свободно', en: 'Free' },
-      note: { ru: 'вечер свободен', en: 'the evening is yours' },
-      flexible: true,
-    },
+    session('tue', '16:30', OPEN_END),
   ],
 };
 
@@ -170,57 +229,23 @@ const WEDNESDAY: ScheduleDay = {
   id: 'wed',
   weekday: 3,
   name: { ru: 'Среда', en: 'Wednesday' },
-  tag: { ru: 'зал, вечер занят', en: 'gym, evening taken' },
+  tag: { ru: 'зал, до 18:00', en: 'gym, until 18:00' },
   blocks: [
-    ...weekdayMorning('wed'),
+    ...morning('wed'),
+    ...gymMorning('wed'),
     {
-      id: 'wed-0815',
-      start: '08:15',
-      type: 'anchor',
-      title: { ru: 'Зал', en: 'Gym' },
-      note: { ru: '1:50 с дорогой', en: '1:50 incl. travel' },
-    },
-    {
-      id: 'wed-1005',
-      start: '10:05',
-      type: 'meal',
-      title: { ru: 'Завтрак', en: 'Breakfast' },
-      note: { ru: '45 мин', en: '45 min' },
-    },
-    {
-      id: 'wed-1050',
-      start: '10:50',
+      id: 'wed-1200',
+      start: '12:00',
       type: 'work',
-      title: { ru: 'Работа', en: 'Work' },
-      note: { ru: '3 ч', en: '3 h' },
+      title: { ru: 'Продуктивное время', en: 'Productive time' },
+      note: { ru: '6 ч, до 18:00', en: '6 h, until 18:00' },
+      goals: longDayGoals('wed', true),
     },
     {
-      id: 'wed-1350',
-      start: '13:50',
-      type: 'meal',
-      title: { ru: 'Обед и собака', en: 'Lunch and dog' },
-      note: { ru: '45 мин', en: '45 min' },
-    },
-    {
-      id: 'wed-1435',
-      start: '14:35',
-      type: 'work',
-      title: { ru: 'Работа', en: 'Work' },
-      note: { ru: '2 ч — итого 5 ч', en: '2 h — 5 h in total' },
-    },
-    {
-      id: 'wed-1635',
-      start: '16:35',
-      type: 'project',
-      title: { ru: 'Свой проект', en: 'Own project' },
-      note: { ru: '1 ч 10 мин', en: '1 h 10 min' },
-    },
-    {
-      id: 'wed-1745',
-      start: '17:45',
-      type: 'busy',
-      title: { ru: 'Сборы, выход', en: 'Get ready, head out' },
-      note: { ru: 'вечер занят, ужин вне дома', en: 'evening taken, dinner out' },
+      id: 'wed-1800',
+      start: '18:00',
+      type: 'free',
+      title: { ru: 'Вечер свободен', en: 'The evening is free' },
       flexible: true,
     },
   ],
@@ -230,59 +255,25 @@ const THURSDAY: ScheduleDay = {
   id: 'thu',
   weekday: 4,
   name: { ru: 'Четверг', en: 'Thursday' },
-  tag: { ru: 'поиск работы, сессия', en: 'job search, session' },
+  tag: { ru: 'сессия в 16:30', en: 'session at 16:30' },
   blocks: [
-    ...weekdayMorning('thu'),
-    {
-      id: 'thu-0815',
-      start: '08:15',
-      type: 'meal',
-      title: { ru: 'Завтрак', en: 'Breakfast' },
-      note: { ru: '45 мин', en: '45 min' },
-    },
+    ...morning('thu'),
     {
       id: 'thu-0900',
       start: '09:00',
-      type: 'work',
-      title: { ru: 'Работа', en: 'Work' },
-      note: { ru: '3 ч', en: '3 h' },
-    },
-    {
-      id: 'thu-1200',
-      start: '12:00',
       type: 'meal',
-      title: { ru: 'Обед и собака', en: 'Lunch and dog' },
-      note: { ru: '45 мин', en: '45 min' },
+      title: { ru: 'Завтрак', en: 'Breakfast' },
+      note: { ru: '1 ч', en: '1 h' },
     },
     {
-      id: 'thu-1245',
-      start: '12:45',
+      id: 'thu-1000',
+      start: '10:00',
       type: 'work',
-      title: { ru: 'Работа', en: 'Work' },
-      note: { ru: '2 ч — итого 5 ч', en: '2 h — 5 h in total' },
+      title: { ru: 'Продуктивное время', en: 'Productive time' },
+      note: { ru: '6 ч 30 мин, до 16:30', en: '6 h 30 min, until 16:30' },
+      goals: sessionDayGoals('thu'),
     },
-    {
-      id: 'thu-1445',
-      start: '14:45',
-      type: 'anchor',
-      title: { ru: 'Поиск работы', en: 'Job search' },
-      note: { ru: '1 ч 45 мин', en: '1 h 45 min' },
-    },
-    {
-      id: 'thu-1630',
-      start: '16:30',
-      type: 'meal',
-      title: { ru: 'Ужин', en: 'Dinner' },
-      note: { ru: 'перед сессией', en: 'before the session' },
-    },
-    {
-      id: 'thu-1700',
-      start: '17:00',
-      type: 'session',
-      title: { ru: 'Покерная сессия', en: 'Poker session' },
-      note: { ru: 'конец непредсказуем', en: 'end is unpredictable' },
-      flexible: true,
-    },
+    session('thu', '16:30', OPEN_END),
   ],
 };
 
@@ -290,286 +281,81 @@ const FRIDAY: ScheduleDay = {
   id: 'fri',
   weekday: 5,
   name: { ru: 'Пятница', en: 'Friday' },
-  tag: { ru: 'зал, курс', en: 'gym, course' },
+  tag: { ru: 'зал, длинный день', en: 'gym, long day' },
   blocks: [
-    ...weekdayMorning('fri'),
+    ...morning('fri'),
+    ...gymMorning('fri'),
     {
-      id: 'fri-0815',
-      start: '08:15',
-      type: 'anchor',
-      title: { ru: 'Зал', en: 'Gym' },
-      note: { ru: '1:50 с дорогой', en: '1:50 incl. travel' },
-    },
-    {
-      id: 'fri-1005',
-      start: '10:05',
-      type: 'meal',
-      title: { ru: 'Завтрак', en: 'Breakfast' },
-      note: { ru: '45 мин', en: '45 min' },
-    },
-    {
-      id: 'fri-1050',
-      start: '10:50',
+      id: 'fri-1200',
+      start: '12:00',
       type: 'work',
-      title: { ru: 'Работа', en: 'Work' },
-      note: { ru: '3 ч', en: '3 h' },
+      title: { ru: 'Продуктивное время', en: 'Productive time' },
+      note: { ru: '7 ч, до 19:00', en: '7 h, until 19:00' },
+      goals: longDayGoals('fri'),
     },
     {
-      id: 'fri-1350',
-      start: '13:50',
-      type: 'meal',
-      title: { ru: 'Обед и собака', en: 'Lunch and dog' },
-      note: { ru: '45 мин', en: '45 min' },
-    },
-    {
-      id: 'fri-1435',
-      start: '14:35',
-      type: 'work',
-      title: { ru: 'Работа', en: 'Work' },
-      note: { ru: '2 ч — итого 5 ч', en: '2 h — 5 h in total' },
-    },
-    {
-      id: 'fri-1635',
-      start: '16:35',
-      type: 'meal',
-      title: { ru: 'Ужин', en: 'Dinner' },
-      note: { ru: '40 мин', en: '40 min' },
-    },
-    {
-      id: 'fri-1715',
-      start: '17:15',
-      type: 'anchor',
-      title: { ru: 'Курс Anthropic', en: 'Anthropic course' },
-      note: { ru: '2 ч', en: '2 h' },
-    },
-    {
-      id: 'fri-1915',
-      start: '19:15',
+      id: 'fri-1900',
+      start: '19:00',
       type: 'free',
-      title: { ru: 'Свободно', en: 'Free' },
-      note: { ru: 'чтение, отдых', en: 'reading, rest' },
-      flexible: true,
-    },
-  ],
-};
-
-const SATURDAY: ScheduleDay = {
-  id: 'sat',
-  weekday: 6,
-  weekend: true,
-  name: { ru: 'Суббота', en: 'Saturday' },
-  tag: { ru: 'свободное утро, сессия', en: 'free morning, session' },
-  blocks: [
-    {
-      id: 'sat-0830',
-      start: '08:30',
-      type: 'routine',
-      title: { ru: 'Разминка, собака', en: 'Warm-up, dog' },
-    },
-    {
-      id: 'sat-0915',
-      start: '09:15',
-      type: 'free',
-      title: { ru: 'Завтрак вне дома, с собакой', en: 'Breakfast out, with the dog' },
-      note: { ru: 'без привязки ко времени', en: 'no fixed time' },
-      flexible: true,
-    },
-    {
-      id: 'sat-free',
-      start: null,
-      timeLabel: { ru: 'до 13:15', en: 'until 13:15' },
-      type: 'free',
-      title: { ru: 'Свободно', en: 'Free' },
-      note: { ru: 'свои дела, отдых', en: 'errands, rest' },
-    },
-    {
-      id: 'sat-1315',
-      start: '13:15',
-      type: 'meal',
-      title: { ru: 'Обед и собака', en: 'Lunch and dog' },
-      note: { ru: '45 мин', en: '45 min' },
-    },
-    {
-      id: 'sat-1400',
-      start: '14:00',
-      type: 'project',
-      title: { ru: 'Свой проект', en: 'Own project' },
-      note: { ru: '1,5 ч', en: '1.5 h' },
-    },
-    {
-      id: 'sat-1530',
-      start: '15:30',
-      type: 'meal',
-      title: { ru: 'Свободно, ужин', en: 'Free, dinner' },
-    },
-    {
-      id: 'sat-1700',
-      start: '17:00',
-      type: 'session',
-      title: { ru: 'Покерная сессия', en: 'Poker session' },
-      note: { ru: 'конец непредсказуем', en: 'end is unpredictable' },
-      flexible: true,
-    },
-  ],
-};
-
-const SUNDAY: ScheduleDay = {
-  id: 'sun',
-  weekday: 0,
-  weekend: true,
-  name: { ru: 'Воскресенье', en: 'Sunday' },
-  tag: { ru: 'покер, проект, быт', en: 'poker, project, chores' },
-  blocks: [
-    {
-      id: 'sun-0830',
-      start: '08:30',
-      type: 'routine',
-      title: { ru: 'Разминка, собака', en: 'Warm-up, dog' },
-    },
-    {
-      id: 'sun-0915',
-      start: '09:15',
-      type: 'meal',
-      title: { ru: 'Завтрак', en: 'Breakfast' },
-      note: { ru: '45 мин', en: '45 min' },
-    },
-    {
-      id: 'sun-1000',
-      start: '10:00',
-      type: 'anchor',
-      title: { ru: 'Покер: теория и разбор рук', en: 'Poker: theory and hand review' },
-      note: { ru: '1,5 ч', en: '1.5 h' },
-    },
-    {
-      id: 'sun-1130',
-      start: '11:30',
-      type: 'anchor',
-      title: { ru: 'Поиск работы', en: 'Job search' },
-      note: { ru: '1 ч', en: '1 h' },
-    },
-    {
-      id: 'sun-1230',
-      start: '12:30',
-      type: 'meal',
-      title: { ru: 'Обед и собака', en: 'Lunch and dog' },
-      note: { ru: '45 мин', en: '45 min' },
-    },
-    {
-      id: 'sun-1315',
-      start: '13:15',
-      type: 'project',
-      title: { ru: 'Свой проект', en: 'Own project' },
-      note: { ru: '1,5 ч', en: '1.5 h' },
-    },
-    {
-      id: 'sun-1445',
-      start: '14:45',
-      type: 'chores',
-      title: { ru: 'Готовка на неделю, быт', en: 'Cooking for the week, chores' },
-      note: { ru: '1 ч 45 мин', en: '1 h 45 min' },
-    },
-    {
-      id: 'sun-1630',
-      start: '16:30',
-      type: 'meal',
-      title: { ru: 'Ужин, итоги недели', en: 'Dinner, week review' },
-      note: { ru: '15 мин на план', en: '15 min for planning' },
-    },
-    {
-      id: 'sun-1700',
-      start: '17:00',
-      type: 'session',
-      title: { ru: 'Покерная сессия', en: 'Poker session' },
-      note: { ru: 'конец непредсказуем', en: 'end is unpredictable' },
+      title: { ru: 'Вечер свободен', en: 'The evening is free' },
       flexible: true,
     },
   ],
 };
 
 /**
- * The shortened day after a late session. Switched on by hand, never
- * automatically. The gym and the day block are already dropped here — the
- * order in which blocks get cut is fixed: gym first, then the day block, then
- * the own project.
+ * Saturday and Sunday are identical: the morning chain, then no grid at all.
+ *
+ * The two hours that still have to happen carry no start time — they are shown
+ * last, below the session, and are ticked whenever they are actually done.
  */
-export const SPARE_DAY: ScheduleDay = {
-  id: 'spare',
-  weekday: null,
-  name: { ru: 'После поздней сессии', en: 'After a late session' },
-  tag: { ru: 'запасной день', en: 'spare day' },
-  hint: {
-    ru: 'Включается, если лёг позже 01:00. Подъём 7,5 ч после отбоя, но не позже 09:20 в день с сессией.',
-    en: 'Switch it on after going to bed past 01:00. Get up 7.5 h after lights out, and no later than 09:20 on a session day.',
-  },
-  blocks: [
-    {
-      id: 'spare-0900',
-      start: '09:00',
-      type: 'routine',
-      title: { ru: 'Разминка, собака', en: 'Warm-up, dog' },
-      note: { ru: '50 мин', en: '50 min' },
+function weekend(day: 'sat' | 'sun', name: { ru: string; en: string }): ScheduleDay {
+  return {
+    id: day,
+    weekday: day === 'sat' ? 6 : 0,
+    weekend: true,
+    name,
+    tag: { ru: 'без сетки, сессия', en: 'no grid, session' },
+    hint: {
+      ru: 'Сетки нет. Держится только сессия и два часа занятий — разбор раздач и час обучения.',
+      en: 'No grid. Only the session holds, plus two hours of study — hand review and an hour of learning.',
     },
-    {
-      id: 'spare-0950',
-      start: '09:50',
-      type: 'routine',
-      title: { ru: 'Душ', en: 'Shower' },
-    },
-    {
-      id: 'spare-1010',
-      start: '10:10',
-      type: 'meal',
-      title: { ru: 'Завтрак', en: 'Breakfast' },
-      note: { ru: '45 мин', en: '45 min' },
-    },
-    {
-      id: 'spare-1055',
-      start: '10:55',
-      type: 'work',
-      title: { ru: 'Работа', en: 'Work' },
-      note: { ru: '3 ч', en: '3 h' },
-    },
-    {
-      id: 'spare-1355',
-      start: '13:55',
-      type: 'meal',
-      title: { ru: 'Обед и собака', en: 'Lunch and dog' },
-      note: { ru: '45 мин', en: '45 min' },
-    },
-    {
-      id: 'spare-1440',
-      start: '14:40',
-      type: 'work',
-      title: { ru: 'Работа', en: 'Work' },
-      note: { ru: '2 ч — итого 5 ч', en: '2 h — 5 h in total' },
-    },
-    {
-      id: 'spare-1640',
-      start: '16:40',
-      type: 'meal',
-      title: { ru: 'Ужин', en: 'Dinner' },
-    },
-    {
-      id: 'spare-1700',
-      start: '17:00',
-      type: 'session',
-      title: { ru: 'Сессия или вечерний блок', en: 'Session or evening block' },
-      note: {
-        ru: 'зал пропущен, дневной блок ушёл в резерв',
-        en: 'gym skipped, day block moved to the reserve',
+    blocks: [
+      ...morning(day),
+      {
+        id: `${day}-0900`,
+        start: '09:00',
+        type: 'free',
+        title: { ru: 'День без сетки', en: 'A day with no grid' },
+        note: { ru: 'планы по ситуации', en: 'plans as they come' },
+        flexible: true,
       },
-      flexible: true,
-    },
-  ],
-};
+      session(day, '15:00', {
+        ru: '15:00 или 16:00, конец непредсказуем',
+        en: '15:00 or 16:00, end is unpredictable',
+      }),
+      {
+        id: `${day}-hands`,
+        start: null,
+        timeLabel: { ru: 'в день', en: 'in the day' },
+        type: 'anchor',
+        title: { ru: 'Разбор раздач', en: 'Hand review' },
+        note: { ru: '1 ч', en: '1 h' },
+      },
+      {
+        id: `${day}-study`,
+        start: null,
+        timeLabel: { ru: 'в день', en: 'in the day' },
+        type: 'anchor',
+        title: { ru: 'Обучение на свой выбор', en: 'An hour of learning, your pick' },
+        note: { ru: '1 ч, если нет других планов', en: '1 h, if nothing else is planned' },
+      },
+    ],
+  };
+}
+
+const SATURDAY = weekend('sat', { ru: 'Суббота', en: 'Saturday' });
+const SUNDAY = weekend('sun', { ru: 'Воскресенье', en: 'Sunday' });
 
 /** Monday → Sunday, in reading order. */
-export const WEEK: ScheduleDay[] = [
-  MONDAY,
-  TUESDAY,
-  WEDNESDAY,
-  THURSDAY,
-  FRIDAY,
-  SATURDAY,
-  SUNDAY,
-];
+export const WEEK: ScheduleDay[] = [MONDAY, TUESDAY, WEDNESDAY, THURSDAY, FRIDAY, SATURDAY, SUNDAY];

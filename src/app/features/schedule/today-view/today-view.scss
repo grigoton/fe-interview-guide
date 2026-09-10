@@ -38,8 +38,22 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.4rem;
+  gap: 0.4rem 0.6rem;
   margin-top: 1rem;
+}
+
+/* Workload switch: two chips that read as one control. */
+.seg {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.seg-label {
+  color: var(--text-3);
+  font-size: 0.75rem;
+  margin-inline-end: 0.1rem;
 }
 
 /* --------------------------------------------------------------------------

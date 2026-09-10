@@ -112,7 +112,7 @@
   "INT_COPIED": "Copied",
 
   "SCH_TITLE": "Daily routine",
-  "SCH_SUBTITLE": "A fixed week: what is on now and what comes next. The schedule is not editable — tick off what is done.",
+  "SCH_SUBTITLE": "The day's grid is fixed. Say whether today has a lot of work or not, and tick off what is done.",
   "SCH_NOW": "Now",
   "SCH_NEXT": "Next",
   "SCH_LEFT": "left",
@@ -121,14 +121,16 @@
   "SCH_DAY_PROGRESS": "Day elapsed",
   "SCH_DONE_OF": "ticked",
   "SCH_TODAY": "today",
-  "SCH_SPARE": "Spare day",
+  "SCH_WORKLOAD": "Today",
+  "SCH_WORK_HEAVY": "Plenty of work",
+  "SCH_WORK_LIGHT": "Little work",
+  "SCH_EXTRA": "if time is left",
   "SCH_RESET": "Clear ticks",
   "SCH_WEEK_LINK": "Whole week",
   "SCH_BACK_TODAY": "Today",
   "SCH_WEEK_TITLE": "The whole week",
-  "SCH_WEEK_SUBTITLE": "Seven days plus the spare day after a late session. Today is highlighted — it is the only one you can tick.",
+  "SCH_WEEK_SUBTITLE": "Seven days of one grid: a shared morning, then the gym fork. Today is highlighted — it is the only one you can tick.",
   "SCH_LOCKED_HINT": "Ticks live until the end of the day and are stored in this browser only, so only the current day can be ticked.",
   "SCH_STORAGE_HINT": "Ticks reset when the day rolls over and are stored in this browser only.",
-  "SCH_TALLY": "What the week adds up to",
-  "SCH_NOTES": "Priorities, and what is arranged around them"
+  "SCH_TALLY": "What the week adds up to"
 }

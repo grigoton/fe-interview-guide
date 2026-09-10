@@ -1,16 +1,47 @@
-<label class="row" [class]="rowClass()">
-  <input
-    type="checkbox"
-    class="row-box"
-    [checked]="entry().done"
-    [disabled]="!interactive()"
-    (change)="toggled.emit()"
-  />
-  <span class="row-time">{{ time() }}</span>
-  <span class="row-body">
-    <span class="row-title">{{ entry().block.title[locale()] }}</span>
-    @if (entry().block.note; as note) {
-      <span class="row-note">{{ note[locale()] }}</span>
-    }
-  </span>
-</label>
+<div class="wrap" [class]="rowClass()">
+  <label class="row">
+    <input
+      type="checkbox"
+      class="row-box"
+      [checked]="entry().done"
+      [disabled]="!interactive()"
+      (change)="toggled.emit()"
+    />
+    <span class="row-time">{{ time() }}</span>
+    <span class="row-body">
+      <span class="row-title">{{ entry().block.title[locale()] }}</span>
+      @if (entry().block.note; as note) {
+        <span class="row-note">{{ note[locale()] }}</span>
+      }
+    </span>
+  </label>
+
+  <!-- What has to fit inside the block. Ticked one by one, outside the row's
+       own label so a goal never toggles the block above it. -->
+  @if (goals().length) {
+    <ul class="goals">
+      @for (item of goals(); track item.goal.id) {
+        <li>
+          <label class="goal" [class.is-done]="item.done" [class.is-extra]="item.goal.extra">
+            <input
+              type="checkbox"
+              class="goal-box"
+              [checked]="item.done"
+              [disabled]="!interactive()"
+              (change)="goalToggled.emit(item.goal.id)"
+            />
+            <span class="goal-body">
+              <span class="goal-title">{{ item.goal.title[locale()] }}</span>
+              @if (item.goal.note; as note) {
+                <span class="goal-note">{{ note[locale()] }}</span>
+              }
+              @if (item.goal.extra) {
+                <span class="goal-extra">{{ 'SCH_EXTRA' | translate }}</span>
+              }
+            </span>
+          </label>
+        </li>
+      }
+    </ul>
+  }
+</div>

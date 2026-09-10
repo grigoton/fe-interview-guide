@@ -5,16 +5,22 @@ import { LocaleService } from '../../../core/services/locale.service';
 import { BlockRowComponent } from '../block-row/block-row';
 import { ClockService } from '../services/clock.service';
 import { ScheduleStateService } from '../services/schedule-state.service';
-import { SPARE_DAY } from '../data';
 import { TimelineEntry } from '../interfaces/schedule.interface';
-import { buildTimeline, dayForDate, formatDuration, minutesOfDay, toClock } from '../schedule.util';
+import {
+  buildTimeline,
+  countTicks,
+  dayForDate,
+  formatDuration,
+  minutesOfDay,
+  toClock,
+} from '../schedule.util';
 
 /**
  * The main screen: what is running now, what comes next, and the day as a
  * list of blocks you tick off.
  *
  * Nothing here is editable — the week is fixed data. The only two switches are
- * the spare day and the ticks themselves, and both are dropped at midnight.
+ * the workload and the ticks themselves, and both are dropped at midnight.
  */
 @Component({
   selector: 'app-today-view',
@@ -31,18 +37,12 @@ export class TodayViewComponent {
   protected readonly state = inject(ScheduleStateService);
   protected readonly locale = this.localeService.currentLocale;
 
-  /** The weekday as the calendar has it, ignoring the spare-day switch. */
-  private readonly calendarDay = computed(() => dayForDate(this.clock.now()));
-
-  /** The grid actually being lived today. */
-  protected readonly day = computed(() =>
-    this.state.spareDay() ? SPARE_DAY : this.calendarDay(),
-  );
+  protected readonly day = computed(() => dayForDate(this.clock.now()));
 
   private readonly nowMin = computed(() => minutesOfDay(this.clock.now()));
 
   protected readonly timeline = computed(() =>
-    buildTimeline(this.day(), this.nowMin(), this.state.done()),
+    buildTimeline(this.day(), this.nowMin(), this.state.done(), this.state.workload()),
   );
 
   protected readonly current = computed<TimelineEntry | null>(
@@ -53,9 +53,8 @@ export class TodayViewComponent {
     () => this.timeline().find((entry) => entry.status === 'upcoming') ?? null,
   );
 
-  protected readonly doneCount = computed(
-    () => this.timeline().filter((entry) => entry.done).length,
-  );
+  /** Ticks and tickables, goals included — the counter under the progress bar. */
+  protected readonly ticks = computed(() => countTicks(this.timeline()));
 
   protected readonly dateLabel = computed(() =>
     new Intl.DateTimeFormat(this.locale() === 'ru' ? 'ru-RU' : 'en-GB', {
@@ -64,7 +63,7 @@ export class TodayViewComponent {
     }).format(this.clock.now()),
   );
 
-  /** `10:50 – 13:50`, or just `с 17:00` when the block has no fixed end. */
+  /** `12:00 – 19:00`, or just `с 16:30` when the block has no fixed end. */
   protected readonly currentRange = computed(() => {
     const entry = this.current();
     if (!entry || entry.startMin === null) return '';
@@ -83,11 +82,12 @@ export class TodayViewComponent {
     return formatDuration(entry.endMin - this.nowMin(), this.locale());
   });
 
-  /** `08:15 · Зал` — the block queued up after the current one. */
+  /** `09:00 · Зал` — the block queued up after the current one. */
   protected readonly nextLabel = computed(() => {
     const entry = this.next();
     if (!entry) return '';
-    const time = entry.startMin !== null ? toClock(entry.startMin) : entry.block.timeLabel?.[this.locale()];
+    const time =
+      entry.startMin !== null ? toClock(entry.startMin) : entry.block.timeLabel?.[this.locale()];
     const title = entry.block.title[this.locale()];
     return time ? `${time} · ${title}` : title;
   });
@@ -95,9 +95,9 @@ export class TodayViewComponent {
   /**
    * How far the day has run, 0–100.
    *
-   * The bar spans from getting up to the start of the last block: that block
-   * is the session (or the free evening) and its end is deliberately unknown,
-   * so there is nothing to stretch the bar to.
+   * The bar spans from the alarm to the start of the last timed block: that
+   * block is the session (or the free evening) and its end is deliberately
+   * unknown, so there is nothing to stretch the bar to.
    */
   protected readonly progress = computed(() => {
     const starts = this.timeline()

@@ -7,7 +7,9 @@
   flex-direction: column;
   height: 100%;
   padding: 1rem 0.9rem 0.9rem;
-  transition: border-color var(--dur) var(--ease), background-color var(--dur) var(--ease);
+  transition:
+    border-color var(--dur) var(--ease),
+    background-color var(--dur) var(--ease);
 }
 
 .day.is-weekend {
@@ -18,10 +20,6 @@
 .day.is-active {
   border-color: color-mix(in srgb, var(--accent) 55%, transparent);
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent);
-}
-
-.day.is-spare {
-  border-color: color-mix(in srgb, var(--sch-session) 45%, transparent);
 }
 
 .day-head {
@@ -52,11 +50,6 @@
 .day.is-weekend .day-tag {
   border-color: color-mix(in srgb, var(--sch-rest) 40%, transparent);
   color: var(--sch-rest);
-}
-
-.day.is-spare .day-tag {
-  border-color: color-mix(in srgb, var(--sch-session) 45%, transparent);
-  color: var(--sch-session);
 }
 
 .day-hint,

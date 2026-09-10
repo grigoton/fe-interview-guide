@@ -1,6 +1,6 @@
 import { LocaleId } from '../../core/services/locale.service';
 import { WEEK } from './data';
-import { BlockStatus, ScheduleDay, TimelineEntry } from './interfaces/schedule.interface';
+import { BlockStatus, ScheduleDay, TimelineEntry, Workload } from './interfaces/schedule.interface';
 
 /** `"HH:MM"` → minutes since local midnight. */
 export function toMinutes(time: string): number {
@@ -45,11 +45,14 @@ export function dayForDate(date: Date): ScheduleDay {
  * finish is unknown and must not be shown or guessed.
  *
  * `nowMin` is `null` for any day that is not today — nothing is highlighted.
+ * `workload` picks which goal list a productive window shows; blocks without
+ * goals ignore it.
  */
 export function buildTimeline(
   day: ScheduleDay,
   nowMin: number | null,
   done: ReadonlySet<string>,
+  workload: Workload,
 ): TimelineEntry[] {
   const starts = day.blocks.map((block) => (block.start ? toMinutes(block.start) : null));
 
@@ -72,8 +75,30 @@ export function buildTimeline(
       }
     }
 
-    return { block, startMin, endMin, status, done: done.has(block.id) };
+    const goals = (block.goals?.[workload] ?? []).map((goal) => ({
+      goal,
+      done: done.has(goal.id),
+    }));
+
+    return { block, startMin, endMin, status, done: done.has(block.id), goals };
   });
+}
+
+/**
+ * How much of a day is ticked off. Goals count alongside the blocks they sit
+ * in — a productive window is not finished just because the row is crossed out.
+ */
+export function countTicks(timeline: readonly TimelineEntry[]): { done: number; total: number } {
+  let done = 0;
+  let total = 0;
+
+  for (const entry of timeline) {
+    total += 1 + entry.goals.length;
+    if (entry.done) done += 1;
+    done += entry.goals.filter((goal) => goal.done).length;
+  }
+
+  return { done, total };
 }
 
 /** Human duration: `1 ч 25 мин` / `1 h 25 min`. */

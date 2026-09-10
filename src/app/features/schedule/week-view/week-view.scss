@@ -60,8 +60,7 @@
   font-weight: 620;
 }
 
-.tally,
-.notes {
+.tally {
   margin-top: 2.2rem;
   padding-top: 1.4rem;
   border-top: 1px solid var(--border);
@@ -85,14 +84,17 @@
   }
 }
 
-.note {
-  max-width: 68ch;
-  margin-bottom: 0.75rem;
-  color: var(--text-2);
-  font-size: 0.88rem;
+/* Workload switch: two chips that read as one control. */
+.seg {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 1rem;
+}
 
-  strong {
-    color: var(--text-1);
-    font-weight: 620;
-  }
+.seg-label {
+  color: var(--text-3);
+  font-size: 0.75rem;
+  margin-inline-end: 0.1rem;
 }

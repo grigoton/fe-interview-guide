@@ -6,6 +6,32 @@
       </p>
       <h1>{{ 'SCH_WEEK_TITLE' | translate }}</h1>
       <p class="lede">{{ 'SCH_WEEK_SUBTITLE' | translate }}</p>
+
+      <!-- Same switch as on the day screen: it changes what the productive
+           windows below are asking for, never when anything happens. -->
+      <div class="seg" role="radiogroup" [attr.aria-label]="'SCH_WORKLOAD' | translate">
+        <span class="seg-label">{{ 'SCH_WORKLOAD' | translate }}</span>
+        <button
+          type="button"
+          role="radio"
+          class="ui-chip"
+          [class.is-active]="state.workload() === 'heavy'"
+          [attr.aria-checked]="state.workload() === 'heavy'"
+          (click)="state.setWorkload('heavy')"
+        >
+          {{ 'SCH_WORK_HEAVY' | translate }}
+        </button>
+        <button
+          type="button"
+          role="radio"
+          class="ui-chip"
+          [class.is-active]="state.workload() === 'light'"
+          [attr.aria-checked]="state.workload() === 'light'"
+          (click)="state.setWorkload('light')"
+        >
+          {{ 'SCH_WORK_LIGHT' | translate }}
+        </button>
+      </div>
     </div>
 
     <a class="ui-btn" routerLink="/schedule">
@@ -18,7 +44,6 @@
     @for (day of week; track day.id) {
       <app-day-card [day]="day" [active]="isActive(day)" />
     }
-    <app-day-card [day]="spareDay" [active]="state.spareDay()" />
   </div>
 
   <p class="foot-hint">{{ 'SCH_LOCKED_HINT' | translate }}</p>
@@ -34,16 +59,5 @@
         </div>
       }
     </div>
-  </section>
-
-  <!-- ── Why the grid looks like this ─────────────────────────────────────── -->
-  <section class="notes">
-    <h2 class="section-title">{{ 'SCH_NOTES' | translate }}</h2>
-    @for (note of notes; track note.lead.en) {
-      <p class="note">
-        <strong>{{ note.lead[locale()] }}</strong>
-        {{ note.text[locale()] }}
-      </p>
-    }
   </section>
 </section>
