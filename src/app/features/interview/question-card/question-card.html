@@ -8,7 +8,7 @@
       [attr.aria-controls]="'answer-' + question().id"
     >
       <span class="q-num">#{{ number() }}</span>
-      <span class="q-text">{{ question().question[locale()] }}</span>
+      <span class="q-text">{{ localized(question().question, locale()) }}</span>
       <span class="q-cat">{{ 'INT_CAT_' + question().category | translate }}</span>
       <span class="lvl" [class]="levelClass()">{{ question().level }}</span>
       <span class="chev" aria-hidden="true">
@@ -74,7 +74,7 @@
       <div
         class="md-content"
         (click)="onAnswerClick($event)"
-        [innerHTML]="question().answer[locale()] | markdown: ('INT_COPY' | translate)"
+        [innerHTML]="localized(question().answer, locale()) | markdown: ('INT_COPY' | translate)"
       ></div>
 
       @if (question().codeSnippet; as snippet) {

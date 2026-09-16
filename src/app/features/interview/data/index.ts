@@ -2,6 +2,10 @@ import { InterviewQuestion } from '../interfaces/question.interface';
 import { INTERVIEW_CATEGORIES } from './categories.data';
 import { JS_TS_QUESTIONS } from './javascript-typescript.questions';
 import { JS_TS_QUESTIONS_MORE } from './javascript-typescript.more.questions';
+import { JS_CORE_JUNIOR_QUESTIONS } from './javascript-core.junior.questions';
+import { JS_CORE_MIDDLE_QUESTIONS } from './javascript-core.middle.questions';
+import { JS_CORE_SENIOR_QUESTIONS } from './javascript-core.senior.questions';
+import { JS_CORE_INTERNALS_QUESTIONS } from './javascript-core.internals.questions';
 import { ANGULAR_CORE_QUESTIONS } from './angular-core.questions';
 import { ANGULAR_CORE_QUESTIONS_MORE } from './angular-core.more.questions';
 import { RXJS_STATE_QUESTIONS } from './rxjs-state.questions';
@@ -24,6 +28,10 @@ export { INTERVIEW_CATEGORIES } from './categories.data';
 const AUTHORED_QUESTIONS: InterviewQuestion[] = [
   ...JS_TS_QUESTIONS,
   ...JS_TS_QUESTIONS_MORE,
+  ...JS_CORE_JUNIOR_QUESTIONS,
+  ...JS_CORE_MIDDLE_QUESTIONS,
+  ...JS_CORE_SENIOR_QUESTIONS,
+  ...JS_CORE_INTERNALS_QUESTIONS,
   ...ANGULAR_CORE_QUESTIONS,
   ...ANGULAR_CORE_QUESTIONS_MORE,
   ...RXJS_STATE_QUESTIONS,

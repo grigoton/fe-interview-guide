@@ -13,6 +13,7 @@ import {
 } from '@angular/core';
 import { TranslateModule } from '@ngx-translate/core';
 import { LocaleService } from '../../../core/services/locale.service';
+import { localized } from '../../../shared/interfaces/localized-text';
 import { MarkdownPipe } from '../../../shared/pipes/markdown.pipe';
 import { ProgressService } from '../services/progress.service';
 import { QUESTION_NUMBERS } from '../data';
@@ -60,6 +61,8 @@ export class QuestionCardComponent {
   readonly advanced = output<ProgressStatus>();
 
   protected readonly locale = this.localeService.currentLocale;
+  /** Template helper: reads a bilingual field, falling back to Russian. */
+  protected readonly localized = localized;
   protected readonly snippetCopied = signal(false);
   protected readonly questionCopied = signal(false);
 
@@ -134,7 +137,7 @@ export class QuestionCardComponent {
   /** Copy the question title in the current locale, without toggling the card. */
   protected copyQuestion(event: Event): void {
     event.stopPropagation();
-    const text = this.question().question[this.locale()];
+    const text = localized(this.question().question, this.locale());
     if (!text) return;
     void this.writeClipboard(text).then((ok) => {
       if (!ok) return;

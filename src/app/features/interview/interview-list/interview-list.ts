@@ -12,6 +12,7 @@ import {
 } from '@angular/core';
 import { TranslateModule } from '@ngx-translate/core';
 import { LocaleService } from '../../../core/services/locale.service';
+import { localized } from '../../../shared/interfaces/localized-text';
 import { ProgressService } from '../services/progress.service';
 import { QuestionCardComponent } from '../question-card/question-card';
 import { ALL_QUESTIONS, INTERVIEW_CATEGORIES, QUESTION_NUMBERS } from '../data';
@@ -139,9 +140,9 @@ export class InterviewListComponent {
       if (level !== 'all' && q.level !== level) return false;
       if (term) {
         const haystack = (
-          q.question[loc] +
+          localized(q.question, loc) +
           ' ' +
-          q.answer[loc] +
+          localized(q.answer, loc) +
           ' ' +
           q.tags.join(' ') +
           ' ' +
