@@ -5117,52 +5117,371 @@ Why this works: \`tick(200)\` fast-forwards past the debounce window and \`flush
       en: 'How do you test HTTP interactions in Angular with HttpTestingController?',
     },
     answer: {
-      ru: `## Коротко
+      ru: `## В чём суть
 
-\`HttpTestingController\` — это **поддельный бэкенд внутри теста**. Реальные запросы никуда не уходят: вы их перехватываете, проверяете, что запрос сформирован правильно, и сами решаете, чем ответить — данными, 500-й или сетевым сбоем.
+\`HttpTestingController\` — это **поддельный бэкенд внутри теста**. Запросы \`HttpClient\` никуда не уходят: они складываются в очередь, тест достаёт их оттуда, проверяет, правильно ли они собраны, и сам решает, чем ответить — данными, ошибкой 500 или обрывом сети.
 
-Аналогия: почтовое отделение в песочнице. Письмо не улетает адресату — оно ложится вам на стол. Вы читаете конверт (URL, метод, заголовки), убеждаетесь, что адрес верный, и сами кладёте в ящик ответ, который хотите. И в конце проверяете, что на столе не осталось неразобранных писем.
+Аналогия: почтовое отделение в песочнице. Письмо не улетает адресату, а ложится вам на стол. Вы читаете конверт (адрес, метод, заголовки), убеждаетесь, что всё верно, и сами кладёте в ящик тот ответ, который нужен для сценария. А в конце смены проверяете, что на столе не осталось неразобранных писем.
 
-## Как это работает по шагам
+**Какую проблему решает.** Ходить в unit-тестах в настоящую сеть плохо: нужен работающий сервер, тесты медленные и падают из-за чужих сбоев, а ошибку 500 или обрыв связи по заказу не воспроизвести. Подменить сервис заглушкой \`of([...])\` тоже мало: тогда не проверяется ни URL, ни query-параметры, ни заголовки, которые добавляют интерсепторы. \`HttpTestingController\` оставляет настоящими \`HttpClient\`, интерсепторы и ваш сервис, а подменяет только последнее звено — отправку по сети. Тест получается быстрым, синхронным и предсказуемым.
 
-1. В \`TestBed\` подключаем \`provideHttpClient()\` и \`provideHttpClientTesting()\` — второй подменяет реальный HTTP-бэкенд.
-2. Достаём контроллер: \`TestBed.inject(HttpTestingController)\`.
-3. Вызываем метод сервиса и **обязательно подписываемся** — без \`subscribe()\` запрос вообще не уйдёт, Observable ленив.
-4. Ловим запрос: \`expectOne(...)\` или \`match(...)\`. Здесь же проверяем URL, метод, заголовки, тело и query-параметры.
-5. Отвечаем: \`req.flush(body)\` для успеха, \`req.flush(null, { status: 500, statusText: 'Server Error' })\` для ошибки, \`req.error(new ProgressEvent('error'))\` для сетевого сбоя.
-6. В \`afterEach\` вызываем \`http.verify()\` — он падает, если остались необработанные или лишние запросы.
-7. **Что здесь стоит тестировать:** корректность сформированного запроса, маппинг ответа в модель, обработку ошибок и retry-логику, поведение при гонках и отменах.
+## Словарик терминов
 
-## Пример
+- **\`HttpClient\`** — сервис Angular для HTTP-запросов; каждый метод (\`get\`, \`post\`…) возвращает Observable.
+- **Ленивость Observable** — поток ничего не делает, пока на него не подписались через \`subscribe()\`. Нет подписки — нет запроса.
+- **\`HttpBackend\` (бэкенд)** — последнее звено цепочки, которое реально отправляет запрос через XHR или \`fetch\`. Именно его подменяют в тесте.
+- **\`provideHttpClient()\` / \`provideHttpClientTesting()\`** — первая функция регистрирует \`HttpClient\` с интерсепторами, вторая подставляет тестовый бэкенд и \`HttpTestingController\`.
+- **\`TestBed\`** — тестовое окружение Angular: собирает DI-контейнер (систему внедрения зависимостей) из провайдеров и создаёт компоненты.
+- **\`HttpTestingController\`** — пульт тестового бэкенда: найти запрос, проверить, что лишних нет.
+- **\`TestRequest\` (\`req\`)** — пойманный запрос: в \`req.request\` лежит \`HttpRequest\`, методы \`flush\`, \`error\`, \`event\` отправляют ответ.
+- **\`expectOne\` / \`expectNone\` / \`match\`** — поиск в очереди: «ровно один», «ни одного», «все подходящие».
+- **\`flush\` и \`verify()\`** — \`flush\` синхронно отдаёт ответ (тело, статус, заголовки); \`verify()\` проверяет, что неразобранных запросов не осталось.
+- **\`urlWithParams\`** — URL вместе с query-строкой (\`/api/users?page=2\`); с ним сравнивается строковый матчер.
+- **\`HttpErrorResponse\` и \`ProgressEvent\`** — ошибка, которую получает подписчик при статусе вне 2xx; \`ProgressEvent\` — событие, которым XHR сообщает об обрыве сети (тогда \`status\` равен 0).
+- **Интерсептор (\`HttpInterceptorFn\`)** — функция-прослойка для каждого запроса: добавить токен, повторить, залогировать.
+- **Фейковые таймеры** — подмена \`setTimeout\`/\`setInterval\`, при которой время двигается по команде: \`vi.useFakeTimers()\` в Vitest, \`fakeAsync\` + \`tick\` в Zone.js-тестах.
+- **Zoneless** — режим Angular без Zone.js; в Angular 21 он по умолчанию, а тесты по умолчанию запускает Vitest.
+
+## Как это работает под капотом
+
+1. \`provideHttpClient()\` регистрирует \`HttpClient\`, цепочку интерсепторов и \`HttpBackend\`, который ходит в сеть через XHR (или \`fetch\` при \`withFetch()\`).
+2. \`provideHttpClientTesting()\` регистрирует токен \`HttpBackend\` заново — уже тестовым бэкендом, и \`HttpTestingController\` указывает на тот же объект. В DI побеждает последний провайдер, поэтому тестовый ставят **после** \`provideHttpClient()\`.
+3. Вы подписываетесь на метод сервиса — \`HttpClient\` собирает \`HttpRequest\`, прогоняет через интерсепторы и отдаёт бэкенду.
+4. Тестовый бэкенд ничего не отправляет: заворачивает запрос в \`TestRequest\` и кладёт в очередь \`open\`. Observable висит без ответа.
+5. \`expectOne\`, \`match\` и \`expectNone\` ищут в очереди и **забирают** найденное. Строка сравнивается с \`urlWithParams\` целиком, объект \`{ method, url }\` — по методу и URL, предикат — по вашему условию.
+6. \`flush()\` синхронно отдаёт подписчику \`HttpResponse\` (2xx) или \`HttpErrorResponse\` (остальное), поэтому проверять результат можно сразу на следующей строке.
+7. \`verify()\` проверяет, что очередь пуста. Всё, что не забрали матчерами, — ошибка. Отменённые запросы (отписка, \`switchMap\`) остаются в очереди с флагом \`cancelled\` и тоже роняют \`verify()\`, если не передать \`{ ignoreCancelled: true }\`.
+
+Упрощённо тестовый бэкенд Angular устроен так (это почти дословно исходник):
 
 \`\`\`ts
-TestBed.configureTestingModule({
-  providers: [provideHttpClient(), provideHttpClientTesting(), UserService],
-});
-const http = TestBed.inject(HttpTestingController);
+class HttpClientTestingBackend {
+  open: TestRequest[] = [];
 
-service.getUsers().subscribe(users => expect(users.length).toBe(2));
+  handle(req: HttpRequest<any>) {
+    return new Observable(observer => {
+      const testReq = new TestRequest(req, observer); // ответит тест через flush
+      this.open.push(testReq);                          // запрос ждёт в очереди
+      return () => { testReq._cancelled = true; };      // отписка = пометка cancelled
+    });
+  }
 
-const req = http.expectOne('/api/users');     // запрос ожидался
-expect(req.request.method).toBe('GET');
-req.flush([{ id: 1 }, { id: 2 }]);            // отдаём ответ
-http.verify();                                 // нет необработанных запросов
+  match(m) {
+    const found = typeof m === 'string'
+      ? this.open.filter(r => r.request.urlWithParams === m) // строка: точное совпадение
+      : this.open.filter(r => m(r.request));                 // предикат (упрощено)
+    this.open = this.open.filter(r => !found.includes(r));  // найденные уходят из очереди
+    return found;
+  }
+}
 \`\`\`
 
-Почему так: \`expectOne\` — это уже ассерт. Он падает, если запроса не было или их оказалось два, поэтому лишний дублирующий вызов API ловится автоматически, без отдельной проверки.
+### Пример 1. Минимальный тест сервиса
 
-## Что сказать на собеседовании
+\`\`\`ts
+@Injectable({ providedIn: 'root' })
+class UserService {
+  private http = inject(HttpClient);
+  getUsers() { return this.http.get<User[]>('/api/users'); }
+}
 
-> \`HttpTestingController\` из \`provideHttpClientTesting()\` подменяет HTTP-бэкенд: реальные запросы не уходят, вы их перехватываете, проверяете и отвечаете вручную — это быстро и детерминированно, без сети. Схема простая: вызвали метод сервиса, обязательно подписались, поймали запрос через \`expectOne\` или \`match\`, проверили URL, метод, заголовки, тело и параметры, отдали ответ через \`flush\`. Ошибки моделируются тем же \`flush\` со статусом 500 или методом \`error\` с ProgressEvent для сетевого сбоя. В \`afterEach\` обязательно \`verify()\` — он падает, если остались необработанные или лишние запросы, и это лучший способ поймать дублирующиеся вызовы API. Тестирую я здесь корректность сформированного запроса, маппинг ответа в модель, обработку ошибок и retry. Главный подвох — ленивость Observable: без \`subscribe()\` запрос не выстрелит и тест упадёт на \`expectOne\`. А для retry с задержкой это комбинируется с \`fakeAsync\` и \`tick\`, чтобы промотать backoff-таймеры.
+describe('UserService', () => {
+  let service: UserService;
+  let http: HttpTestingController;
 
-## Ловушки
+  beforeEach(() => {
+    TestBed.configureTestingModule({
+      providers: [provideHttpClient(), provideHttpClientTesting()], // порядок важен
+    });
+    service = TestBed.inject(UserService);
+    http = TestBed.inject(HttpTestingController);
+  });
 
-- **Забыли \`subscribe()\`** — запроса нет, \`expectOne\` падает с «Expected one matching request, found none». Классика.
-- **Забыли \`verify()\`** — лишние и «висящие» запросы остаются незамеченными, а именно они обычно и есть баг.
-- **Retry с backoff без \`fakeAsync\`:** повторный запрос ждёт таймера, которого в тесте никто не проматывает.
-- **\`expectOne\` по строке URL, когда есть query-параметры** — совпадения не будет; используйте предикат или \`match\`.
-- **Проверять только happy path.** Ошибочные ветки в HTTP-сервисах ломаются чаще успешных.
-- **Спросят следом:** чем это отличается от MSW (MSW перехватывает на уровне сети и работает и в браузере, и в e2e; \`HttpTestingController\` — только внутри Angular DI) и как тестировать интерсепторы (через тот же контроллер, проверяя заголовки на перехваченном запросе).`,
+  afterEach(() => http.verify()); // ни одного неразобранного запроса
+
+  it('загружает пользователей', () => {
+    let result: User[] | undefined;
+    service.getUsers().subscribe(users => (result = users));
+    console.log('до flush:', result);                    // до flush: undefined
+
+    const req = http.expectOne('/api/users');
+    console.log(req.request.method, req.request.url);     // GET /api/users
+    req.flush([{ id: 1, name: 'Аня' }, { id: 2, name: 'Борис' }]);
+
+    console.log('после flush:', result?.length);          // после flush: 2
+    expect(result?.length).toBe(2);
+  });
+});
+\`\`\`
+
+Результат складывается в переменную и проверяется **после** \`flush\`, а не внутри \`subscribe\`. Причина в ловушке, о которой ниже: \`expect\` внутри колбэка, который ни разу не вызвался, ничего не проверяет.
+
+### Пример 2. Без \`subscribe()\` запроса нет
+
+\`\`\`ts
+service.getUsers(); // Observable создан, но никто не подписался
+http.expectOne('/api/users');
+// Error: Expected one matching request for criteria "Match URL: /api/users", found none.
+\`\`\`
+
+\`HttpClient\` возвращает «холодный» Observable: запрос уходит только в момент подписки. Это самая частая причина красного теста у новичков.
+
+### \`expectOne\`, \`expectNone\` и \`match\`: как искать запросы
+
+\`expectOne\` — уже ассерт: он падает, если подходящих запросов ноль **или больше одного**. Поэтому случайный дублирующий вызов API ловится без отдельной проверки:
+
+\`\`\`ts
+service.getUsers().subscribe();
+service.getUsers().subscribe();
+http.expectOne('/api/users');
+// Error: Expected one matching request for criteria "Match URL: /api/users", found 2 requests.
+\`\`\`
+
+Главная ловушка — query-параметры. Строка сравнивается с \`urlWithParams\` целиком:
+
+\`\`\`ts
+search(q: string, page: number) {
+  return this.http.get<User[]>('/api/users', { params: new HttpParams().set('q', q).set('page', page) });
+}
+
+service.search('ann', 2).subscribe();
+http.expectOne('/api/users');
+// Error: ... found none. Requests received are: GET /api/users?q=ann&page=2.
+
+const req = http.expectOne(r => r.url === '/api/users');       // предикат: URL без параметров
+console.log(req.request.urlWithParams);                         // /api/users?q=ann&page=2
+console.log(req.request.params.get('page'));                    // 2
+// http.expectOne('/api/users?q=ann&page=2') тоже сработал бы — но порядок параметров должен совпасть
+\`\`\`
+
+Объект \`{ method, url }\` полезен для POST/PUT. У пойманного запроса в \`req.request\` есть всё, что собрал сервис: \`method\`, \`params\`, \`headers\`, \`body\`, \`responseType\`, \`withCredentials\`:
+
+\`\`\`ts
+service.create('Вера').subscribe(); // post('/api/users', { name }, { headers: { 'X-Request-Id': 'abc' } })
+const req = http.expectOne({ method: 'post', url: '/api/users' }); // метод в любом регистре
+console.log(JSON.stringify(req.request.body), req.request.headers.get('X-Request-Id'));
+// {"name":"Вера"} abc
+req.flush({ id: 3, name: 'Вера' }, { status: 201, statusText: 'Created' });
+\`\`\`
+
+\`expectNone(m)\` проверяет, что запроса **не было** (например, сработал кэш). Второй аргумент любого матчера — описание для текста ошибки. \`match(m)\` возвращает массив всех подходящих запросов без ассерта — для пагинации и параллельной загрузки виджетов:
+
+\`\`\`ts
+service.getUsers().subscribe();
+service.search('a', 1).subscribe();
+service.search('b', 2).subscribe();
+const reqs = http.match(r => r.url === '/api/users');
+console.log(reqs.map(r => r.request.urlWithParams));
+// [ '/api/users', '/api/users?q=a&page=1', '/api/users?q=b&page=2' ]
+reqs.forEach(r => r.flush([]));
+\`\`\`
+
+### \`flush\`, \`error\`, \`event\`: как отвечать
+
+\`\`\`ts
+// 1) Ошибка сервера: статус не 2xx → подписчик получает HttpErrorResponse
+service.getUsers().subscribe({ error: (e: HttpErrorResponse) => console.log(e.status, e.statusText, e.error) });
+http.expectOne('/api/users').flush({ message: 'boom' }, { status: 500, statusText: 'Server Error' });
+// 500 Server Error { message: 'boom' }
+
+// 2) Сеть упала: status 0, в e.error лежит сам ProgressEvent
+service.getUsers().subscribe({ error: (e: HttpErrorResponse) => console.log(e.status, e.error.type) });
+http.expectOne('/api/users').error(new ProgressEvent('error'));
+// 0 error
+
+// 3) flush(null, { status: 404 }) без statusText — ошибка самого теста:
+//    Error: statusText is required when setting a custom status.
+// 4) flush(null) без опций — это 204 No Content: next(null), затем complete
+\`\`\`
+
+Метод \`event()\` отправляет промежуточные события. Например, для \`post\` с \`{ reportProgress: true, observe: 'events' }\` вызов \`req.event({ type: HttpEventType.UploadProgress, loaded: 50, total: 100 })\` даст подписчику событие прогресса «50%», а следующий \`flush\` — финальный \`HttpResponse\`.
+
+### \`verify()\`: что он ловит и чего не ловит
+
+\`verify()\` падает, если в очереди остался запрос, который **никто не нашёл** матчером:
+
+\`\`\`ts
+service.getUsers().subscribe();
+service.search('x', 1).subscribe();
+http.expectOne('/api/users').flush([]);
+http.verify();
+// Error: Expected no open requests, found 1: GET /api/users?q=x&page=1
+\`\`\`
+
+Но запрос, который нашли и **не ответили**, \`verify()\` уже не видит: \`expectOne\` забрал его из очереди. Тест ниже зелёный, хотя ассерт внутри \`subscribe\` так и не выполнился:
+
+\`\`\`ts
+let calls = 0;
+service.getUsers().subscribe(users => { calls++; expect(users.length).toBe(999); });
+http.expectOne('/api/users'); // забыли flush
+http.verify();                // проходит
+console.log(calls);           // 0 — тест зелёный, хотя ничего не проверил
+\`\`\`
+
+Поэтому результат проверяют после \`flush\` — через переменную или через \`firstValueFrom\` (функция RxJS, превращающая первое значение Observable в Promise), а в Vitest/Jest можно добавить \`expect.assertions(n)\`.
+
+### Тест маппинга и обработки ошибок
+
+Самое ценное в HTTP-сервисе — не сам \`get\`, а то, что вокруг: превращение DTO (сырого ответа сервера) в модель и запасной вариант при ошибке.
+
+\`\`\`ts
+getUsers() {
+  return this.http.get<UserDto[]>('/api/users').pipe(
+    map(list => list.map(d => ({ id: d.id, fullName: \`\${d.first_name} \${d.last_name}\` }))),
+    catchError(() => of([] as User[])),
+  );
+}
+
+it('маппит DTO в модель', async () => {
+  const promise = firstValueFrom(service.getUsers()); // подписка происходит сразу
+  http.expectOne('/api/users').flush([{ id: 1, first_name: 'Анна', last_name: 'Иванова' }]);
+  console.log(await promise); // [ { id: 1, fullName: 'Анна Иванова' } ]
+});
+
+it('при 500 отдаёт пустой список', async () => {
+  const promise = firstValueFrom(service.getUsers());
+  http.expectOne('/api/users').flush(null, { status: 500, statusText: 'Server Error' });
+  console.log(await promise); // []
+});
+\`\`\`
+
+### Тестирование интерсептора
+
+Интерсептор тестируется через тот же контроллер: подключаем его в \`provideHttpClient(withInterceptors([...]))\` и смотрим на пойманный запрос — он уже прошёл через всю цепочку.
+
+\`\`\`ts
+const authInterceptor: HttpInterceptorFn = (req, next) =>
+  next(req.clone({ setHeaders: { Authorization: 'Bearer test-token' } }));
+
+TestBed.configureTestingModule({
+  providers: [provideHttpClient(withInterceptors([authInterceptor])), provideHttpClientTesting()],
+});
+const client = TestBed.inject(HttpClient);
+const http = TestBed.inject(HttpTestingController);
+
+client.get('/api/me').subscribe();
+const req = http.expectOne('/api/me');
+console.log(req.request.headers.get('Authorization')); // Bearer test-token
+req.flush({});
+\`\`\`
+
+Классовые интерсепторы (\`HttpInterceptor\` через токен \`HTTP_INTERCEPTORS\`) подключаются так же, только в \`provideHttpClient(withInterceptorsFromDi())\`.
+
+### Retry с задержкой: фейковые таймеры
+
+Если сервис повторяет запрос через \`retry({ delay })\`, второй запрос появится только после таймера. В синхронном тесте время стоит, и \`expectOne\` после первой ошибки скажет \`found none\`. В Vitest (раннер по умолчанию в Angular 21) время двигают фейковыми таймерами:
+
+\`\`\`ts
+it('повторяет с экспоненциальной задержкой', () => {
+  vi.useFakeTimers();
+  client.get<number[]>('/api/report').pipe(
+    retry({ count: 2, delay: (_err, attempt) => timer(1000 * 2 ** (attempt - 1)) }), // 1 с, затем 2 с
+  ).subscribe(v => console.log('данные', v));
+
+  http.expectOne('/api/report').flush('down', { status: 503, statusText: 'Unavailable' });
+  http.expectNone('/api/report');           // сразу после ошибки повтора ещё нет
+  vi.advanceTimersByTime(1000);
+  http.expectOne('/api/report').flush('down', { status: 503, statusText: 'Unavailable' });
+  vi.advanceTimersByTime(1999);
+  http.expectNone('/api/report');           // через 1999 мс второго повтора ещё нет
+  vi.advanceTimersByTime(1);
+  http.expectOne('/api/report').flush([1, 2, 3]); // данные [ 1, 2, 3 ]
+  vi.useRealTimers();
+});
+\`\`\`
+
+В проектах на Zone.js (Karma/Jasmine, Jest) то же самое пишут через \`fakeAsync\` и \`tick\`: \`it('...', fakeAsync(() => { ...; tick(1000); ...; tick(2000); ... }))\`. Под Vitest без Zone.js \`fakeAsync\` не работает: в моём прогоне он падал с \`Expected to be running in 'ProxyZone', but it was not found.\`
+
+### Отмена запросов: \`switchMap\` и \`cancelled\`
+
+\`\`\`ts
+query$.pipe(switchMap(q => client.get<string[]>('/api/search', { params: { q } })))
+  .subscribe(r => console.log('результат', r));
+query$.next('an');
+query$.next('ang'); // switchMap отписывается от первого запроса
+
+const [first, second] = http.match(r => r.url === '/api/search');
+console.log(first.cancelled, second.cancelled); // true false
+// first.flush(['old']) бросил бы Error: Cannot flush a cancelled request.
+second.flush(['angular']); // результат [ 'angular' ]
+\`\`\`
+
+Так проверяют автокомплит: устаревший ответ не должен попасть на экран. Если отменённый запрос не забрать матчером, \`verify()\` упадёт с \`Expected no open requests, found 1: ...\`. Чтобы игнорировать такие запросы, есть \`http.verify({ ignoreCancelled: true })\`.
+
+### Компонент + HTTP
+
+Компонент можно проверить вместе с реальным сервисом: он запрашивает данные, тест отвечает и смотрит на DOM. Пусть \`UsersComponent\` в \`ngOnInit\` вызывает \`getUsers()\`, показывает «Загрузка…», а потом список \`<li>\`:
+
+\`\`\`ts
+const fixture = TestBed.createComponent(UsersComponent);
+fixture.detectChanges();                              // ngOnInit → запрос ушёл
+console.log(fixture.nativeElement.textContent.trim()); // Загрузка…
+http.expectOne('/api/users').flush([{ id: 1, name: 'Аня' }, { id: 2, name: 'Борис' }]);
+await fixture.whenStable();                            // дождаться перерисовки
+console.log(fixture.nativeElement.querySelectorAll('li').length); // 2
+\`\`\`
+
+Деталь: \`provideHttpClientTesting()\` выключает учёт запросов в «стабильности» приложения. Поэтому \`whenStable()\` не ждёт вечно запрос, на который тест ещё не ответил.
+
+### \`httpResource\` (экспериментальный API)
+
+\`httpResource\` — сигнальная обёртка над \`HttpClient\` (в Angular 21.1 ещё \`@experimental\`). Запрос уходит из эффекта, поэтому эффекты в тесте надо «прокрутить»:
+
+\`\`\`ts
+const id = signal(1);
+const user = TestBed.runInInjectionContext(() => httpResource<{ name: string }>(() => \`/api/users/\${id()}\`));
+
+TestBed.tick();                                       // запустить эффекты → запрос ушёл
+http.expectOne('/api/users/1').flush({ name: 'Аня' });
+await TestBed.inject(ApplicationRef).whenStable();    // ответ попадает в сигналы асинхронно
+console.log(user.status(), user.value());             // resolved { name: 'Аня' }
+\`\`\`
+
+Сразу после \`flush\` в моём прогоне статус был ещё \`loading\`: результат доезжает в сигналы через микрозадачу.
+
+### Где это применяется на практике
+
+- **Слой API в enterprise-приложении**: проверка, что сервис шлёт правильные URL, фильтры и пагинацию в query-параметрах, тело POST/PUT и заголовки.
+- **Интерсепторы**: токен авторизации, \`X-Request-Id\`, refresh токена при 401, глобальная обработка ошибок, ретраи только для GET и только для 5xx/0.
+- **Таблицы и гриды с серверной пагинацией**: при смене страницы или сортировки ушёл ровно один запрос с правильными параметрами, а старый отменён.
+- **Автокомплит и поиск**: отмена устаревших запросов через \`switchMap\`, отсутствие запроса для пустой строки (\`expectNone\`).
+- **Кэширующие сервисы**: второй вызов не идёт в сеть — \`expectNone\` после первого \`flush\`.
+- **Загрузка файлов**: прогресс через \`event()\`, ошибки размера через \`flush\` со статусом 413.
+
+## Важные нюансы и подводные камни
+
+- **Забыли \`subscribe()\`.** Запроса нет, \`expectOne\` падает с \`found none\`. Классика.
+- **Забыли \`verify()\`.** Лишние и «висящие» запросы остаются незамеченными, а обычно они и есть баг. \`verify()\` в \`afterEach\` — стандарт.
+- **\`verify()\` не видит найденный, но не отвеченный запрос.** Проверяйте результат после \`flush\`, а не внутри \`subscribe\`.
+- **Строковый матчер сравнивает \`urlWithParams\` целиком** — и в \`expectOne\`, и в \`match\`. Для запросов с параметрами берите предикат \`r => r.url === '...'\`.
+- **Порядок провайдеров.** Если \`provideHttpClientTesting()\` стоит раньше \`provideHttpClient()\`, настоящий бэкенд перезапишет тестовый: в моём прогоне на jsdom запрос ушёл в реальный XHR, \`expectOne\` ничего не нашёл, подписчик получил ошибку со статусом 0. С \`withFetch()\` при правильном порядке тестовый бэкенд тоже побеждает.
+- **\`HttpClientTestingModule\` устарел.** В старом коде встречается \`imports: [HttpClientTestingModule]\`; в Angular 21 он \`@deprecated\`, вместо него \`provideHttpClientTesting()\`.
+- **Retry с задержкой без фейковых таймеров** — повтор ждёт таймера, который в синхронном тесте никто не проматывает.
+- **Мелкие ошибки самого теста.** Свой статус без \`statusText\` бросает \`statusText is required when setting a custom status.\`, а \`flush\` после отписки — \`Cannot flush a cancelled request.\`
+- **Проверяют только happy path.** Ошибочные ветки HTTP-сервисов (500, 401, status 0, пустой ответ 204) ломаются чаще успешных.
+- **Не путайте уровни.** Для теста компонента часто проще подменить сервис (\`{ provide: UserService, useValue: { getUsers: () => of([...]) } }\`). \`HttpTestingController\` нужен там, где проверяется сам HTTP-слой: сервис, интерсептор, их связка с компонентом.
+- **MSW — другой уровень.** Mock Service Worker перехватывает запросы на уровне сети: в браузере через Service Worker, в Node — подменяя модули запросов. Он не зависит от Angular DI и работает и в unit-, и в e2e-тестах, и в dev-режиме. \`HttpTestingController\` живёт только внутри Angular DI, зато даёт синхронный пошаговый контроль над каждым запросом.
+
+**Плюсы:** без сети и сервера, быстро и детерминированно; проверяются настоящие \`HttpClient\`, интерсепторы и сервис; легко воспроизвести 500, обрыв связи, прогресс и отмену; \`expectOne\` и \`verify\` сами ловят лишние и дублирующиеся запросы.
+**Минусы:** работает только для запросов через \`HttpClient\` (голый \`fetch\` или сторонний SDK не поймает); тест знает URL и формат запросов, поэтому меняется вместе с API; ловушки со строковым матчингом, порядком провайдеров и таймерами; не заменяет контрактных и e2e-тестов с реальным бэкендом.
+
+## Как это спрашивают на собеседовании
+
+**Главный вывод:** \`provideHttpClientTesting()\` подменяет только сетевое звено \`HttpClient\`. Тест подписывается, ловит запрос через \`expectOne\`/\`match\`, проверяет его и отвечает через \`flush\`/\`error\`, а \`verify()\` в \`afterEach\` гарантирует, что лишних запросов не было.
+
+Типичные формулировки: «Как протестировать сервис, который ходит в API?», «Как проверить интерсептор?», «Как сымитировать ошибку сервера или обрыв сети?», «Зачем нужен \`verify()\`?».
+
+Что могут спросить следом:
+
+- *Почему \`expectOne\` не нашёл запрос?* — Нет подписки, строка без query-параметров или тестовый провайдер стоит раньше \`provideHttpClient()\`.
+- *Как протестировать retry с backoff?* — Фейковые таймеры: \`vi.useFakeTimers()\` и \`vi.advanceTimersByTime()\` в Vitest или \`fakeAsync\` и \`tick\` с Zone.js; между шагами \`expectNone\`/\`expectOne\`.
+- *Чем это отличается от MSW?* — MSW перехватывает на уровне сети и не зависит от фреймворка; \`HttpTestingController\` работает внутри Angular DI и даёт синхронный контроль.
+- *Как сымитировать сетевую ошибку?* — \`req.error(new ProgressEvent('error'))\`: подписчик получит \`HttpErrorResponse\` со \`status\` 0.
+- *Что делать с отменёнными запросами?* — Забрать их матчером и проверить \`cancelled\`, либо \`verify({ ignoreCancelled: true })\`.
+
+### Ответ на 1 минуту
+
+> \`HttpTestingController\` из \`provideHttpClientTesting()\` подменяет только последнее звено \`HttpClient\` — бэкенд, который ходит в сеть. Запросы складываются в очередь, а сервис и интерсепторы остаются настоящими, поэтому тест быстрый и детерминированный. Схема такая: вызываю метод сервиса и обязательно подписываюсь, ловлю запрос через \`expectOne\` или \`match\`, проверяю метод, URL, параметры, заголовки и тело, отвечаю через \`flush\`. Ошибки моделирую \`flush\` со статусом 500 или \`error\` с \`ProgressEvent\` для обрыва сети. В \`afterEach\` вызываю \`verify()\`, он падает на неразобранных запросах. Нюансы: строковый матчер сравнивает URL вместе с query-параметрами, поэтому для запросов с параметрами беру предикат. \`verify()\` не видит найденный, но не отвеченный запрос, поэтому результат проверяю после \`flush\`. Тестовый провайдер ставлю после \`provideHttpClient()\`, а ретраи с задержкой проматываю фейковыми таймерами.`,
       en: `## In short
 
 \`HttpTestingController\` is a **fake backend living inside your test**. Real requests never leave: you intercept them, assert the request was built correctly, and decide what to answer with — data, a 500, or a network failure.
@@ -5221,47 +5540,309 @@ Why this works: \`expectOne\` is itself an assertion. It fails if there was no r
       en: 'What are Angular CDK component harnesses and why are they better than direct DOM access in tests?',
     },
     answer: {
-      ru: `## Коротко
+      ru: `## В чём суть
 
-Component Harness — это **пульт управления компонентом для тестов**. Вместо того чтобы лезть в чужую вёрстку через \`querySelector('.mat-button-wrapper span')\`, тест говорит \`button.click()\` и \`select.open()\`. Внутреннее устройство DOM спрятано за стабильным API.
+Component harness — это **пульт управления компонентом для тестов**. Это класс из \`@angular/cdk/testing\`, который знает внутреннее устройство компонента и даёт тесту простые асинхронные методы: \`button.click()\`, \`select.clickOptions({ text: 'Выполнен' })\`, \`table.getCellTextByIndex()\`. Тест больше не лезет в чужую вёрстку через \`querySelector\`, а говорит на языке поведения.
 
-Аналогия: пульт от телевизора. Вам не нужно знать, какая микросхема отвечает за громкость, — вы жмёте кнопку «+». Производитель может полностью переделать начинку, но кнопка останется на месте. Прямой доступ к DOM — это лезть паяльником внутрь корпуса: работает ровно до первого обновления модели.
+Аналогия: пульт от телевизора. Вам не нужно знать, какая микросхема отвечает за громкость, — вы жмёте «+». Производитель может полностью переделать начинку, а кнопка останется на месте. Прямой доступ к DOM — это лезть паяльником внутрь корпуса: работает ровно до следующей модели.
 
-## Как это работает по шагам
+**Какую проблему решает.** Тест через DOM привязан к разметке, которой он не владеет. Классический пример — Angular Material. До v15 текст кнопки лежал во внутреннем элементе с классом \`mat-button-wrapper\`, и многие тесты писали \`querySelector('.mat-button-wrapper')\`. В v15 Material перешёл на компоненты MDC: обёртка стала \`.mdc-button__label\`, и все такие тесты сломались, хотя приложение работало. Вторая боль — служебный код: после каждого клика нужно вызвать \`detectChanges()\`, дождаться \`whenStable()\`, а выпадающие списки и диалоги вообще рендерятся вне компонента. Harness прячет селекторы, стабилизацию и поиск оверлеев за стабильным API. При обновлении библиотеки меняется harness, а не ваши тесты.
 
-1. Из фикстуры получаем загрузчик: \`TestbedHarnessEnvironment.loader(fixture)\`.
-2. Просим у него нужный harness: \`loader.getHarness(MatButtonHarness.with({ text: 'Save' }))\`. Фильтры (\`with\`) позволяют выбрать конкретный экземпляр.
-3. Взаимодействуем **в терминах поведения**: \`click()\`, \`getText()\`, \`open()\`, \`clickOptions()\` — никаких CSS-селекторов.
-4. Все методы **асинхронные и возвращают промисы**: harness сам дожидается стабилизации, поэтому не нужны ручные \`detectChanges\` вперемешку с \`whenStable\`.
-5. Material поставляет готовые harness для своих компонентов (\`MatButtonHarness\`, \`MatSelectHarness\` и т.д.). При обновлении версии Material меняется harness — **а не ваши тесты**.
-6. Для своих компонентов пишем свой: наследуемся от \`ComponentHarness\`, объявляем \`hostSelector\` и локаторы через \`this.locatorFor(...)\`.
-7. **Бонус — переносимость:** один и тот же harness работает и в unit-тестах через TestBed, и в e2e-окружении через другой \`HarnessEnvironment\`.
+## Словарик терминов
 
-## Пример
+- **Component harness (\`ComponentHarness\`)** — базовый класс CDK для тестового «пульта» компонента. Свой harness наследуется от него.
+- **\`hostSelector\`** — статическое поле harness: CSS-селектор хост-элемента компонента (обычно совпадает с \`selector\` компонента, например \`'app-counter'\`).
+- **\`ComponentFixture\` (фикстура)** — обёртка \`TestBed\` над созданным в тесте компонентом: даёт DOM (\`nativeElement\`), экземпляр и \`detectChanges()\`.
+- **\`DebugElement\`** — обёртка Angular над DOM-узлом для тестов (\`fixture.debugElement.query(By.css(...))\`) — «прямой доступ», с которым сравнивают harness.
+- **Стабилизация** — «дать Angular доделать работу»: запустить проверку изменений (\`fixture.detectChanges()\`) и дождаться асинхронных задач (\`await fixture.whenStable()\`).
+- **\`HarnessEnvironment\`** — адаптер к среде запуска. \`TestbedHarnessEnvironment\` работает с \`TestBed\` и jsdom/браузером, \`SeleniumWebDriverHarnessEnvironment\` — с настоящим браузером через WebDriver.
+- **\`HarnessLoader\` (загрузчик)** — объект, который ищет harness внутри корневого элемента: \`getHarness\`, \`getAllHarnesses\`, \`hasHarness\`.
+- **\`TestElement\`** — обёртка над DOM-элементом с асинхронными методами \`click\`, \`sendKeys\`, \`text\`, \`getProperty\`. Через неё harness трогает DOM.
+- **Локатор (\`locatorFor\`, \`locatorForOptional\`, \`locatorForAll\`)** — функция внутри harness, которая при каждом вызове заново находит элемент или вложенный harness.
+- **\`HarnessPredicate\` и \`with()\`** — фильтр для выбора конкретного экземпляра: \`MatButtonHarness.with({ text: 'Save' })\`.
+- **Оверлей (overlay)** — слой CDK, куда рендерятся всплывающие элементы: опции \`mat-select\`, диалоги, меню. Он живёт в \`document.body\`, вне фикстуры.
+- **Page Object** — паттерн из e2e-тестов: класс, скрывающий селекторы страницы за методами. Harness — тот же принцип на уровне одного компонента.
+- **\`parallel\` / \`manualChangeDetection\`** — утилиты CDK: выполнить несколько чтений с одной стабилизацией и временно выключить автостабилизацию.
+
+## Как это работает под капотом
+
+1. \`TestbedHarnessEnvironment.loader(fixture)\` создаёт загрузчик, корень которого — \`fixture.nativeElement\`. Ищет он только **внутри** этого корня.
+2. \`loader.getHarness(Query)\` сначала стабилизирует фикстуру, затем ищет все элементы по \`hostSelector\` (плюс \`selector\`/\`ancestor\` из фильтра).
+3. На каждый найденный элемент создаётся экземпляр harness со своей «фабрикой локаторов» с корнем в этом элементе. Поэтому \`locatorFor('button')\` внутри harness ищет кнопку только внутри своего компонента.
+4. Если передан \`with({...})\`, для каждого кандидата выполняются асинхронные проверки (например, \`getText() === 'Save'\`). Возвращается первый подходящий, иначе — ошибка с описанием фильтра.
+5. Методы harness вызывают локаторы **лениво**: каждый вызов заново ищет элемент в текущем DOM и заворачивает его в \`TestElement\`.
+6. \`TestElement\` в действиях (\`click\`, \`sendKeys\`, \`setInputValue\`) диспатчит настоящие DOM-события (для клика: \`pointerdown\`, \`mousedown\`, \`pointerup\`, \`mouseup\`, \`click\`; по задизейбленной кнопке \`click\` не отправляется, как и в браузере), а затем стабилизирует фикстуру. Перед чтениями (\`text\`, \`getProperty\`) он тоже стабилизирует. Поэтому ручные \`detectChanges()\` не нужны.
+7. Стабилизация в \`TestBed\` — это \`fixture.detectChanges()\` + \`await fixture.whenStable()\`, а внутри \`fakeAsync\` — \`flush()\`.
+8. Всё API асинхронное не случайно. В e2e-окружении каждое обращение к DOM — сетевой вызов к браузеру через WebDriver. Promise-интерфейс позволяет одному и тому же harness работать и там, и в unit-тесте.
+
+Упрощённо ядро выглядит так:
+
+\`\`\`ts
+class TestbedHarnessEnvironment {
+  async getHarness(type, filter?) {
+    await this.forceStabilize();                                        // detectChanges + whenStable
+    const hosts = this.root.querySelectorAll(type.hostSelector);
+    for (const el of hosts) {
+      const harness = new type(this.createEnvironment(el));             // корень локаторов = el
+      if (!filter || await filter.evaluate(harness)) return harness;    // async-предикаты with()
+    }
+    throw Error(\`Failed to find element matching ... \${type.hostSelector}\`);
+  }
+}
+
+class UnitTestElement {
+  async click() {
+    dispatchMouseSequence(this.element);   // pointerdown → mousedown → pointerup → mouseup → click
+    await this.stabilize();                // после действия
+  }
+  async text() {
+    await this.stabilize();                // перед чтением
+    return this.element.textContent.trim();
+  }
+}
+\`\`\`
+
+### Пример 1. Хрупкий тест через DOM против теста через harness
+
+\`\`\`ts
+// Шаблон: <button matButton="filled" [disabled]="!status" (click)="save()">Save</button>
+
+// ❌ Через DOM: знает внутреннюю разметку Material
+const label = fixture.nativeElement.querySelector('button .mat-button-wrapper'); // так было до Material 15
+// В Material 21.1 внутри кнопки уже другое:
+// <span class="mdc-button__label">Save</span> ← обёртки .mat-button-wrapper нет, label === null
+fixture.nativeElement.querySelector('button').click();
+fixture.detectChanges();      // не забыть, иначе DOM не обновится
+await fixture.whenStable();   // и дождаться асинхронщины
+
+// ✅ Через harness: знает только «кнопка с текстом Save»
+const loader = TestbedHarnessEnvironment.loader(fixture);
+const save = await loader.getHarness(MatButtonHarness.with({ text: 'Save' }));
+console.log(await save.isDisabled(), await save.getAppearance()); // true filled
+await save.click();           // стабилизация внутри
+\`\`\`
+
+Второй тест переживёт смену разметки: при обновлении Material команда библиотеки обновит \`MatButtonHarness\`, а вызов \`getHarness(...)\` останется тем же.
+
+### \`TestbedHarnessEnvironment\`: три способа получить harness
+
+- **\`loader(fixture)\`** — загрузчик с корнем в фикстуре. Основной вариант: ищет компоненты внутри тестируемого шаблона.
+- **\`harnessForFixture(fixture, Harness)\`** — harness для **самого** корневого компонента фикстуры. Хост, который создаёт \`TestBed\`, — это элемент \`div\`, а не \`app-counter\`, поэтому \`loader\` его не найдёт.
+- **\`documentRootLoader(fixture)\`** — загрузчик с корнем в \`document.body\`. Нужен для оверлеев: диалогов, меню, снекбаров.
+
+\`\`\`ts
+const fixture = TestBed.createComponent(CounterComponent);
+const loader = TestbedHarnessEnvironment.loader(fixture);
+console.log(await loader.hasHarness(CounterHarness));   // false — корень фикстуры не ищется
+const counter = await TestbedHarnessEnvironment.harnessForFixture(fixture, CounterHarness);
+await counter.increment();
+console.log(await counter.getValue());                  // 1
+
+// Другой тест: страница заказов, кнопка «Удалить» открывает MatDialog в оверлее
+const page = TestBed.createComponent(OrdersPageComponent);
+const pageLoader = TestbedHarnessEnvironment.loader(page);
+await (await pageLoader.getHarness(MatButtonHarness.with({ text: 'Удалить' }))).click();
+console.log(await pageLoader.hasHarness(MatDialogHarness)); // false — диалог вне фикстуры
+const dialog = await TestbedHarnessEnvironment.documentRootLoader(page).getHarness(MatDialogHarness);
+console.log(await dialog.getTitleText());                   // Удалить заказ?
+\`\`\`
+
+\`MatDialogHarness\` наследуется от \`ContentContainerComponentHarness\`, поэтому внутри диалога можно искать другие harness: \`await dialog.getHarness(MatButtonHarness.with({ text: 'Да' }))\`.
+
+### \`HarnessLoader\`: поиск одного, всех, по индексу
+
+Пусть на странице бронирования три счётчика: «Взрослые», «Дети», «Младенцы».
 
 \`\`\`ts
 const loader = TestbedHarnessEnvironment.loader(fixture);
-const button = await loader.getHarness(MatButtonHarness.with({ text: 'Save' }));
-await button.click();
-const select = await loader.getHarness(MatSelectHarness);
-await select.open();
-await select.clickOptions({ text: 'Option 2' });
+console.log((await loader.getAllHarnesses(CounterHarness)).length);         // 3
+console.log(await loader.countHarnesses(CounterHarness));                   // 3
+console.log(await (await loader.getHarness(CounterHarness)).getLabel());    // Взрослые — первый по DOM
+console.log(await (await loader.getHarnessAtIndex(CounterHarness, 2)).getLabel()); // Младенцы
+console.log(await loader.getHarnessOrNull(CounterHarness.with({ label: 'Пенсионеры' }))); // null
+await loader.getHarness(CounterHarness.with({ label: 'Пенсионеры' }));
+// Error: Failed to find element matching one of the following queries:
+// (CounterHarness with host element matching selector: "app-counter" satisfying the constraints: label = "Пенсионеры")
 \`\`\`
 
-Почему так: тест читается как сценарий пользователя, а не как обход DOM-дерева. И если Material в следующей версии переименует внутренний класс, ваш тест этого даже не заметит.
+\`getHarness\` молча берёт **первый** подходящий экземпляр. Если одинаковых виджетов несколько, используйте фильтр, \`getHarnessAtIndex\` или \`getAllHarnesses\`.
 
-## Что сказать на собеседовании
+### Фильтры: \`with()\` и \`HarnessPredicate\`
 
-> Component Harness — это абстракция CDK, которая даёт тестам стабильное API для взаимодействия с компонентом и прячет его внутреннюю DOM-структуру. Проблема, которую она решает: прямой доступ к DOM хрупок — \`querySelector\` по внутреннему классу Material ломается при любом обновлении вёрстки библиотеки. Harness инкапсулирует селекторы, поэтому при обновлении версии меняется harness, а не ваши тесты. Плюсы: устойчивость к изменениям вёрстки; переносимость — один harness работает и в TestBed, и в e2e через другой HarnessEnvironment; читаемость, потому что API выражено в терминах поведения — click, getText — а не CSS; и асинхронность по умолчанию, все методы возвращают промисы и сами дожидаются стабилизации. Для своих компонентов наследуемся от ComponentHarness, объявляем hostSelector и локаторы через locatorFor. Когда не нужно: для простого компонента без сложного DOM прямой DebugElement дешевле; harness окупается на сложных интерактивных виджетах и в дизайн-системах, где важна стабильность контракта тестов.
+У каждого готового harness есть статический \`with(options)\`, который возвращает \`HarnessPredicate\`. Строка в фильтре сравнивается **точно**, регулярное выражение — частично. Базовые фильтры \`selector\` и \`ancestor\` есть у всех.
 
-## Ловушки
+\`\`\`ts
+// В шаблоне: <button mat-button>Save</button> <button mat-button>Save draft</button>
+//            <div class="toolbar"><button mat-button>Save</button></div>
+await loader.countHarnesses(MatButtonHarness.with({ text: 'Save' }));                      // 2
+await loader.countHarnesses(MatButtonHarness.with({ text: /Save/ }));                      // 3
+await loader.countHarnesses(MatButtonHarness.with({ text: 'Save', ancestor: '.toolbar' })); // 1
+\`\`\`
 
-- **Забытый \`await\`.** Все методы harness асинхронные; без \`await\` тест проверит состояние до клика и будет падать через раз.
-- **Смешивание harness с ручным \`detectChanges()\`** приводит к гонкам: harness уже стабилизирует фикстуру сам.
-- **Harness там, где хватает \`DebugElement\`.** Для \`<div>\` с текстом это лишний слой абстракции.
-- **Свой harness без \`hostSelector\`** — загрузчик просто не найдёт компонент.
-- **Забывают про \`getAllHarnesses\`**, когда на странице несколько одинаковых виджетов, и получают «первый попавшийся».
-- **Спросят следом:** чем harness отличается от Page Object в e2e (тот же принцип, но harness привязан к компоненту и переносим между окружениями) и как выбрать конкретный экземпляр среди многих (фильтры через \`with\`).`,
+### Готовые harness Angular Material
+
+Material поставляет harness почти для каждого компонента в отдельных entry point вида \`@angular/material/<компонент>/testing\`: \`MatButtonHarness\`, \`MatSelectHarness\`, \`MatInputHarness\`, \`MatTableHarness\`, \`MatDialogHarness\` и другие. Самый показательный — select: его опции рендерятся в оверлее.
+
+\`\`\`ts
+const select = await loader.getHarness(MatSelectHarness);
+await select.open();
+console.log(fixture.nativeElement.querySelectorAll('mat-option').length); // 0 — опций нет в фикстуре
+console.log(document.querySelectorAll('mat-option').length);              // 2 — они в оверлее
+const options = await select.getOptions();
+console.log(await Promise.all(options.map(o => o.getText())));            // [ 'Новый', 'Выполнен' ]
+await select.clickOptions({ text: 'Выполнен' });
+console.log(await select.getValueText(), fixture.componentInstance.status); // Выполнен done
+\`\`\`
+
+\`MatSelectHarness\` сам знает, где искать панель, и сам открывает её внутри \`clickOptions\`, так что отдельный \`open()\` перед ним не обязателен. Для таблиц и форм то же самое:
+
+\`\`\`ts
+const table = await loader.getHarness(MatTableHarness);
+const search = await loader.getHarness(MatInputHarness);
+await search.setValue('ан');                    // фильтр по имени
+console.log(await table.getCellTextByIndex());  // [ [ '1', 'Аня' ], [ '3', 'Анатолий' ] ]
+\`\`\`
+
+### Свой harness: \`ComponentHarness\`, \`hostSelector\`, \`locatorFor\`
+
+\`\`\`ts
+@Component({
+  selector: 'app-counter',
+  template: \`
+    <span class="label">{{ label() }}</span>
+    <button class="dec" (click)="change(-1)" [disabled]="value() <= 0">−</button>
+    <span class="value">{{ value() }}</span>
+    <button class="inc" (click)="change(1)">+</button>\`,
+})
+export class CounterComponent { /* label = input(), value = signal(0), change(d) */ }
+
+export interface CounterHarnessFilters extends BaseHarnessFilters { label?: string | RegExp; }
+
+export class CounterHarness extends ComponentHarness {
+  static hostSelector = 'app-counter';
+
+  static with(options: CounterHarnessFilters = {}) {
+    return new HarnessPredicate(CounterHarness, options)
+      .addOption('label', options.label, (h, label) => HarnessPredicate.stringMatches(h.getLabel(), label));
+  }
+
+  private incButton = this.locatorFor('button.inc');   // храним функцию-локатор, а не элемент
+  private decButton = this.locatorFor('button.dec');
+  private valueEl = this.locatorFor('.value');
+  private labelEl = this.locatorFor('.label');
+
+  async increment(times = 1) { for (let i = 0; i < times; i++) await (await this.incButton()).click(); }
+  async getValue() { return Number(await (await this.valueEl()).text()); }
+  async getLabel() { return (await this.labelEl()).text(); }
+  async canDecrement() { return !(await (await this.decButton()).getProperty<boolean>('disabled')); }
+}
+
+const kids = await loader.getHarness(CounterHarness.with({ label: 'Дети' }));
+console.log(await kids.getValue(), await kids.canDecrement()); // 0 false
+await kids.increment(2);
+console.log(await kids.getValue(), await kids.canDecrement()); // 2 true
+\`\`\`
+
+Публичные методы описывают поведение («увеличить», «можно ли уменьшить»), а все селекторы спрятаны в \`private\`-локаторах. Поменяли вёрстку счётчика — правите один harness, а не сотню тестов. \`locatorForOptional\` возвращает \`null\` вместо ошибки (удобно для \`@if\`), \`locatorForAll\` — массив.
+
+### \`TestElement\`: что умеет элемент внутри harness
+
+Через \`TestElement\` harness кликает (\`click\`, \`rightClick\`), печатает (\`sendKeys\` с \`TestKey.ENTER\`, \`TestKey.ESCAPE\` и другими клавишами, \`clear\`, \`setInputValue\`), читает (\`text\`, \`getAttribute\`, \`getProperty\`, \`hasClass\`, \`isFocused\`) и шлёт произвольные события (\`dispatchEvent\`).
+
+\`\`\`ts
+class SearchHarness extends ComponentHarness {
+  static hostSelector = 'app-search';
+  private input = this.locatorFor('input.q');
+  private clearBtn = this.locatorForOptional('button.clear'); // кнопка есть только при непустом поле
+
+  async search(text: string) {
+    const input = await this.input();
+    await input.clear();
+    await input.sendKeys(text, TestKey.ENTER); // keydown/keypress/input/keyup на каждый символ
+  }
+  async hasClear() { return (await this.clearBtn()) !== null; }
+}
+
+console.log(await search.hasClear()); // false
+await search.search('angular');       // компонент обработал (keydown.enter)
+console.log(await search.hasClear()); // true
+\`\`\`
+
+### Автостабилизация, \`parallel\` и \`manualChangeDetection\`
+
+В zoneless-режиме (по умолчанию в Angular 21) изменение сигнала не перерисовывает DOM мгновенно. Тест через DOM это ловит, harness — нет:
+
+\`\`\`ts
+counterInstance.value.set(5); // экземпляр CounterComponent, полученный через fixture.debugElement
+console.log(fixture.nativeElement.querySelector('.value').textContent); // 0 — DOM ещё старый
+console.log(await counter.getValue());                                  // 5 — harness сначала стабилизировал
+\`\`\`
+
+Каждое действие и чтение harness — отдельная стабилизация. Для пачки чтений есть \`parallel\`: одна стабилизация до и одна после.
+
+\`\`\`ts
+const counters = await loader.getAllHarnesses(CounterHarness); // «Дети» уже увеличены до 2
+const [adults, children] = await parallel(() => [counters[0].getValue(), counters[1].getValue()]); // 0 2
+\`\`\`
+
+\`manualChangeDetection(async () => {...})\` временно выключает автостабилизацию, если нужно проверить промежуточное состояние:
+
+\`\`\`ts
+await manualChangeDetection(async () => {
+  await counter.increment();
+  console.log(fixture.nativeElement.querySelector('.value').textContent); // 0
+  fixture.detectChanges();
+  console.log(fixture.nativeElement.querySelector('.value').textContent); // 1
+});
+\`\`\`
+
+### Переносимость между окружениями
+
+Harness ничего не знает о \`TestBed\`: он работает через абстрактные \`LocatorFactory\` и \`TestElement\`. CDK поставляет два окружения: \`TestbedHarnessEnvironment\` для unit-тестов и \`SeleniumWebDriverHarnessEnvironment\` (\`@angular/cdk/testing/selenium-webdriver\`) для e2e в настоящем браузере. Protractor-вариант остался в прошлом вместе с Protractor; для Cypress и Playwright есть сторонние адаптеры. Один \`CounterHarness\` можно использовать и в компонентном тесте, и в сквозном сценарии.
+
+### Где это применяется на практике
+
+- **Дизайн-система и библиотека компонентов**: harness поставляется рядом с компонентом в secondary entry point \`my-lib/testing\`, как делает Material. Команды-потребители пишут тесты против стабильного контракта.
+- **Корпоративные формы** с \`mat-select\`, \`mat-autocomplete\`, datepicker и диалогами подтверждения: оверлеи без harness — главный источник хрупких тестов.
+- **Таблицы и гриды**: \`MatTableHarness.getCellTextByIndex()\` или свой \`GridHarness\` с методами \`sortBy('name')\`, \`getCell(row, col)\`, \`goToPage(3)\` вместо обхода сотен \`td\`.
+- **Обновления мажорных версий** Material/CDK: тесты на harness переживают смену разметки, правится только harness.
+- **Общие сценарии unit и e2e**: один harness-слой для \`TestBed\` и для WebDriver.
+
+## Важные нюансы и подводные камни
+
+- **Забытый \`await\`.** Все методы асинхронные. Без \`await\` тест читает состояние до клика: в моём прогоне сразу после \`counter.increment()\` без \`await\` DOM показывал \`0\`, а если тест успевал закончиться раньше клика, Vitest ловил необработанную ошибку \`Harness is attempting to use a fixture that has already been destroyed.\`
+- **Ручной \`detectChanges()\` рядом с harness — лишний, но не опасный.** Harness и так стабилизирует фикстуру перед чтением и после действия; проверка с \`detectChanges()\` до и после клика дала тот же результат. Настоящая гонка — забытый \`await\` или чтение DOM напрямую между асинхронными шагами.
+- **Корень фикстуры не находится через \`loader\`.** Для тестируемого компонента-хоста нужен \`harnessForFixture\`, иначе \`getHarness\` упадёт с \`Failed to find element\`.
+- **Оверлеи вне фикстуры.** Диалоги, меню и снекбары ищутся через \`documentRootLoader\`. Готовые Material harness для select и autocomplete делают это сами.
+- **\`getHarness\` берёт первый экземпляр.** На странице с несколькими одинаковыми виджетами без фильтра вы тихо тестируете «первый попавшийся». Используйте \`with\`, \`getHarnessAtIndex\` или \`getAllHarnesses\`.
+- **Строковый фильтр точный.** \`with({ text: 'Save' })\` не найдёт «Save draft». Для частичного совпадения нужен RegExp.
+- **Свой harness без \`hostSelector\`.** TypeScript не даст передать такой класс в \`getHarness\` (\`Property 'hostSelector' is missing\`); если обойти типы, поиск упадёт с ошибкой селектора. Чаще встречается другой баг: \`hostSelector\` не совпадает с реальным селектором компонента, и тогда загрузчик ничего не находит.
+- **Не храните \`TestElement\` между действиями.** Если элемент перерисовался (\`@if\`, \`@for\`), сохранённая ссылка указывает на отсоединённый узел: в моём прогоне клик по нему прошёл без ошибки и без эффекта. Храните функцию-локатор и вызывайте её заново.
+- **Анимации.** В jsdom с включёнными анимациями \`MatDialog\` после клика «Да» в моём прогоне так и не закрылся. Отключайте их провайдером \`{ provide: MATERIAL_ANIMATIONS, useValue: { animationsDisabled: true } }\` (или старым \`provideNoopAnimations()\`, он помечен устаревшим с 20.2).
+- **Harness там, где хватает \`DebugElement\`.** Для простого компонента из пары элементов с текстом это лишний слой; harness окупается на интерактивных виджетах и в переиспользуемых библиотеках.
+- **Скорость.** Каждое действие и чтение — стабилизация и новый поиск в DOM. Сотни последовательных \`await\` в большом гриде заметно медленнее; группируйте чтения через \`parallel\`.
+- **API harness тоже версионируется.** При переходе Material на MDC старые harness жили отдельно в \`legacy-*\` entry point, а потом были удалены. Но правки сосредоточены в одном месте, а не размазаны по тестам.
+
+**Плюсы:** тесты не зависят от внутренней разметки и переживают обновления библиотек; читаются как сценарий пользователя; автоматическая стабилизация вместо \`detectChanges\`/\`whenStable\`; оверлеи, фильтры и поиск экземпляров из коробки; один harness для unit и e2e; готовые harness для всего Angular Material.
+**Минусы:** ещё один слой кода, который надо писать и поддерживать для своих компонентов; всё асинхронное, и забытый \`await\` даёт моргающие тесты; медленнее прямого DOM на больших объёмах; для простых компонентов избыточен.
+
+## Как это спрашивают на собеседовании
+
+**Главный вывод:** harness — это Page Object для отдельного компонента. Он прячет селекторы и стабилизацию за асинхронным API в терминах поведения, поэтому при смене вёрстки или версии библиотеки меняется harness, а не тесты.
+
+Типичные формулировки: «Что такое component harness?», «Почему тесты на Material ломаются после обновления?», «Как протестировать \`mat-select\` или диалог?», «Как написать harness для своего компонента?».
+
+Что могут спросить следом:
+
+- *Чем harness отличается от Page Object?* — Принцип тот же, но harness привязан к одному компоненту, вкладывается в другие harness и переносим между \`TestBed\` и WebDriver.
+- *Как выбрать нужный экземпляр среди многих?* — Фильтры \`with({...})\`, \`ancestor\`/\`selector\`, \`getHarnessAtIndex\`, \`getAllHarnesses\`.
+- *Почему все методы асинхронные?* — Чтобы тот же код работал в e2e, где каждое обращение к DOM — вызов к браузеру; заодно внутри каждого метода есть стабилизация.
+- *Как найти диалог или опции select?* — Они в оверлее вне фикстуры: \`documentRootLoader\`; Material select ищет опции сам.
+- *Как написать свой harness?* — Наследовать \`ComponentHarness\`, задать \`static hostSelector\`, спрятать селекторы в \`locatorFor\`, наружу дать методы поведения и при необходимости \`static with()\` на \`HarnessPredicate\`.
+
+### Ответ на 1 минуту
+
+> Component harness — это класс из CDK, который даёт тестам стабильное API для работы с компонентом и прячет его внутренний DOM. Проблема, которую он решает: тест через \`querySelector\` по внутренним классам Material ломается при любой смене вёрстки — так было при переходе Material на MDC. Работает так: \`TestbedHarnessEnvironment.loader(fixture)\` находит компонент по \`hostSelector\`, фильтр \`with\` выбирает нужный экземпляр, а методы вроде \`click\` или \`getText\` сами вызывают \`detectChanges\` и ждут \`whenStable\`. Material поставляет готовые harness, для своих компонентов я наследую \`ComponentHarness\` и прячу селекторы в \`locatorFor\`. Плюсы: устойчивость к вёрстке, читаемость и переносимость между \`TestBed\` и WebDriver. Нюансы: всё асинхронное, без \`await\` тесты моргают; оверлеи ищутся через \`documentRootLoader\`; для простого компонента хватит \`DebugElement\`.`,
       en: `## In short
 
 A component harness is a **remote control for a component in tests**. Instead of reaching into someone else's markup with \`querySelector('.mat-button-wrapper span')\`, the test says \`button.click()\` and \`select.open()\`. The internal DOM is hidden behind a stable API.
@@ -6681,50 +7262,394 @@ Why this works: each widget is its own unit of loading, failure and refresh. A c
       en: 'What frontend caching strategies exist and how do you choose the right one?',
     },
     answer: {
-      ru: `## Коротко
+      ru: `## В чём суть
 
-Кэш во фронтенде — это **пять этажей**, и на каждом свои правила: HTTP-кэш браузера, Service Worker, кэш в памяти приложения, CDN/edge и постоянное хранилище. Выбор стратегии сводится к одному вопросу: **насколько страшно показать пользователю устаревшие данные**.
+Кэш — это сохранённая копия ответа, которую можно отдать, не идя далеко за оригиналом. Во фронтенде кэш многоэтажный: HTTP-кэш браузера, Service Worker, кэш в памяти приложения, CDN и постоянное хранилище вроде IndexedDB. На каждом этаже свои правила, а выбор стратегии сводится к одному вопросу: **насколько плохо, если пользователь увидит устаревшие данные**.
 
-Аналогия: холодильник, морозилка и магазин. Крупу можно держать годами — это ассеты с хэшем в имени, кладём на самую дальнюю полку и не трогаем. Молоко берём свежее, но вчерашнее выпить можно — это stale-while-revalidate. А курс валют или баланс счёта из холодильника доставать нельзя вообще: только из магазина, каждый раз.
+Аналогия: холодильник, морозилка и магазин. Крупу можно держать годами — это файлы сборки с хэшем в имени: положили на дальнюю полку и не трогаем. Молоко хочется свежее, но вчерашнее тоже можно выпить, пока сходите за новым, — это stale-while-revalidate. А курс валют или баланс счёта из холодильника брать нельзя вообще: только из магазина и каждый раз заново.
 
-## Пять уровней и три стратегии
+**Какую проблему решает.** Без кэша каждый переход по SPA заново качает мегабайты JavaScript и повторяет одни и те же запросы к API: страница открывается медленно, сервер платит за лишний трафик, а без сети приложение не открывается совсем. Кэш решает скорость, нагрузку и офлайн, но приносит свою, главную проблему — **инвалидацию**: как вовремя выбросить копию, которая перестала быть правдой. Закэшировать неправильно — значит месяцами показывать пользователям старую версию приложения или чужие данные.
 
-1. **HTTP-кэш браузера** — заголовки \`Cache-Control\`, \`ETag\`, \`Last-Modified\`. Ассеты с хэшем в имени: \`max-age=31536000, immutable\`. HTML — \`no-cache\`, иначе пользователи застрянут на старой версии приложения.
-2. **Service Worker (PWA)** — программируемый кэш: даёт офлайн и полный контроль над тем, что и когда отдавать.
-3. **Кэш в памяти приложения** — data-layer вроде TanStack Query или свой: держит ответы API в памяти SPA, дедуплицирует одинаковые запросы.
-4. **CDN/edge** — копия ближе к пользователю, снимает нагрузку и задержку.
-5. **Постоянное хранилище** — localStorage/IndexedDB для офлайна и быстрого холодного старта.
+## Словарик терминов
 
-**Три стратегии Service Worker:**
-- **Cache-first** — для статики и неизменного: максимально быстро, но рискуете отдать устаревшее.
-- **Network-first** — когда важна свежесть, с фолбэком на кэш при отсутствии сети.
-- **Stale-while-revalidate** — отдать кэш мгновенно и обновить в фоне. Лучший баланс UX для данных, которые часто меняются, но не критичны по свежести.
+- **Кэш-попадание и промах (cache hit / cache miss)** — нужная копия в кэше нашлась / не нашлась, и пришлось идти в сеть.
+- **Свежесть (freshness) и TTL (time to live)** — сколько времени копию можно отдавать без вопросов к серверу. После этого копия становится «несвежей» (stale).
+- **\`Cache-Control\`** — HTTP-заголовок ответа, в котором сервер говорит всем кэшам, можно ли хранить ответ, кому и сколько.
+- **\`max-age\` и \`s-maxage\`** — срок свежести в секундах: первый для всех кэшей, второй только для общих (CDN, прокси) и для них важнее \`max-age\`.
+- **\`no-cache\`** — хранить можно, но перед каждым использованием обязательно спросить сервер, актуальна ли копия.
+- **\`no-store\`** — не сохранять ответ вообще нигде.
+- **\`private\` / \`public\`** — ответ только для кэша браузера конкретного пользователя / можно хранить и в общих кэшах.
+- **\`immutable\`** — обещание «этот файл по этому адресу никогда не изменится, не перепроверяйте его».
+- **Валидатор (\`ETag\`, \`Last-Modified\`)** — «отпечаток» версии ответа: строка-идентификатор или дата последнего изменения.
+- **Условный запрос (\`If-None-Match\`, \`If-Modified-Since\`)** — запрос «вот моя версия, пришли тело, только если она устарела».
+- **\`304 Not Modified\`** — ответ сервера «ваша копия актуальна» без тела: экономит трафик, но не сам запрос.
+- **Ревалидация (revalidation)** — проверка несвежей копии у сервера через условный запрос.
+- **\`Vary\`** — заголовок, который говорит кэшу, от каких заголовков запроса зависит ответ (язык, сжатие), чтобы не перепутать варианты.
+- **Cache busting (хэш в имени файла)** — при каждой сборке меняется имя файла (\`main-HN4KZGPA.js\`), поэтому новый код получает новый адрес, а старый кэш просто перестаёт использоваться.
+- **CDN и edge** — сеть серверов по всему миру, которая держит копии ваших файлов близко к пользователю.
+- **Service Worker** — скрипт, который браузер запускает отдельно от страницы; он перехватывает её сетевые запросы и может отвечать сам, из своего кэша.
+- **Cache Storage (\`caches\`)** — хранилище пар «запрос → ответ», которым программно управляет Service Worker или страница.
+- **App shell** — минимальный каркас приложения (HTML, JS, CSS), который нужен, чтобы оно запустилось даже без сети.
+- **Cache-first / network-first / stale-while-revalidate (SWR)** — три базовые стратегии: сначала кэш / сначала сеть / сразу кэш, а в фоне обновить.
+- **Инвалидация** — удаление или пометка копии как устаревшей, когда исходные данные изменились.
+- **Дедупликация запросов** — несколько одновременных потребителей одних данных получают ответ одного общего запроса.
+- **IndexedDB** — встроенная в браузер асинхронная база данных для больших объёмов структурированных данных.
+- **Квота (quota)** — лимит места, который браузер выделяет сайту под хранилища; размер зависит от браузера и свободного диска.
+- **\`BroadcastChannel\`** — API для обмена сообщениями между вкладками и окнами одного сайта.
 
-**Инвалидация — самая сложная часть.** Хэш в имени файла решает вопрос для ассетов: новый билд — новый URL, старого кэша просто не существует. В data-layer работает инвалидация по ключам и тегам: после мутации сбрасываем связанные запросы. TTL и SWR ограничивают возраст без ручной инвалидации.
+## Как это работает под капотом
 
-## Пример
+Проследим путь одного \`GET\`-запроса сверху вниз, через все этажи:
 
+1. Сначала запрос видит **кэш в памяти приложения** (сервис, TanStack Query, NgRx-стор). Если там есть свежие данные, HTTP-запроса не будет вовсе — это самый быстрый уровень, но он живёт только до перезагрузки вкладки.
+2. Если запрос всё-таки ушёл через \`fetch\`/\`XMLHttpRequest\`, его перехватывает **Service Worker** (если он зарегистрирован и страница в его зоне). SW сам решает, ответить из Cache Storage, пойти в сеть или сделать и то и другое.
+3. Запрос, который SW пропустил в сеть, попадает в **HTTP-кэш браузера**. Браузер ищет копию по URL (и по заголовкам из \`Vary\`). Копия свежая (её возраст меньше \`max-age\`) — отдаётся мгновенно, без сети.
+4. Копия несвежая, но у неё есть валидатор — браузер шлёт **условный запрос** с \`If-None-Match: "<etag>"\`. Сервер отвечает \`304\` без тела, и браузер берёт тело из своей копии.
+5. Запрос, ушедший в сеть, по пути проходит **CDN**: если у CDN есть свежая копия (по \`s-maxage\` или \`max-age\`), до вашего сервера он не дойдёт.
+6. Отдельно от этой цепочки живёт **постоянное хранилище** (IndexedDB, localStorage): его читает уже ваш код, например, чтобы при холодном старте сразу нарисовать последние данные, пока идёт свежий запрос.
+
+Ключевое правило: **у каждого этажа своя инвалидация**. Хэш в имени файла инвалидирует HTTP-кэш и CDN автоматически, Service Worker обновляется по своему жизненному циклу, кэш в памяти вы сбрасываете сами после мутаций. Отдельное следствие: если ответ пришёл совсем без \`Cache-Control\` и \`Expires\`, но с \`Last-Modified\`, браузер вправе закэшировать его **эвристически** — обычно на долю времени, прошедшего с момента изменения. Отсутствие заголовков не означает отсутствие кэша.
+
+### Пример 1. HTTP-кэш: правильные заголовки для SPA
+
+Базовая схема доставки Angular-приложения:
+
+\`\`\`text
+index.html             →  Cache-Control: no-cache
+main-HN4KZGPA.js       →  Cache-Control: public, max-age=31536000, immutable
+styles-5INURTSO.css    →  Cache-Control: public, max-age=31536000, immutable
+ngsw-worker.js         →  Cache-Control: no-cache
+GET /api/countries     →  Cache-Control: private, max-age=3600
+GET /api/profile       →  Cache-Control: private, no-cache   + ETag
+GET /api/balance       →  Cache-Control: no-store
 \`\`\`
-main.a3f9c2.js   →  Cache-Control: max-age=31536000, immutable
-index.html       →  Cache-Control: no-cache
-GET /api/profile →  SWR: отдать кэш, обновить в фоне
-GET /api/balance →  no-store: только сеть
+
+Почему так. Файлы с хэшем в имени кэшируются на год (31 536 000 секунд): их содержимое по этому адресу никогда не изменится, а новая сборка получит новые имена. \`index.html\` получает \`no-cache\`: его браузер перепроверяет каждый раз, и именно он приносит ссылки на новые хэшированные файлы. Если закэшировать HTML на сутки, пользователь сутки будет сидеть на старой версии, а после деплоя, удалившего старые чанки, ленивые модули начнут падать с ошибкой загрузки. Справочник почти не меняется — час свежести; профиль меняется — проверяем каждый раз через \`ETag\`; баланс — не храним нигде.
+
+### Пример 2. Ревалидация: \`ETag\` и ответ 304
+
+Посмотрим, как работает условный запрос, на маленьком Node-сервере:
+
+\`\`\`js
+import http from 'node:http';
+import crypto from 'node:crypto';
+
+const body = JSON.stringify({ name: 'Ada', role: 'admin' });
+const etag = '"' + crypto.createHash('sha1').update(body).digest('hex').slice(0, 8) + '"';
+
+const server = http.createServer((req, res) => {
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('ETag', etag);
+  if (req.headers['if-none-match'] === etag) {
+    res.statusCode = 304;                // версия совпала — тело не отправляем
+    return res.end();
+  }
+  res.setHeader('Content-Type', 'application/json');
+  res.end(body);
+});
+
+server.listen(0, async () => {
+  const url = \`http://localhost:\${server.address().port}/api/profile\`;
+  const r1 = await fetch(url);
+  console.log(r1.status, r1.headers.get('etag'), (await r1.text()).length + ' байт');
+  const r2 = await fetch(url, { headers: { 'If-None-Match': r1.headers.get('etag') } });
+  console.log(r2.status, (await r2.text()).length + ' байт');
+  server.close();
+});
+// 200 "6becbeec" 29 байт
+// 304 0 байт
 \`\`\`
 
-Почему так: \`index.html\` с \`no-cache\` проверяется каждый раз и приносит ссылки на новые хэшированные файлы. Если закэшировать HTML агрессивно, пользователь навсегда останется на старой версии — это самая дорогая ошибка кэширования SPA.
+В браузере \`If-None-Match\` руками писать не нужно: он сам запоминает \`ETag\` и сам подставляет его при ревалидации, а вашему коду отдаёт обычный \`200\` с телом из кэша. Важно понимать цену: 304 экономит **трафик**, но не **задержку** — запрос к серверу всё равно происходит. Поэтому для файлов, которые точно не изменятся, лучше длинный \`max-age\`, чем \`no-cache\` + \`ETag\`.
 
-## Что сказать на собеседовании
+### \`no-cache\`, \`no-store\` и \`max-age=0\` — в чём разница
 
-> Кэш во фронтенде многоуровневый: HTTP-кэш браузера через \`Cache-Control\` и \`ETag\`, Service Worker для офлайна и программируемых стратегий, in-memory кэш в data-layer, CDN на edge и постоянное хранилище в IndexedDB. Базовое правило доставки: ассеты с хэшем в имени кэшируются агрессивно как immutable на год, а HTML — с \`no-cache\`, иначе пользователи застрянут на старой версии. Стратегий три: cache-first для неизменного — быстро, но рискует устареванием; network-first там, где важна свежесть, с фолбэком на кэш; и stale-while-revalidate — отдать кэш мгновенно и обновить в фоне, это лучший баланс для часто меняющихся, но не критичных данных. Выбор делаю по цене устаревших данных: неизменные ассеты — immutable; часто читаемое и редко меняемое — SWR плюс in-memory; критично свежее вроде баланса или торгов — network-first или no-store, возможно real-time. Самое сложное — инвалидация: хэш в имени файла для ассетов, инвалидация по ключам и тегам после мутаций в data-layer, TTL там, где ручная инвалидация невозможна. Стратегию инвалидации я всегда продумываю до внедрения кэша, а не после.
+Самый частый вопрос на собеседовании, потому что названия обманчивы:
 
-## Ловушки
+- \`no-cache\` — **хранить можно**, но перед каждым использованием копию надо перепроверить у сервера. Подходит для HTML и данных с \`ETag\`.
+- \`no-store\` — **хранить нельзя** нигде: ни в браузере, ни в CDN. Для персональных и чувствительных ответов: баланс, медицинские данные, одноразовые ссылки.
+- \`max-age=0\` — копия сразу несвежая. На практике ведёт себя похоже на \`no-cache\`, но формально кэш может отдать несвежую копию, если сервер недоступен; \`max-age=0, must-revalidate\` это запрещает. Поэтому для «перепроверяй всегда» пишут явное \`no-cache\`.
 
-- **Закэшированный \`index.html\`.** Пользователь месяцами сидит на старой версии, а вы получаете «у меня баг не воспроизводится».
-- **Кэш без плана инвалидации.** Добавить кэш — полдня, вычистить протухшие данные у тысяч пользователей — недели.
-- **Рассинхрон между вкладками:** в одной вкладке данные обновились, в другой нет. Лечится \`BroadcastChannel\` или событиями storage.
-- **Разрастание IndexedDB/localStorage** без очистки — рано или поздно упираетесь в квоту и получаете странные ошибки записи.
-- **Service Worker, который не обновляется:** старый SW продолжает отдавать старый app shell; нужен внятный флоу \`skipWaiting\` и уведомление пользователя.
-- **Спросят следом:** чем \`no-cache\` отличается от \`no-store\` (первый разрешает хранить, но требует ревалидации, второй запрещает хранить вообще) и как работает \`ETag\` с 304 (сервер подтверждает актуальность без передачи тела).`,
+### \`immutable\` и хэш в имени файла
+
+В production-конфигурации, которую генерирует Angular CLI, включено \`outputHashing: "all"\`: в имена файлов добавляется хэш их содержимого, поэтому \`main-HN4KZGPA.js\` и \`main-7QX3LM2P.js\` — это разные URL. Изменили одну строку — изменился хэш, изменился адрес, и браузер честно скачает новый файл, хотя старый лежит в кэше «на год». Директива \`immutable\` дополнительно просит браузер не перепроверять такой файл даже при ручной перезагрузке страницы. Поддержка \`immutable\` различается между браузерами, поэтому главную работу всё равно делает хэш в имени, а не эта директива.
+
+### \`stale-while-revalidate\` в заголовке
+
+SWR бывает не только стратегией Service Worker, но и директивой HTTP:
+
+\`\`\`text
+Cache-Control: max-age=60, stale-while-revalidate=600
+\`\`\`
+
+Первые 60 секунд копия свежая и отдаётся сразу. Следующие 600 секунд браузер (или CDN) **отдаёт несвежую копию мгновенно и одновременно в фоне её обновляет**. Позже — обычная ревалидация. Поддержка директивы различается: Chromium и Firefox её понимают, для Safari проверяйте актуальную таблицу совместимости. CDN тоже понимают её по-разному, поэтому смотрите документацию своего провайдера.
+
+### \`Vary\` и CDN
+
+CDN — это общий кэш для всех пользователей, и тут важны две вещи. Первая: \`s-maxage\` задаёт срок только для CDN, оставляя браузеру свой \`max-age\`. Вторая: заголовок \`Vary\` говорит, по каким заголовкам запроса различать копии.
+
+\`\`\`text
+Cache-Control: public, max-age=60, s-maxage=600
+Vary: Accept-Encoding, Accept-Language
+\`\`\`
+
+Если забыть \`Vary: Accept-Language\`, CDN отдаст русскую версию англоязычным пользователям. Обратная крайность — \`Vary: Cookie\` или \`Vary: Authorization\`: у каждого пользователя свои cookie, поэтому каждая копия уникальна и CDN фактически перестаёт кэшировать. Персональные ответы помечают \`private\`, чтобы общий кэш их не сохранял вовсе. Сбросить копии в CDN досрочно можно через purge (принудительную очистку по URL или тегу) — это делается в CI после деплоя.
+
+### Service Worker и три стратегии
+
+Service Worker перехватывает запросы в обработчике \`fetch\` и отвечает через \`event.respondWith()\`. Сами стратегии — это несколько строк кода над Cache Storage:
+
+\`\`\`js
+// sw.js
+async function cacheFirst(request) {
+  const cache = await caches.open('static-v1');
+  const cached = await cache.match(request);
+  if (cached) return cached;                     // есть в кэше — сеть не трогаем
+  const response = await fetch(request);
+  await cache.put(request, response.clone());    // clone: тело ответа читается только один раз
+  return response;
+}
+
+async function networkFirst(request) {
+  const cache = await caches.open('api-v1');
+  try {
+    const response = await fetch(request);
+    await cache.put(request, response.clone());
+    return response;
+  } catch {
+    const cached = await cache.match(request);   // сети нет — отдаём то, что было
+    if (cached) return cached;
+    throw new Error('offline and no cache');
+  }
+}
+
+function staleWhileRevalidate(event) {
+  return caches.open('api-v1').then(async (cache) => {
+    const cached = await cache.match(event.request);
+    const refresh = fetch(event.request)
+      .then(async (response) => { await cache.put(event.request, response.clone()); return response; })
+      .catch(() => cached);                      // сеть упала — не страшно, есть копия
+    event.waitUntil(refresh);                    // не даём браузеру усыпить SW до конца обновления
+    return cached ?? refresh;                    // есть копия — отвечаем ею сразу
+  });
+}
+
+// маршрутизация: какой запрос какой стратегией обслуживать
+self.addEventListener('fetch', (event) => {
+  const url = new URL(event.request.url);
+  if (event.request.method !== 'GET') return;            // мутации не кэшируем
+  if (url.pathname.startsWith('/api/rates')) event.respondWith(networkFirst(event.request));
+  else if (url.pathname.startsWith('/api/')) event.respondWith(staleWhileRevalidate(event));
+  else event.respondWith(cacheFirst(event.request));
+});
+\`\`\`
+
+Если прогнать эти функции на фальшивой сети, где сервер переключается с версии \`v1\` на \`v2\`, получится:
+
+\`\`\`text
+cache-first #1: v1          ← первый раз из сети, ответ положили в кэш
+cache-first #2: v1          ← на сервере уже v2, но кэш отдаёт v1 и в сеть не ходит
+network-first online: v1    ← сеть доступна — свежий ответ
+network-first offline: v1   ← сети нет — последний сохранённый ответ
+swr #1: v1                  ← кэша нет — ждём сеть
+swr #2: v1                  ← на сервере v2: отдали старое мгновенно, в фоне обновили
+swr #3: v2                  ← теперь в кэше уже новая версия
+\`\`\`
+
+Отсюда правило выбора: **cache-first** — для того, что не меняется (шрифты, иконки, файлы с хэшем); **network-first** — когда важна свежесть, а кэш нужен только как запасной вариант без сети; **SWR** — когда данные меняются, но отстать на один показ не страшно (аватары, справочники, лента).
+
+### Angular Service Worker: \`ngsw-config.json\`
+
+В Angular эти стратегии не пишут руками: \`@angular/service-worker\` генерирует SW по конфигу.
+
+\`\`\`json
+{
+  "index": "/index.html",
+  "assetGroups": [
+    { "name": "app", "installMode": "prefetch", "updateMode": "prefetch",
+      "resources": { "files": ["/index.html", "/*.css", "/*.js"] } },
+    { "name": "assets", "installMode": "lazy", "updateMode": "prefetch",
+      "resources": { "files": ["/assets/**", "/*.(png|svg|woff2)"] } }
+  ],
+  "dataGroups": [
+    { "name": "dictionaries", "urls": ["/api/countries", "/api/currencies"],
+      "cacheConfig": { "strategy": "performance", "maxSize": 20, "maxAge": "1d" } },
+    { "name": "rates", "urls": ["/api/rates/**"],
+      "cacheConfig": { "strategy": "freshness", "maxSize": 50, "maxAge": "1h", "timeout": "3s" } }
+  ]
+}
+\`\`\`
+
+\`assetGroups\` описывают файлы приложения: \`prefetch\` скачивает их все при установке (приложение откроется офлайн), \`lazy\` кэширует по мере запросов. \`dataGroups\` описывают ответы API: стратегия \`performance\` — это cache-first с ограничением \`maxAge\`, \`freshness\` — network-first: ждём сеть не дольше \`timeout\`, потом отдаём кэш. \`maxSize\` и \`maxAge\` обязательны — открытый кэш рано или поздно упрётся в квоту.
+
+Обновления приложения Angular SW проверяет через файл \`ngsw.json\` (он запрашивается с параметром \`ngsw-cache-bust\`, чтобы не застрять в HTTP-кэше). Новую версию он скачивает в фоне, но открытым вкладкам не подменяет: об этом сообщает \`SwUpdate\`.
+
+\`\`\`ts
+import { inject } from '@angular/core';
+import { SwUpdate, VersionReadyEvent } from '@angular/service-worker';
+import { filter } from 'rxjs';
+
+export function listenForUpdates() {
+  const updates = inject(SwUpdate);
+  if (!updates.isEnabled) return;                         // в dev-режиме SW обычно выключен
+  updates.versionUpdates
+    .pipe(filter((e): e is VersionReadyEvent => e.type === 'VERSION_READY'))
+    .subscribe(async () => {
+      if (confirm('Доступна новая версия. Обновить?')) {
+        await updates.activateUpdate();                   // переключить вкладку на новую версию
+        document.location.reload();                       // и перезагрузить, чтобы код совпал
+      }
+    });
+}
+\`\`\`
+
+Без такого флоу пользователь, который держит вкладку открытой неделями, неделями сидит на старом app shell.
+
+### Кэш в памяти: дедупликация и TTL
+
+Внутри SPA самый полезный кэш — это общий сервис, который помнит ответы и не даёт пяти виджетам сделать пять одинаковых запросов. Пример на RxJS: \`shareReplay\` делит один HTTP-запрос между всеми подписчиками и запоминает ответ, а \`Map\` хранит срок жизни.
+
+\`\`\`ts
+import { Observable, catchError, shareReplay, throwError } from 'rxjs';
+
+export class QueryCache {
+  private entries = new Map<string, { obs$: Observable<unknown>; expires: number }>();
+
+  get<T>(key: string, load: () => Observable<T>, ttlMs: number): Observable<T> {
+    const hit = this.entries.get(key);
+    if (hit && hit.expires > Date.now()) return hit.obs$ as Observable<T>; // свежая запись
+    const obs$ = load().pipe(
+      catchError((err) => { this.entries.delete(key); return throwError(() => err); }), // ошибку не кэшируем
+      shareReplay({ bufferSize: 1, refCount: false }), // один запрос на всех + запомнить ответ
+    );
+    this.entries.set(key, { obs$, expires: Date.now() + ttlMs });
+    return obs$;
+  }
+
+  invalidate(prefix: string): void {
+    for (const key of this.entries.keys()) if (key.startsWith(prefix)) this.entries.delete(key);
+  }
+}
+
+// TTL = 200 мс, запрос «к серверу» длится 50 мс
+const users$ = () => cache.get('users', () => http.get('/api/users'), 200);
+users$().subscribe(...);                          // HTTP /api/users
+users$().subscribe(...);                          // тот же запрос, второго нет
+setTimeout(() => users$().subscribe(...), 100);   // из памяти
+setTimeout(() => users$().subscribe(...), 300);   // TTL истёк → HTTP /api/users
+// после мутации: cache.invalidate('users')       // следующий вызов → HTTP /api/users
+\`\`\`
+
+Итого за полсекунды пять подписок, но только три сетевых запроса: первые две подписки разделили один запрос, третья взяла ответ из памяти, четвёртая пришла после TTL, пятая — после явной инвалидации. Ошибки намеренно не кэшируются: иначе один упавший запрос «залипнет» до конца TTL. Именно это (плюс фоновое обновление, повтор при возврате на вкладку, отмена) дают готовые data-layer библиотеки вроде TanStack Query — со своими ключами запросов и инвалидацией по ключам и тегам: после мутации «заказ изменён» сбрасываются все запросы с тегом \`orders\`.
+
+### HTTP-интерсептор кэша в Angular
+
+Если хочется кэшировать на уровне \`HttpClient\`, удобно включать кэш **явно на конкретном запросе** через \`HttpContextToken\` — типизированный «флажок», который едет вместе с запросом и виден интерсептору.
+
+\`\`\`ts
+import { HttpContext, HttpContextToken, HttpInterceptorFn, HttpResponse } from '@angular/common/http';
+import { of, tap } from 'rxjs';
+
+export const CACHE_TTL = new HttpContextToken<number>(() => 0); // 0 = не кэшировать
+const cache = new Map<string, { response: HttpResponse<unknown>; expires: number }>();
+
+export const cacheInterceptor: HttpInterceptorFn = (req, next) => {
+  const ttl = req.context.get(CACHE_TTL);
+  if (req.method !== 'GET' || ttl === 0) return next(req);       // только GET с явным TTL
+  const key = req.urlWithParams;
+  const hit = cache.get(key);
+  if (hit && hit.expires > Date.now()) return of(hit.response.clone()); // сеть не трогаем
+  return next(req).pipe(
+    tap((event) => {
+      if (event instanceof HttpResponse) cache.set(key, { response: event, expires: Date.now() + ttl });
+    }),
+  );
+};
+
+// app.config.ts: provideHttpClient(withInterceptors([cacheInterceptor]))
+const ctx = new HttpContext().set(CACHE_TTL, 60_000);
+http.get('/api/countries', { context: ctx }).subscribe(); // 1-й вызов: запрос в сеть
+http.get('/api/countries', { context: ctx }).subscribe(); // 2-й вызов: из кэша, запросов 0
+http.get('/api/countries').subscribe();                    // без TTL: снова в сеть
+\`\`\`
+
+Проверено с \`HttpTestingController\`: второй вызов не создаёт ни одного запроса. Но у такого интерсептора есть дыра — два **одновременных** вызова до первого ответа уйдут в сеть оба (кэш ещё пуст). Если это важно, храните в \`Map\` не ответ, а общий \`Observable\` с \`shareReplay\`, как в предыдущем примере.
+
+### Постоянное хранилище и синхронизация вкладок
+
+IndexedDB и localStorage переживают перезагрузку, поэтому их используют для быстрого холодного старта (сразу показать последние данные, а свежие догрузить) и для офлайна. localStorage синхронный и маленький (обычно порядка 5 МБ на сайт, только строки), поэтому большие данные кладут в IndexedDB. Объём квоты зависит от браузера и свободного места, узнать его можно через \`navigator.storage.estimate()\`, а попросить браузер не удалять данные при нехватке места — через \`navigator.storage.persist()\`. Safari отдельно известен тем, что может стереть данные сайта, с которым пользователь давно не взаимодействовал; установленные PWA под это правило обычно не попадают, но точное поведение зависит от версии.
+
+У каждой вкладки свой кэш в памяти, поэтому после мутации в одной вкладке соседняя показывает старое. Решение — оповестить остальные:
+
+\`\`\`ts
+const channel = new BroadcastChannel('query-cache');
+
+// вкладка, где произошла мутация
+channel.postMessage({ type: 'invalidate', key: 'users' });
+
+// все остальные вкладки того же сайта
+channel.onmessage = (e) => {
+  if (e.data.type === 'invalidate') cache.invalidate(e.data.key);
+};
+// отправитель своё сообщение не получает — только другие вкладки
+\`\`\`
+
+Альтернатива — событие \`storage\`: оно срабатывает в **других** вкладках, когда одна из них меняет localStorage.
+
+### Как выбрать
+
+- **Файлы сборки с хэшем в имени** — \`max-age=31536000, immutable\`, в SW — cache-first или \`prefetch\`. Инвалидация автоматическая через новое имя.
+- **\`index.html\`, \`ngsw-worker.js\`, \`ngsw.json\`** — \`no-cache\`. Иначе пользователи застрянут на старой версии.
+- **Справочники, которые меняются раз в день** — \`max-age\` на часы, SWR или \`performance\` в SW, кэш в памяти на всё время сессии.
+- **Часто читаемые и умеренно меняющиеся данные (профиль, лента, список задач)** — \`no-cache\` + \`ETag\` и SWR в data-layer с инвалидацией по ключам после мутаций.
+- **Критично свежие данные (баланс, торги, остатки на складе)** — \`no-store\` или network-first с коротким таймаутом, а для настоящей актуальности — WebSocket или SSE.
+- **Офлайн-сценарии** — app shell в SW, данные в IndexedDB, синхронизация отдельным слоем.
+- **Персональные ответы** — \`private\`, чтобы CDN их не сохранял; никаких \`public\` для того, что зависит от пользователя.
+
+### Где это применяется на практике
+
+- **Деплой SPA на CDN** (Vercel, CloudFront, Nginx): хэшированные файлы — год и \`immutable\`, \`index.html\` и файлы Service Worker — \`no-cache\`, после деплоя — purge HTML в CDN.
+- **Корпоративный дашборд**: справочники (валюты, страны, роли) — в памяти на всю сессию; виджеты дедуплицируют общие запросы; после сохранения формы инвалидируются ключи затронутых сущностей.
+- **Большие таблицы с фильтрами**: ответы кэшируются по ключу «URL + параметры», возврат на предыдущую страницу таблицы мгновенный, а данные обновляются в фоне.
+- **PWA для работы в поле** (склад, выездные сотрудники): app shell в Angular SW, данные в IndexedDB, \`freshness\` для API с таймаутом 3 секунды на плохой связи.
+- **Финтех-интерфейсы**: баланс и котировки — \`no-store\` и real-time, а всё остальное (меню, справочники, переводы) кэшируется агрессивно.
+
+## Важные нюансы и подводные камни
+
+- **Закэшированный \`index.html\`.** Пользователи месяцами сидят на старой версии, а вы слышите «у меня баг не воспроизводится». После удаления старых чанков с сервера их ленивые модули ещё и падают при загрузке.
+- **Кэш без плана инвалидации.** Добавить кэш — полдня, вычистить протухшие данные у тысяч пользователей — недели. Сначала ответьте «как и когда эта копия станет неправдой», потом кэшируйте.
+- **\`no-cache\` не значит «не кэшировать».** Это «кэшировать, но всегда перепроверять». Запретить хранение может только \`no-store\`.
+- **304 экономит трафик, но не задержку.** Запрос до сервера всё равно идёт; для неизменяемых файлов нужен \`max-age\`, а не ревалидация.
+- **Нет заголовков — всё равно есть кэш.** При наличии \`Last-Modified\` без \`Cache-Control\` браузер может закэшировать ответ эвристически. Всегда задавайте \`Cache-Control\` явно.
+- **\`Vary: Cookie\` убивает CDN**, а забытый \`Vary: Accept-Language\` отдаёт пользователям чужой язык.
+- **Персональные данные в общем кэше.** Ответ с данными пользователя без \`private\` может осесть в CDN и уйти другому человеку — это уже инцидент безопасности, а не баг.
+- **Рассинхрон между вкладками.** В одной вкладке данные обновились, в другой нет. Лечится \`BroadcastChannel\` или событием \`storage\`.
+- **Разрастание IndexedDB и Cache Storage без очистки.** Cache Storage сам ничего не удаляет по времени — рано или поздно вы упираетесь в квоту и получаете странные ошибки записи. Ограничивайте размер (\`maxSize\` в Angular SW) и чистите старые версии кэшей.
+- **Service Worker, который не обновляется.** Старый SW продолжает отдавать старый app shell; нужен внятный флоу: обнаружили \`VERSION_READY\` → спросили пользователя → \`activateUpdate()\` → перезагрузка. В самописном SW это \`skipWaiting()\` и \`clients.claim()\`, но включать их без спроса опасно: новый код может встретиться со старой страницей.
+- **«Disable cache» в DevTools не отключает Service Worker.** Для этого есть отдельная галочка «Bypass for network» во вкладке Application — иначе отладка кэширования превращается в мистику.
+- **Кэширование ошибок.** Если кэш запоминает упавший ответ, ошибка «залипает» до истечения TTL. Ошибочные ответы не кэшируют.
+- **Opaque-ответы в SW.** Ответ на \`no-cors\` запрос к чужому домену непрозрачен: SW не видит даже статус и может закэшировать ошибку. Angular по умолчанию не кэширует такие ответы в группах \`performance\`.
+
+**Плюсы:** мгновенная загрузка повторных визитов, меньше нагрузки на сервер и трафика, работа без сети, дедупликация запросов внутри приложения.
+**Минусы:** инвалидация сложна и у каждого слоя своя; риск показать устаревшие или чужие данные; отладка многоэтажного кэша трудна; хранилища упираются в квоты, а поддержка части директив зависит от браузера.
+
+## Как это спрашивают на собеседовании
+
+**Главный вывод:** кэш во фронтенде многоуровневый, и стратегию выбирают по цене устаревших данных: неизменяемые файлы с хэшем — на год, HTML — \`no-cache\`, данные — SWR или network-first с инвалидацией по ключам, критично свежее — \`no-store\` и real-time. Самое трудное — не включить кэш, а продумать его инвалидацию.
+
+Типичные формулировки: «Какие виды кэширования вы знаете во фронтенде?», «Чем \`no-cache\` отличается от \`no-store\`?», «Как сделать так, чтобы пользователи сразу получали новую версию приложения после деплоя?», «Что такое stale-while-revalidate?».
+
+Что могут спросить следом:
+
+- *Как работает \`ETag\`?* — Сервер присылает отпечаток версии, браузер при ревалидации шлёт его в \`If-None-Match\`, и при совпадении сервер отвечает \`304\` без тела.
+- *Почему пользователи после деплоя видят старую версию?* — Закэширован \`index.html\` или не обновился Service Worker; лечится \`no-cache\` на HTML и флоу обновления через \`SwUpdate\`.
+- *Чем \`s-maxage\` отличается от \`max-age\`?* — \`s-maxage\` действует только на общие кэши (CDN, прокси) и для них важнее \`max-age\`.
+- *Чем \`performance\` отличается от \`freshness\` в Angular SW?* — Первая стратегия — cache-first с \`maxAge\`, вторая — network-first с \`timeout\` и запасным кэшем.
+- *Как синхронизировать кэш между вкладками?* — \`BroadcastChannel\` или событие \`storage\`: вкладка после мутации рассылает «инвалидируй ключ X».
+
+### Ответ на 1 минуту
+
+> Кэш во фронтенде многоуровневый: кэш в памяти приложения, Service Worker, HTTP-кэш браузера, CDN и постоянное хранилище вроде IndexedDB. Стратегию я выбираю по цене устаревших данных. Файлы сборки с хэшем в имени отдаю с \`max-age\` на год и \`immutable\` — новая сборка получает новые имена, поэтому инвалидация автоматическая. \`index.html\` и файлы Service Worker — только \`no-cache\`, иначе пользователи застрянут на старой версии. Для данных есть три стратегии: cache-first для неизменного, network-first там, где важна свежесть, с кэшем как запасом без сети, и stale-while-revalidate — отдать копию сразу и обновить в фоне. Критично свежее вроде баланса — \`no-store\` или real-time. Из нюансов: \`no-cache\` разрешает хранить, но требует ревалидации через \`ETag\` и ответ 304, а \`no-store\` запрещает хранение вообще. И главное — инвалидацию я продумываю до внедрения кэша, а не после.`,
       en: `## In short
 
 Frontend caching is **five floors**, each with its own rules: the browser's HTTP cache, the Service Worker, the in-memory app cache, CDN/edge, and persistent storage. Picking a strategy comes down to one question: **how bad is it to show the user stale data**.
@@ -6781,48 +7706,364 @@ Why this works: \`index.html\` with \`no-cache\` is revalidated every time and d
       en: 'How do you design a real-time frontend over WebSocket/SSE at scale?',
     },
     answer: {
-      ru: `## Коротко
+      ru: `## В чём суть
 
-Сначала выбираем **трубу**: SSE — одностороннее вещание сервер→клиент поверх обычного HTTP, WebSocket — двусторонний канал. Дальше вся сложность не в подключении, а в трёх вещах: **переживать обрывы, не топить UI потоком сообщений и не терять данные**.
+Real-time-фронтенд получает данные **в момент их появления**, а не когда пользователь нажал «обновить». Сначала выбирают «трубу»: SSE — односторонний поток от сервера к клиенту поверх обычного HTTP, WebSocket — постоянный двусторонний канал. Но подключиться — самое простое. Вся сложность в трёх вещах: **пережить обрывы, не утопить интерфейс в потоке сообщений и не потерять данные**.
 
-Аналогия: радиостанция против рации. SSE — радио: станция вещает, вы только слушаете, приёмник сам ловит волну заново, если вы проехали тоннель. WebSocket — рация: говорить можно в обе стороны, но связь надо держать, батарейку тратить и следить, чтобы канал не забился. И в обоих случаях, если новости сыплются быстрее, чем вы способны слушать, нужен не «слушать быстрее», а конспект раз в секунду.
+Аналогия: радиостанция против рации. SSE — это радио: станция вещает, вы только слушаете, а приёмник сам ловит волну заново, если вы проехали тоннель. WebSocket — рация: говорить можно в обе стороны, но связь надо держать, батарейку тратить и следить, чтобы канал не забился. И в обоих случаях, если новости сыплются быстрее, чем вы способны слушать, решение не «слушать быстрее», а конспект раз в секунду.
 
-## Порядок решений
+**Какую проблему решает.** Без real-time клиент вынужден опрашивать сервер (polling): «есть новое? а сейчас?» — это либо задержка в секунды, либо тысячи пустых запросов. Биржевой терминал, чат, совместное редактирование, мониторинг заказов, уведомления — всё это требует доставки за миллисекунды. А при высокой нагрузке наивная реализация ломается сразу в трёх местах: после сбоя сервера все клиенты одновременно ломятся обратно и роняют его снова; интерфейс замерзает от сотен перерисовок в секунду; после переподключения пропадают сообщения, пришедшие во время обрыва.
 
-1. **Выбор транспорта.** **SSE** — однонаправленный поверх HTTP, авто-reconnect из коробки, проще, спокойно проходит прокси; минус — лимит соединений на домен в HTTP/1.1. Идеален для лент и уведомлений. **WebSocket** — двунаправленный, низкий overhead, нужен для чата, совместного редактирования, торговли; минус — сложнее инфраструктура: апгрейд соединения, sticky sessions.
-2. **Надёжность соединения.** Reconnect с **экспоненциальным backoff и jitter** — без jitter при массовом обрыве все клиенты вернутся одновременно и добьют сервер (thundering herd). Heartbeat/ping-pong, чтобы отличить живое соединение от зависшего.
-3. **Не терять сообщения.** Resume по курсору или последнему \`id\` события (в SSE это \`Last-Event-ID\`), чтобы после reconnect догрузить пропущенное, а не начать с чистого листа.
-4. **Производительность клиента.** Не дёргать change detection на каждое сообщение: буферизовать и отдавать в UI пачками, агрегируя за кадр через \`requestAnimationFrame\`. Парсинг делать в \`runOutsideAngular\`, входя в зону только с готовым состоянием.
-5. **Backpressure.** Если поток быстрее, чем UI успевает рисовать, промежуточные значения **коалесцируем**: для котировки важна последняя цена, а не все 200 промежуточных.
-6. **Согласованность.** Схема «снапшот + дельты»: начальное состояние тянем REST-ом, затем применяем инкрементальные события. Обрабатываем приход не по порядку и дубли — идемпотентность по \`id\` события.
-7. **Инфраструктура.** Sticky sessions либо stateless-шлюз с pub/sub (Redis), горизонтальное масштабирование gateway, fan-out по топикам, авторизация в момент апгрейда соединения.
-8. **Деградация.** Сокет упал — фолбэк на polling, честный индикатор «offline» и очередь исходящих действий, которая доедет при восстановлении.
+## Словарик терминов
 
-## Пример
+- **Polling и long polling** — клиент регулярно спрашивает сервер о новостях / задаёт вопрос, а сервер держит ответ, пока новость не появится.
+- **SSE (Server-Sent Events) и \`EventSource\`** — стандарт однонаправленного потока событий от сервера по одному долгому HTTP-ответу и браузерный API для его чтения.
+- **\`text/event-stream\`** — формат SSE: текстовые блоки с полями \`id:\`, \`event:\`, \`data:\`, \`retry:\`, разделённые пустой строкой.
+- **\`Last-Event-ID\`** — заголовок, который браузер сам отправляет при переподключении SSE: «последнее, что я получил, — событие с таким \`id\`».
+- **WebSocket** — протокол постоянного двустороннего соединения поверх TCP, который начинается как HTTP-запрос и «переключается» на свой формат.
+- **Upgrade / handshake (рукопожатие)** — первый HTTP-запрос с \`Upgrade: websocket\`, на который сервер отвечает \`101 Switching Protocols\`.
+- **Фрейм (frame)** — единица данных WebSocket: текстовые, бинарные и служебные (\`ping\`, \`pong\`, \`close\`).
+- **Close code** — числовой код закрытия: \`1000\` нормальное, \`1001\` «ухожу» (рестарт сервера), \`1006\` обрыв без закрывающего фрейма.
+- **Heartbeat (ping/pong)** — регулярное «ты жив?» — «жив», чтобы отличить живое соединение от зависшего.
+- **Reconnect с экспоненциальным backoff** — после обрыва переподключаться с растущей паузой: 1 с, 2 с, 4 с, 8 с…
+- **Jitter** — случайный разброс паузы, чтобы клиенты не возвращались одновременно.
+- **Thundering herd («бегущее стадо»)** — ситуация, когда тысячи клиентов одновременно ломятся на только что поднявшийся сервер и снова его роняют.
+- **Snapshot + deltas (снапшот и дельты)** — сначала загрузить полное состояние, затем применять только изменения.
+- **Sequence number / курсор** — порядковый номер события, по которому клиент понимает, что пропустил и что уже видел.
+- **Идемпотентность** — повторное применение того же события не меняет результат.
+- **Backpressure (обратное давление)** — ситуация, когда данные приходят быстрее, чем потребитель успевает их обработать, и способы с этим справиться.
+- **Коалесцирование (coalescing)** — схлопывание промежуточных значений: из 200 цен за секунду оставить последнюю.
+- **Батчинг** — накопить сообщения и обработать пачкой за один раз.
+- **Change detection** — механизм Angular, который проверяет шаблоны и обновляет DOM после изменения данных.
+- **Zone.js и zoneless** — библиотека, по которой Angular узнаёт об асинхронных событиях / режим без неё, где обновление запускают сигналы. В Angular 21 новые приложения по умолчанию zoneless.
+- **\`webSocket\` из RxJS** — обёртка над браузерным WebSocket в виде \`Subject\`: читать как поток, писать через \`next()\`.
+- **Sticky sessions** — балансировщик всегда направляет клиента на тот же сервер.
+- **Pub/sub (например, Redis)** — шина «опубликовал — получили все подписчики», чтобы сообщение с одного сервера дошло до клиентов, подключённых к другим.
+- **Fan-out** — рассылка одного события множеству подписчиков.
 
-\`\`\`ts
-// буферизация: одно обновление UI на кадр вместо сотен
-messages$.pipe(
-  bufferTime(100),
-  filter(batch => batch.length > 0),
-  map(batch => mergeIntoSnapshot(batch)),
-).subscribe(state => this.state.set(state));
+## Как это работает под капотом
+
+Порядок решений при проектировании:
+
+1. **Выбор транспорта.** Если данные идут только от сервера (ленты, уведомления, прогресс задач) — SSE: обычный HTTP, авто-переподключение из коробки, проще инфраструктура. Если клиенту нужно часто и быстро писать (чат, совместное редактирование, торговля) — WebSocket.
+2. **Надёжность соединения.** Любое соединение рано или поздно рвётся: Wi-Fi, сон ноутбука, деплой сервера. Поэтому нужен reconnect с экспоненциальным backoff **и jitter**, а также heartbeat: без него «полуоткрытое» соединение может молча висеть минутами.
+3. **Не терять сообщения.** Каждое событие получает возрастающий номер. После переподключения клиент сообщает последний полученный номер, и сервер досылает пропущенное (в SSE это \`Last-Event-ID\`).
+4. **Согласованность.** Сначала полный снапшот через REST (с его номером версии), затем дельты по сокету. Дубли отбрасываются по номеру, а «дыра» в номерах — сигнал запросить снапшот заново.
+5. **Производительность клиента.** Сообщения не применяют к UI по одному: их буферизуют и применяют пачкой — раз в кадр или раз в 100 мс. Промежуточные значения коалесцируют.
+6. **Инфраструктура.** Соединения долгие, поэтому их держат отдельные шлюзы (gateway); события между узлами разносит pub/sub; авторизация проверяется в момент рукопожатия.
+7. **Деградация.** Сокет недоступен — фолбэк на polling, честный индикатор «нет связи» и очередь исходящих действий, которая отправится при восстановлении.
+
+### SSE: формат потока и \`EventSource\`
+
+SSE — это обычный HTTP-ответ с типом \`text/event-stream\`, который сервер не закрывает и дописывает по мере появления событий. Сервер на Node:
+
+\`\`\`js
+import http from 'node:http';
+
+const events = [
+  { id: 41, type: 'price', data: { symbol: 'EURUSD', bid: 1.0841 } },
+  { id: 42, type: 'price', data: { symbol: 'EURUSD', bid: 1.0843 } },
+  { id: 43, type: 'news', data: { title: 'ECB decision' } },
+];
+
+http.createServer((req, res) => {
+  const lastId = Number(req.headers['last-event-id'] ?? 0);  // с какого места продолжить
+  res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' });
+  res.write('retry: 5000\\n\\n');                               // переподключаться через 5 с
+  for (const e of events.filter((e) => e.id > lastId)) {
+    res.write(\`id: \${e.id}\\nevent: \${e.type}\\ndata: \${JSON.stringify(e.data)}\\n\\n\`);
+  }
+  res.write(': heartbeat\\n\\n');                               // строка-комментарий держит соединение
+  res.end();                                                  // в демо закрываем, в жизни держим открытым
+}).listen(8787);
 \`\`\`
 
-Почему так: сто сообщений в секунду превращаются в десять обновлений сигнала. Пользователь разницы не увидит, а change detection перестанет быть узким местом.
+Что видно «на проводе» (\`curl\`), а затем — при переподключении с заголовком \`Last-Event-ID: 42\`:
 
-## Что сказать на собеседовании
+\`\`\`text
+retry: 5000
 
-> Транспорт выбираю по направленности: SSE — однонаправленный поток сервер-клиент поверх HTTP, с авто-reconnect и \`Last-Event-ID\`, проще и лучше проходит прокси, идеален для лент и уведомлений; WebSocket — двунаправленный и с низким overhead, нужен для чата, совместного редактирования и торговли, но сложнее инфраструктурно из-за апгрейда и sticky sessions. Дальше три группы решений. Надёжность: reconnect с экспоненциальным backoff и обязательным jitter, чтобы при массовом обрыве не было thundering herd, heartbeat для детекта мёртвых соединений и resume по курсору последнего события, чтобы не терять сообщения. Производительность клиента: буферизация и throttle входящих апдейтов, агрегация за кадр, парсинг вне зоны Angular и backpressure — при слишком быстром потоке коалесцируем промежуточные значения и берём последнее. Согласованность: снапшот через REST плюс дельты по сокету, идемпотентность по id и обработка сообщений не по порядку. И деградация: при падении сокета фолбэк на polling, индикатор offline и очередь исходящих действий.
+id: 41
+event: price
+data: {"symbol":"EURUSD","bid":1.0841}
 
-## Ловушки
+id: 42
+event: price
+data: {"symbol":"EURUSD","bid":1.0843}
+
+id: 43
+event: news
+data: {"title":"ECB decision"}
+
+: heartbeat
+
+---- переподключение с Last-Event-ID: 42 ----
+retry: 5000
+
+id: 43
+event: news
+data: {"title":"ECB decision"}
+
+: heartbeat
+\`\`\`
+
+Клиент в браузере:
+
+\`\`\`ts
+const source = new EventSource('/api/stream', { withCredentials: true });
+source.addEventListener('price', (e) => console.log('price', JSON.parse(e.data)));
+source.addEventListener('news', (e) => console.log('news', JSON.parse(e.data)));
+source.onerror = () => console.log('readyState', source.readyState); // 0 — переподключается, 2 — закрыт
+\`\`\`
+
+Почему SSE удобен: это обычный HTTP, поэтому он проходит корпоративные прокси и файрволы, которые иногда режут \`Upgrade\`, а переподключение и \`Last-Event-ID\` браузер делает сам. Когда сервер закрыл ответ, браузер подождёт \`retry\` миллисекунд и откроет поток заново с последним \`id\`. Но есть ограничения. \`EventSource\` **не умеет ставить свои заголовки** — \`Authorization\` не передать, остаются cookie (\`withCredentials\`) или самописный клиент поверх \`fetch\`. Если сервер ответил не \`200\` или не с тем \`Content-Type\`, браузер прекращает попытки навсегда. И в HTTP/1.1 браузер держит не больше шести соединений на один домен, причём лимит общий для всех вкладок: седьмая вкладка с SSE «зависнет». В HTTP/2 все потоки идут внутри одного соединения, и проблема уходит.
+
+### WebSocket: рукопожатие, фреймы и коды закрытия
+
+WebSocket начинается как HTTP-запрос и переключается на свой протокол:
+
+\`\`\`text
+GET /prices HTTP/1.1
+Host: api.example.com
+Upgrade: websocket
+Connection: Upgrade
+Origin: https://app.example.com
+Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==
+Sec-WebSocket-Version: 13
+
+HTTP/1.1 101 Switching Protocols
+Upgrade: websocket
+Connection: Upgrade
+Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=
+\`\`\`
+
+\`Sec-WebSocket-Accept\` — это SHA-1 от ключа клиента, склеенного с фиксированной строкой из спецификации, в base64. Это доказательство, что сервер понимает WebSocket, а не защита:
+
+\`\`\`js
+const crypto = require('crypto');
+const key = 'dGhlIHNhbXBsZSBub25jZQ==';
+console.log(crypto.createHash('sha1').update(key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64'));
+// s3pPLMBiTxaQ9kYGzzhZRbK+xOo=
+\`\`\`
+
+Дальше по соединению ходят фреймы в обе стороны, без HTTP-заголовков на каждое сообщение — отсюда низкие накладные расходы. Важные детали браузерного API: он **не даёт отправить \`ping\`** (браузер сам отвечает \`pong\` на \`ping\` сервера, но JavaScript этого не видит), поэтому клиентский heartbeat делают обычными сообщениями. И он **не даёт задать свои заголовки** при рукопожатии.
+
+### Пример 1. Reconnect с экспоненциальным backoff и jitter
+
+\`\`\`ts
+function backoffDelay(attempt: number, baseMs = 1000, maxMs = 30000): number {
+  const cap = Math.min(maxMs, baseMs * 2 ** (attempt - 1)); // потолок паузы растёт вдвое
+  return Math.random() * cap;                               // full jitter: случайно от 0 до потолка
+}
+// потолки для попыток 1..7:
+// 1000, 2000, 4000, 8000, 16000, 30000, 30000
+\`\`\`
+
+Почему так. Экспонента даёт серверу время подняться, потолок в 30 секунд не даёт клиенту «уснуть» на часы, а случайность разносит клиентов во времени. Без jitter 50 000 клиентов, отключённых одним деплоем, вернутся ровно через 1 с, потом ровно через 2 с — синхронными волнами, каждая из которых снова кладёт сервер. С jitter те же клиенты размазываются по всему интервалу.
+
+В RxJS это одна строка через \`retry\` с функцией \`delay\`: она получает номер попытки, а возвращённый поток задаёт паузу. \`resetOnSuccess: true\` сбрасывает счётчик после успешного подключения, чтобы следующий обрыв снова начинался с короткой паузы:
+
+\`\`\`ts
+import { defer, of, retry, throwError, timer } from 'rxjs';
+
+let attempts = 0;
+const connect$ = defer(() => {                 // соединение «падает» три раза, потом успех
+  attempts++;
+  console.log(\`попытка \${attempts}\`);
+  return attempts <= 3 ? throwError(() => new Error('socket closed')) : of('connected');
+});
+
+connect$.pipe(
+  retry({ count: 10, delay: (_err, n) => timer(backoffDelay(n, 100, 3000)), resetOnSuccess: true }),
+).subscribe(console.log);
+// попытка 1     (t = 0)
+// попытка 2     (t ≈ 0–100 мс)
+// попытка 3     (ещё через 0–200 мс)
+// попытка 4     (ещё через 0–400 мс)
+// connected
+\`\`\`
+
+### Пример 2. Сервис на RxJS \`webSocket\`: топики, переподключение, статус
+
+\`webSocket()\` из \`rxjs/webSocket\` превращает сокет в поток. Метод \`multiplex\` позволяет держать несколько логических подписок в одном соединении: при подписке он сам отправляет серверу «подпиши меня», при отписке — «отпиши».
+
+\`\`\`ts
+import { Injectable, signal } from '@angular/core';
+import { webSocket } from 'rxjs/webSocket';
+import { repeat, retry, share, timer } from 'rxjs';
+
+type Tick = { symbol: string; price: number };
+
+@Injectable({ providedIn: 'root' })
+export class PriceStream {
+  readonly status = signal<'connecting' | 'online' | 'reconnecting'>('connecting');
+
+  private readonly socket$ = webSocket<Tick | object>({
+    url: 'wss://api.example.com/prices',
+    openObserver: { next: () => this.status.set('online') },
+    closeObserver: { next: () => this.status.set('reconnecting') },
+  });
+
+  ticks(symbol: string) {
+    return this.socket$.multiplex(
+      () => ({ subscribe: symbol }),               // уйдёт при подписке и при каждой переподписке
+      () => ({ unsubscribe: symbol }),             // уйдёт при отписке
+      (m) => (m as Tick).symbol === symbol,        // какие сообщения относятся к топику
+    ).pipe(
+      retry({ delay: (_e, n) => timer(backoffDelay(n)), resetOnSuccess: true }), // обрыв (1006)
+      repeat({ delay: () => timer(backoffDelay(1)) }),                           // чистое закрытие (1000/1001)
+      share(),                                     // компоненты, подписанные на этот поток, делят одну подписку
+    );
+  }
+}
+\`\`\`
+
+Все топики идут через **одно физическое соединение** \`socket$\`: \`multiplex\` лишь добавляет сообщения подписки и фильтр. Проверено на Node с сервером \`ws\`, который рвёт первое соединение после двух сообщений:
+
+\`\`\`text
+клиент: online
+сервер [соединение 1] получил {"subscribe":"EURUSD"}
+клиент получил 110
+клиент получил 111
+клиент: закрыто, code 1006
+клиент: online
+сервер [соединение 2] получил {"subscribe":"EURUSD"}   ← подписка восстановилась сама
+клиент получил 120
+клиент получил 121
+сервер [соединение 2] получил {"unsubscribe":"EURUSD"} ← при отписке
+\`\`\`
+
+Зачем и \`retry\`, и \`repeat\`. Обрыв без закрывающего фрейма (\`1006\`) превращается в \`error\`, и его ловит \`retry\`. А **чистое** закрытие сервером — например, \`1001\` при рестарте во время деплоя — превращается в \`complete\`, и \`retry\` на него не реагирует. Проверено: без \`repeat\` поток просто завершается, и клиент молча остаётся без данных.
+
+### Пример 3. Батчинг и коалесцирование: не дёргать UI на каждое сообщение
+
+\`\`\`ts
+import { bufferTime, filter, map } from 'rxjs';
+
+ticks$.pipe(
+  bufferTime(100),                                  // копим сообщения 100 мс
+  filter((batch) => batch.length > 0),              // пустые окна не рендерим
+  map((batch) => {
+    const latest = new Map<string, number>();
+    for (const t of batch) latest.set(t.symbol, t.price); // по каждому инструменту — последняя цена
+    return latest;
+  }),
+).subscribe((latest) => this.prices.update((p) => ({ ...p, ...Object.fromEntries(latest) })));
+// 30 сообщений по трём инструментам за 300 мс → 3–4 обновления сигнала вместо 30,
+// в каждом не больше трёх цен (точное число окон зависит от того, как сообщения легли на границы)
+\`\`\`
+
+Почему так. Сто сообщений в секунду превращаются максимум в десять обновлений состояния, а коалесцирование оставляет только последнюю цену: промежуточные 200 значений за секунду человек всё равно не увидит. Для синхронизации с отрисовкой браузера можно копить до кадра: класть сообщения в \`Map\` и сбрасывать их в состояние в \`requestAnimationFrame\` — одно обновление на кадр.
+
+В приложениях на Zone.js каждое событие \`onmessage\` запускает проверку всего дерева компонентов. Поэтому сокет там создают внутри \`NgZone.runOutsideAngular()\`, парсят и копят сообщения вне зоны, а в зону возвращаются (\`ngZone.run\`) только с готовой пачкой. В zoneless-приложении зону обходить не нужно — проверку планирует изменение сигнала, — но батчинг всё равно нужен: тысяча \`set()\` в секунду — это тысяча лишних вычислений \`computed\` и шаблонов.
+
+### Пример 4. Снапшот + дельты: дубли, дыры и идемпотентность
+
+\`\`\`ts
+class OrderBookSync {
+  lastSeq = 0;
+  state = new Map<string, { id: string; qty: number }>();
+  constructor(private onResync: () => void) {}
+
+  applySnapshot(snapshot: { seq: number; items: { id: string; qty: number }[] }) {
+    this.state = new Map(snapshot.items.map((i) => [i.id, i]));
+    this.lastSeq = snapshot.seq;                       // версия, на которой сделан снапшот
+  }
+
+  applyDelta(delta: { seq: number; op: 'upsert' | 'delete'; item?: any; id?: string }) {
+    if (delta.seq <= this.lastSeq) return 'дубль, пропускаем';          // уже применяли
+    if (delta.seq > this.lastSeq + 1) { this.onResync(); return 'дыра, нужен новый снапшот'; }
+    if (delta.op === 'upsert') this.state.set(delta.item.id, delta.item);
+    if (delta.op === 'delete') this.state.delete(delta.id!);
+    this.lastSeq = delta.seq;
+    return 'применено';
+  }
+}
+
+sync.applySnapshot({ seq: 100, items: [{ id: 'a', qty: 5 }] });
+sync.applyDelta({ seq: 99, ... });   // дубль, пропускаем — старше снапшота
+sync.applyDelta({ seq: 101, ... });  // применено
+sync.applyDelta({ seq: 101, ... });  // дубль, пропускаем — повтор после reconnect
+sync.applyDelta({ seq: 103, ... });  // дыра, нужен новый снапшот — 102 потерялось
+// состояние: a(5), b(3), lastSeq: 101
+\`\`\`
+
+Почему так. Сокет начинает слать дельты с момента подключения, а клиенту нужна картина целиком — её даёт снапшот. Дельты, пришедшие раньше снапшота (номер меньше его версии), отбрасываются. После переподключения сервер может прислать часть событий повторно — проверка номера делает применение идемпотентным, иначе счётчики удвоятся. А пропуск номера честнее всего лечить новым снапшотом, чем гадать.
+
+### Heartbeat: как заметить «мёртвое» соединение
+
+TCP-соединение может оборваться так, что ни одна сторона не узнает об этом сразу: роутер потерял состояние, ноутбук проснулся в другой сети. Браузерный WebSocket в таком состоянии может долго оставаться «открытым». Поэтому клиент шлёт свой \`ping\` сообщением и ждёт ответа:
+
+\`\`\`ts
+import { interval, timeout } from 'rxjs';
+
+// сервер отвечает {type:'pong'} на {type:'ping'}
+interval(15_000).subscribe(() => socket$.next({ type: 'ping' }));
+socket$.pipe(
+  timeout(45_000),   // любое сообщение (pong или данные) — признак жизни; 45 с тишины → ошибка → retry
+).subscribe();
+\`\`\`
+
+Сервер со своей стороны шлёт протокольные \`ping\`-фреймы и закрывает клиентов, которые не ответили, — иначе он годами держит память под «мертвецов». Учтите, что в фоновых вкладках браузеры замедляют таймеры, поэтому таймауты делайте с запасом и перепроверяйте соединение по событию \`visibilitychange\`.
+
+### Авторизация соединения
+
+Браузерный \`WebSocket\` не позволяет задать заголовок \`Authorization\` при рукопожатии. Поэтому на практике есть три варианта:
+
+- **Cookie сессии.** Она уходит с рукопожатием автоматически. Но WebSocket не защищён CORS, поэтому сервер обязан проверять заголовок \`Origin\`, иначе чужой сайт откроет сокет от имени пользователя (Cross-Site WebSocket Hijacking).
+- **Одноразовый билет в query-строке.** Клиент обычным авторизованным запросом получает короткий билет (живёт секунды, работает один раз) и подключается к \`wss://.../prices?ticket=...\`. Даже попав в логи, такой билет уже бесполезен. Долгоживущий access-токен в URL класть нельзя: URL оседает в логах прокси и балансировщиков.
+- **Первое сообщение.** Соединение открывается без прав, первым сообщением клиент присылает токен, и до проверки сервер ничего не отдаёт.
+
+Токены живут меньше соединений, поэтому сервер должен уметь принять обновлённый токен по открытому сокету или закрыть соединение кодом вроде \`4001\` (коды \`4000\`–\`4999\` отданы приложениям), чтобы клиент переподключился с новым.
+
+### Инфраструктура и масштабирование
+
+Соединение WebSocket «прибито» к конкретному серверу, пока живо. Поэтому события, рождённые на одном узле, надо доставить клиентам, подключённым к другим: узлы шлюза подписываются на общую шину (Redis pub/sub, Kafka, NATS) и рассылают события своим клиентам по топикам (fan-out). Sticky sessions нужны, когда узел хранит состояние клиента в памяти или когда используется фолбэк на long polling (например, в Socket.IO). Отдельная тема — деплой: при перезапуске узла все его клиенты переподключаются одновременно, и без jitter это та самая волна thundering herd. Помните, что Socket.IO — это **свой протокол поверх WebSocket**, обычный клиент \`WebSocket\` к серверу Socket.IO не подключится.
+
+### Где это применяется на практике
+
+- **Торговые и биржевые терминалы**: котировки по WebSocket, подписки на инструменты через \`multiplex\`, коалесцирование до последней цены, обновление большой таблицы раз в кадр.
+- **Мониторинг и дашборды** (заказы, логистика, алерты): SSE с \`Last-Event-ID\`, снапшот через REST, индикатор «нет связи».
+- **Уведомления и прогресс долгих задач** (импорт, генерация отчётов): SSE — проще и дешевле WebSocket.
+- **Чаты и совместное редактирование**: WebSocket, идемпотентные сообщения с клиентским \`id\`, очередь исходящих на время обрыва.
+- **Корпоративные приложения за прокси**: SSE на HTTP/2 через тот же домен и те же cookie, что и REST, без отдельной инфраструктуры.
+
+## Важные нюансы и подводные камни
 
 - **Reconnect без jitter.** Все клиенты возвращаются в одну и ту же секунду и укладывают только что поднявшийся сервер.
-- **Обновление стейта на каждое сообщение.** При 500 сообщениях в секунду интерфейс просто замерзает — нужен буфер.
-- **Незакрытые подписки** при уходе с роута: соединения копятся, память течёт, сервер держит мёртвых клиентов.
+- **Обновление стейта на каждое сообщение.** При 500 сообщениях в секунду интерфейс замерзает — нужен буфер и коалесцирование.
+- **Незакрытые подписки при уходе с роута.** Соединения копятся, память течёт, сервер держит мёртвых клиентов. Используйте \`takeUntilDestroyed\`, \`toSignal\` или \`async\`-пайп, а общий сокет держите в сервисе.
 - **Только дельты без снапшота.** Клиент, подключившийся позже, не знает исходного состояния и рисует чепуху.
-- **Отсутствие идемпотентности:** после reconnect сервер шлёт события повторно, и счётчики удваиваются.
-- **Спросят следом:** как авторизовать WebSocket (токен на апгрейде, а не в query-строке, которая утекает в логи), и почему SSE упирается в лимит соединений на HTTP/1.1, но не на HTTP/2.`,
+- **Отсутствие идемпотентности.** После reconnect сервер шлёт события повторно, и счётчики удваиваются. Проверяйте номер события.
+- **\`retry\` не ловит чистое закрытие.** RxJS \`webSocket\` при закрытии с \`wasClean\` завершает поток, а не падает с ошибкой; без \`repeat\` клиент после рестарта сервера тихо остаётся без данных.
+- **Подписки после переподключения.** Новое соединение ничего не знает о старых топиках; \`multiplex\` переотправляет подписку сам, самописный код должен делать это явно.
+- **Токен в query-строке.** Утекает в логи прокси и балансировщиков. Допустим только короткоживущий одноразовый билет.
+- **Нет проверки \`Origin\`.** Cookie уходит с рукопожатием автоматически, CORS сокет не защищает — без проверки \`Origin\` возможен перехват сессии чужим сайтом.
+- **Лимит соединений SSE в HTTP/1.1.** Шесть соединений на домен на весь браузер: несколько вкладок с SSE блокируют обычные запросы. Лечится HTTP/2 или одним общим соединением на все вкладки (через \`SharedWorker\`, поддержка которого на мобильных ограничена, или «ведущую» вкладку, раздающую данные остальным через \`BroadcastChannel\`).
+- **SSE «застревает» в прокси.** Буферизующий прокси (например, nginx с включённой буферизацией) или сжатие копят события и отдают их пачкой. Отключайте буферизацию для потока.
+- **\`EventSource\` сдаётся навсегда** при ответе не \`200\` или с неправильным \`Content-Type\` — например, когда истекла сессия и сервер ответил \`401\`. Это надо ловить и переподключаться вручную после обновления сессии.
+- **Исходящий поток тоже может захлебнуться.** Если клиент шлёт быстрее, чем сеть успевает отправить, растёт \`socket.bufferedAmount\` (байты в очереди на отправку); при больших объёмах проверяйте его перед отправкой.
+
+**Плюсы:** задержка доставки в миллисекунды вместо секунд, нет тысяч пустых запросов polling, двусторонний обмен для интерактивных сценариев, у SSE — авто-переподключение и простота.
+**Минусы:** сложная надёжность (reconnect, heartbeat, resume, идемпотентность), отдельная инфраструктура и масштабирование долгих соединений, сложнее авторизация и отладка, риск заморозить UI потоком сообщений.
+
+## Как это спрашивают на собеседовании
+
+**Главный вывод:** транспорт выбирают по направленности — SSE для потока от сервера, WebSocket для двустороннего обмена. Дальше три группы решений: надёжность (backoff с jitter, heartbeat, resume по номеру события), производительность клиента (батчинг и коалесцирование вместо рендера на каждое сообщение) и согласованность (снапшот + дельты с идемпотентностью).
+
+Типичные формулировки: «WebSocket или SSE — что выберете и почему?», «Как спроектировать биржевой терминал с тысячами обновлений в секунду?», «Что будет, если сервер перезапустится и 100 тысяч клиентов переподключатся одновременно?».
+
+Что могут спросить следом:
+
+- *Как авторизовать WebSocket?* — Браузер не даёт задать заголовки при рукопожатии, поэтому cookie с проверкой \`Origin\`, одноразовый короткий билет в query или токен первым сообщением; долгоживущий токен в URL — нет.
+- *Почему SSE упирается в лимит соединений?* — В HTTP/1.1 браузер держит до шести соединений на сайт на все вкладки; в HTTP/2 потоки мультиплексируются в одном соединении.
+- *Зачем jitter, если уже есть экспонента?* — Экспонента без случайности возвращает всех клиентов синхронными волнами; jitter размазывает их во времени.
+- *Как не потерять сообщения при обрыве?* — Номер у каждого события, resume с последнего полученного (\`Last-Event-ID\` в SSE), а при дыре — новый снапшот.
+- *Как не заморозить Angular?* — Буферизовать и коалесцировать, обновлять сигнал пачкой; в приложении на Zone.js держать сокет вне зоны.
+
+### Ответ на 1 минуту
+
+> Транспорт выбираю по направленности: SSE — односторонний поток поверх обычного HTTP с авто-переподключением и \`Last-Event-ID\`, идеален для лент и уведомлений; WebSocket — двусторонний канал для чата, совместного редактирования и торговли, но сложнее в инфраструктуре и авторизации. Дальше три группы решений. Надёжность: reconnect с экспоненциальным backoff и обязательным jitter, чтобы после сбоя не было thundering herd, heartbeat для обнаружения мёртвых соединений и resume по номеру последнего события. Производительность: сообщения не рендерю по одному, а батчу через \`bufferTime\` или раз в кадр и коалесцирую до последнего значения. Согласованность: снапшот через REST плюс дельты с проверкой номера, чтобы отбрасывать дубли и ловить дыры. Из нюансов: браузерный WebSocket не даёт задать заголовки, поэтому cookie с проверкой \`Origin\` или одноразовый билет, а в RxJS \`retry\` не ловит чистое закрытие сервером — нужен ещё \`repeat\`.`,
       en: `## In short
 
 First pick the **pipe**: SSE is a one-way server→client broadcast over ordinary HTTP; WebSocket is a two-way channel. After that, the difficulty isn't connecting — it's three things: **surviving disconnects, not drowning the UI in messages, and not losing data**.
@@ -6877,47 +8118,304 @@ Why this works: a hundred messages a second become ten signal updates. The user 
       en: 'How do you implement an offline-first app and optimistic updates with rollback?',
     },
     answer: {
-      ru: `## Коротко
+      ru: `## В чём суть
 
-Offline-first — это когда **источником истины для интерфейса становится локальное хранилище, а сеть превращается просто в механизм синхронизации**. UI всегда читает из IndexedDB и всегда пишет в него; отправка на сервер — отдельный фоновый процесс.
+Offline-first — это архитектура, в которой **источником истины для интерфейса становится локальное хранилище, а сеть превращается просто в механизм синхронизации**. UI всегда читает из IndexedDB и всегда пишет в неё, а отправка на сервер — отдельный фоновый процесс. Оптимистичное обновление — это когда изменение показывается сразу, до ответа сервера, а при отказе аккуратно откатывается.
 
-Аналогия: бухгалтерия в командировке. Вы не звоните в головной офис перед каждой записью — вы пишете в свой блокнот (локальное хранилище), а по возвращении переносите всё в общую базу по порядку (очередь синхронизации). Оптимистичное обновление — это когда вы сразу считаете запись сделанной; откат — когда в офисе говорят «эта операция не прошла», и вы вычёркиваете строку и извиняетесь.
+Аналогия: бухгалтерия в командировке. Вы не звоните в головной офис перед каждой записью — вы пишете в свой блокнот (локальное хранилище), а по возвращении переносите всё в общую базу по порядку (очередь синхронизации). Оптимистичное обновление — вы сразу считаете запись сделанной. Откат — в офисе говорят «эта операция не прошла», и вы вычёркиваете **именно эту строку**, а не вырываете из блокнота всю страницу, и сообщаете об этом.
 
-## Как это работает по шагам
+**Какую проблему решает.** Обычное SPA устроено как «спросил сервер — дождался — показал». В метро, на складе с плохим Wi-Fi или в самолёте такое приложение показывает спиннер, а потом ошибку, и всё, что пользователь ввёл, теряется. Даже при хорошей сети каждое действие ждёт 200–500 мс ответа, и интерфейс ощущается вязким. Offline-first даёт мгновенный отклик и работу без сети, но взамен требует решить трудные вопросы: как не потерять изменения, как не отправить их дважды, что делать, если сервер отказал, и как разрешить конфликт, если ту же запись правили на двух устройствах.
 
-1. **Service Worker** кэширует app shell и ассеты по стратегии cache-first — приложение открывается вообще без сети.
-2. **IndexedDB** хранит данные приложения. UI читает **из него**, а не из сети напрямую. Это ключевое архитектурное решение: интерфейс никогда не «ждёт сеть».
-3. **Sync layer** реплицирует локальные изменения на сервер, когда сеть появляется (Background Sync API).
-4. **Оптимистичное обновление:** изменение применяется в UI немедленно, до ответа сервера. Перед этим сохраняем снапшот, чтобы было куда откатиться.
-5. **Outbox-очередь:** каждое изменение кладётся в отдельное хранилище с флагом «pending». При восстановлении сети очередь воспроизводится **по порядку**, с retry и backoff.
-6. **Идемпотентные ключи мутаций:** клиент генерирует \`clientMutationId\`, сервер по нему отбрасывает повтор. Иначе двойная отправка создаст два заказа.
-7. **Разрешение конфликтов** — выбираем осознанно: last-write-wins просто, но теряет данные; версионирование через ETag отклоняет устаревшую запись и даёт смержить руками; CRDT решает задачу без потерь, но это дорого и оправдано в совместном редактировании.
+## Словарик терминов
 
-## Пример
+- **Offline-first** — подход, при котором приложение по умолчанию работает с локальными данными, а сеть считается приятным, но необязательным бонусом.
+- **Источник истины (source of truth)** — место, откуда UI берёт данные. Здесь — локальное хранилище, а не ответ сервера.
+- **Service Worker** — скрипт, который браузер запускает отдельно от страницы; перехватывает запросы и может отвечать из кэша, даже без сети.
+- **App shell** — каркас приложения (HTML, JS, CSS), без которого оно не запустится; его кэширует Service Worker.
+- **IndexedDB** — встроенная в браузер асинхронная база данных: хранилища объектов, индексы, транзакции.
+- **Оптимистичное обновление (optimistic update)** — показать результат действия сразу, не дожидаясь подтверждения сервера.
+- **Откат (rollback)** — отмена оптимистичного изменения, если сервер его отклонил.
+- **Слой ожидающих изменений (pending layer)** — список неподтверждённых правок, который накладывается поверх подтверждённого состояния.
+- **Outbox (исходящая очередь)** — локальная очередь изменений, которые ещё не доставлены на сервер.
+- **Идемпотентность и ключ идемпотентности** — свойство операции давать тот же результат при повторе; ключ — уникальный \`id\` мутации, по которому сервер узнаёт повтор.
+- **Background Sync API** — браузерный API, который будит Service Worker, когда появляется сеть, чтобы дослать очередь. Есть только в браузерах на Chromium.
+- **\`navigator.onLine\`** — флаг «есть ли сетевое подключение». \`false\` надёжно означает «нет сети», а \`true\` — лишь «интерфейс подключён», но не «сервер доступен».
+- **Конфликт** — одну и ту же запись изменили в двух местах, не видя изменений друг друга.
+- **Last-write-wins (LWW)** — правило «побеждает последняя запись»: просто, но молча теряет чужие правки.
+- **Оптимистичная блокировка через \`ETag\` / \`If-Match\`** — запись принимается, только если версия на сервере совпадает с той, что клиент видел; иначе \`412 Precondition Failed\`.
+- **CRDT (Conflict-free Replicated Data Type)** — структура данных, у которой слияние любых копий в любом порядке даёт одинаковый результат без конфликтов.
+- **Квота и вытеснение (eviction)** — лимит места под хранилища сайта и удаление браузером данных при нехватке места.
+
+## Как это работает под капотом
+
+Как устроено offline-first приложение по шагам:
+
+1. **Service Worker кэширует app shell** по стратегии cache-first, поэтому приложение открывается вообще без сети — даже после перезагрузки.
+2. **Данные лежат в IndexedDB, и UI читает из неё**, а не из сети напрямую. Это ключевое решение: интерфейс никогда не «ждёт сеть», он показывает то, что есть локально, и обновляется, когда приходят свежие данные.
+3. **Любое изменение пользователя делает две вещи атомарно:** применяет правку к локальным данным (пользователь сразу видит результат) и кладёт мутацию в outbox с уникальным \`id\` и статусом \`pending\`.
+4. **Отдельный sync-слой разбирает outbox по порядку**, когда есть сеть: при старте приложения, по событию \`online\`, по Background Sync там, где он поддерживается, и по таймеру с backoff (растущей паузой между попытками).
+5. **Сервер обрабатывает мутацию идемпотентно** по её \`id\`: если ответ потерялся и клиент прислал её снова, сервер не выполняет её второй раз, а отвечает прежним результатом.
+6. **Ответ сервера становится подтверждённым состоянием**, мутация удаляется из outbox. Если сервер отказал (валидация, нет прав, конфликт версий), откатывается **только эта мутация**, и пользователь получает понятное сообщение.
+7. **Конфликты разрешаются выбранной стратегией**: LWW, проверка версии с экраном слияния или CRDT — решение принимается заранее, а не когда баг уже в проде.
+
+### Пример 1. Наивный откат через снапшот — и почему он опасен
+
+Классическая реализация из многих статей:
 
 \`\`\`ts
-async function optimisticUpdate(item) {
-  const prev = store.snapshot();
-  store.apply(item);                 // мгновенно показать
-  try { await api.save(item); }
+async function optimisticUpdate(patch) {
+  const prev = store.snapshot();         // снимок ВСЕГО состояния
+  store.apply(patch);                    // мгновенно показать
+  try { await api.save(patch); }
   catch { store.restore(prev); toast('Не удалось сохранить'); } // откат
 }
 \`\`\`
 
-Почему так: снапшот берётся **до** применения, поэтому откат всегда возможен, даже если между делом пришли другие изменения. И пользователь обязательно получает уведомление — молчаливый откат хуже, чем ошибка.
+Для одной операции это работает. Но запустим две правки одного документа подряд: первая (переименование) упадёт через 50 мс, вторая (публикация) успеет сохраниться за 10 мс.
 
-## Что сказать на собеседовании
+\`\`\`ts
+// состояние: { title: 'Отчёт', status: 'draft' }
+optimisticUpdate({ title: 'Отчёт Q3' });      // сервер ответит 500
+optimisticUpdate({ status: 'published' });    // сервер ответит 200
+// откат: { title: 'Отчёт Q3' }
+// итог: { title: 'Отчёт', status: 'draft' }   ← публикация пропала из UI, хотя на сервере она есть
+\`\`\`
 
-> Принцип offline-first: локальное хранилище — источник истины для UI, а сеть только синхронизирует. Service Worker кэширует app shell и ассеты по cache-first, чтобы приложение стартовало без сети; данные лежат в IndexedDB, и интерфейс читает оттуда, а не из сети; отдельный sync-слой реплицирует изменения на сервер через Background Sync, когда связь появляется. Оптимистичные обновления: снимаю снапшот, применяю изменение в UI немедленно, при ошибке восстанавливаю снапшот и показываю уведомление. Офлайн-мутации складываю в outbox в IndexedDB с флагом pending и воспроизвожу по порядку с retry и backoff, обязательно с идемпотентными ключами мутаций, иначе повтор создаст дубликат. Конфликты решаю осознанно: last-write-wins прост, но теряет данные; версионирование через ETag отклоняет устаревшую запись; CRDT даёт слияние без потерь, но дорог и оправдан в совместном редактировании. И критично важен честный UX: статус «синхронизируется» или «не сохранено», чтобы пользователь понимал разницу между показанным и подтверждённым.
+Снимок первой операции был сделан **до** второй правки, поэтому его восстановление стёрло и чужое, уже подтверждённое изменение. Интерфейс теперь врёт: на сервере документ опубликован, а пользователь видит черновик. Глобальный снапшот безопасен, только если операции строго последовательны (например, кнопка блокируется до ответа).
 
-## Ловушки
+### Пример 2. Правильный откат: подтверждённое состояние + слой ожидающих правок
 
-- **Оптимистичный апдейт без отката** — пользователь видит сохранённые данные, которых на сервере нет. Самая болезненная категория багов доверия.
-- **Очередь без идемпотентности:** ретрай после таймаута создаёт второй платёж, хотя первый прошёл.
-- **Нечестный UX.** Если интерфейс не отличает «сохранено локально» от «подтверждено сервером», пользователь узнает правду в самый неподходящий момент.
-- **Раздувание IndexedDB** без чистки: квота кончается, запись падает, и приложение внезапно перестаёт работать офлайн.
-- **Тестирование только happy path.** Сетевые сбои, частичная синхронизация, конфликт версий — именно там и живут баги offline-first.
-- **Спросят следом:** как решаете конфликт, если два устройства правили одну запись (ETag/версия плюс явный экран разрешения), и почему порядок в очереди важен (мутация «удалить» после «создать» и наоборот дают разный результат).`,
+Надёжнее хранить отдельно то, что подтвердил сервер, и список неподтверждённых правок, а то, что видит UI, вычислять. На сигналах Angular это несколько строк:
+
+\`\`\`ts
+import { signal, computed } from '@angular/core';
+
+const confirmed = signal({ title: 'Отчёт', status: 'draft' });   // что подтвердил сервер
+const pending = signal<{ id: number; patch: object }[]>([]);     // ещё не подтверждённые правки
+const view = computed(() =>                                       // что видит UI
+  pending().reduce((state, m) => ({ ...state, ...m.patch }), confirmed()));
+
+let seq = 0;
+async function optimisticUpdate(patch: object) {
+  const m = { id: ++seq, patch };
+  pending.update((list) => [...list, m]);                         // показать сразу
+  try {
+    const saved = await api.save(patch);
+    confirmed.update((s) => ({ ...s, ...saved }));                // перенести в подтверждённое
+  } catch {
+    toast('Не удалось сохранить название');                        // сообщить пользователю
+  } finally {
+    pending.update((list) => list.filter((x) => x !== m));        // убрать только свою правку
+  }
+}
+
+optimisticUpdate({ title: 'Отчёт Q3' });      // упадёт
+optimisticUpdate({ status: 'published' });    // сохранится
+// сразу: { title: 'Отчёт Q3', status: 'published' }
+// итог:  { title: 'Отчёт', status: 'published' }   ← откатилось только название
+\`\`\`
+
+Почему это работает: откат — это просто удаление одной правки из слоя, и \`computed\` пересчитывает картину поверх актуального подтверждённого состояния. Так же устроены оптимистичные слои в Apollo Client: при ошибке мутации он снимает только её слой. Дополнительный бонус — UI легко показывает статус: если \`pending()\` не пуст, рядом с записью горит «сохраняется…».
+
+### Пример 3. Outbox в IndexedDB с ключом идемпотентности
+
+Очередь исходящих изменений должна пережить перезагрузку вкладки, поэтому она живёт в IndexedDB. Ключ хранилища \`seq\` с автоинкрементом задаёт порядок, а \`id\` из \`crypto.randomUUID()\` служит ключом идемпотентности.
+
+\`\`\`ts
+const req2p = (r) => new Promise((ok, fail) => { r.onsuccess = () => ok(r.result); r.onerror = () => fail(r.error); });
+
+const open = indexedDB.open('app', 1);
+open.onupgradeneeded = () => open.result.createObjectStore('outbox', { keyPath: 'seq', autoIncrement: true });
+const db = await req2p(open);
+const store = (mode) => db.transaction('outbox', mode).objectStore('outbox');
+
+async function enqueue(type, payload) {
+  const mutation = { id: crypto.randomUUID(), type, payload, status: 'pending' };
+  await req2p(store('readwrite').add(mutation));        // seq проставится сам и задаст порядок
+}
+
+let flushing = false;
+async function flush() {
+  if (flushing) return;                                 // не запускать два прогона параллельно
+  flushing = true;
+  try {
+    const all = await req2p(store('readonly').getAll()); // getAll отдаёт записи в порядке seq
+    for (const m of all) {
+      try {
+        await fetch(\`/api/\${m.type}\`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Idempotency-Key': m.id }, // тот же ключ при повторе
+          body: JSON.stringify(m.payload),
+        }).then((r) => { if (!r.ok) throw new Error(String(r.status)); });
+        await req2p(store('readwrite').delete(m.seq));
+        console.log('отправлено', m.type);
+      } catch {
+        console.log('сеть упала на', m.type, '— остановка, порядок сохранён');
+        break;                                          // следующие не отправляем, чтобы не нарушить порядок
+      }
+    }
+  } finally { flushing = false; }
+}
+
+await enqueue('createOrder', { sku: 'A1', qty: 2 });
+await enqueue('addComment', { text: 'Позвоните перед доставкой' });
+await flush();   // сервер заказ создал, но ответ потерялся по дороге
+await flush();   // повтор с тем же ключом
+// сеть упала на createOrder — остановка, порядок сохранён
+// отправлено createOrder
+// отправлено addComment
+// итог: на сервере ровно один заказ, очередь пуста
+\`\`\`
+
+Проверено на \`fake-indexeddb\` с сервером, который запоминает обработанные ключи. Самый коварный случай — «запрос дошёл, ответ потерялся»: клиент не знает, создан ли заказ, и обязан повторить. Если бы при повторе генерировался новый \`id\`, сервер создал бы второй заказ. Заголовок \`Idempotency-Key\` — распространённое соглашение (так делает, например, Stripe), но сервер должен его поддерживать: хранить ключи и прежние ответы хотя бы сутки. В реальном коде различайте ошибки: сетевую — повторять с backoff, а бизнес-отказ \`4xx\` — не повторять вечно, а пометить мутацию \`failed\`, откатить её и показать пользователю.
+
+### Пример 4. Порядок и уплотнение очереди
+
+Порядок в очереди важен: «создать, потом удалить» и «удалить, потом создать» дают противоположный результат. Поэтому очередь отправляют строго последовательно, а перед отправкой её можно уплотнить:
+
+\`\`\`ts
+function compact(queue) {
+  const result = [];
+  for (const m of queue) {
+    const i = result.findIndex((x) => x.entityId === m.entityId);
+    const prev = result[i];
+    if (!prev) { result.push(m); continue; }
+    if (prev.op === 'create' && m.op === 'update') result[i] = { ...prev, data: { ...prev.data, ...m.data } };
+    else if (prev.op === 'update' && m.op === 'update') result[i] = { ...prev, data: { ...prev.data, ...m.data } };
+    else if (prev.op === 'create' && m.op === 'delete') result.splice(i, 1); // сервер о записи не знал
+    else result.push(m);
+  }
+  return result;
+}
+
+compact([
+  { op: 'create', entityId: 't1', data: { text: 'Купить молоко' } },
+  { op: 'update', entityId: 't1', data: { done: true } },
+  { op: 'create', entityId: 't2', data: { text: 'Позвонить' } },
+  { op: 'delete', entityId: 't2' },
+  { op: 'update', entityId: 't3', data: { text: 'A' } },
+  { op: 'update', entityId: 't3', data: { text: 'B' } },
+]);
+// [ { op: 'create', entityId: 't1', data: { text: 'Купить молоко', done: true } },
+//   { op: 'update', entityId: 't3', data: { text: 'B' } } ]
+\`\`\`
+
+Шесть мутаций превратились в две. Отдельная деталь: созданным офлайн записям нужен \`id\` **до** ответа сервера, иначе на них не сослаться из следующих мутаций. Поэтому \`id\` генерирует клиент (UUID), а сервер принимает его как есть.
+
+### Background Sync и запасные триггеры синхронизации
+
+Background Sync позволяет дослать очередь, даже если пользователь уже закрыл вкладку: браузер разбудит Service Worker, когда появится сеть.
+
+\`\`\`ts
+// в приложении: попросить синхронизацию, когда будет сеть
+const reg = await navigator.serviceWorker.ready;
+if ('sync' in reg) {
+  await (reg as any).sync.register('flush-outbox');
+} else {
+  window.addEventListener('online', () => flush());   // запасной вариант для Firefox и Safari
+}
+\`\`\`
+
+\`\`\`js
+// sw.js
+self.addEventListener('sync', (event) => {
+  if (event.tag === 'flush-outbox') event.waitUntil(flushOutbox()); // браузер повторит, если промис упадёт
+});
+\`\`\`
+
+Background Sync есть только в браузерах на Chromium (Chrome, Edge и подобные), в Firefox и Safari его нет. Поэтому он не может быть единственным механизмом: синхронизацию запускают ещё при старте приложения, по событию \`online\`, при возврате на вкладку (\`visibilitychange\`) и по таймеру с backoff. А на \`navigator.onLine === true\` не полагаются: это значит только «есть сетевой интерфейс». Подключённый Wi-Fi без интернета или страница авторизации в отеле тоже дают \`true\`. Настоящий признак сети — успешный запрос.
+
+В Angular-приложении Service Worker генерирует \`@angular/service-worker\`, и своих обработчиков в него не добавить напрямую. Обычный приём — свой файл-обёртка, который подключает Angular SW и добавляет обработчик \`sync\`, и регистрация этого файла через \`provideServiceWorker('custom-sw.js')\`:
+
+\`\`\`js
+// custom-sw.js (кладётся в assets сборки)
+importScripts('./ngsw-worker.js');          // всё кэширование Angular остаётся как было
+self.addEventListener('sync', (event) => {
+  if (event.tag === 'flush-outbox') event.waitUntil(flushOutbox());
+});
+\`\`\`
+
+### Пример 5. Конфликты: версия через \`If-Match\` и ответ 412
+
+Два устройства прочитали документ версии \`v3\`, и оба отправляют правку. Сервер принимает запись, только если \`If-Match\` совпадает с текущим \`ETag\`:
+
+\`\`\`js
+// сервер (фрагмент)
+if (req.headers['if-match'] !== \`"v\${doc.version}"\`) { res.writeHead(412); return res.end(); }
+doc = { ...newData, version: doc.version + 1 };
+res.writeHead(200, { ETag: \`"v\${doc.version}"\` });
+
+// клиенты: оба отправляют If-Match: "v3"
+// ноутбук: 200 "v4"
+// телефон: 412          ← версия устарела, правка не принята
+\`\`\`
+
+Получив \`412 Precondition Failed\`, клиент не перезаписывает чужие изменения молча. Он загружает актуальную версию и либо сливает правки автоматически (если менялись разные поля), либо показывает экран «ваша версия / версия на сервере». Это и есть ответ на вопрос «два устройства правили одну запись».
+
+### Стратегии разрешения конфликтов
+
+\`\`\`ts
+// LWW: побеждает запись с большей меткой времени
+const lww = (a, b) => (b.ts > a.ts ? b : a);
+lww({ value: 'ноутбук', ts: 1000 }, { value: 'телефон', ts: 1005 }).value; // 'телефон'
+
+// G-Counter (простейший CRDT): у каждого устройства свой счётчик, слияние — максимум по каждому
+const merge = (a, b) => { const r = { ...a }; for (const k in b) r[k] = Math.max(r[k] ?? 0, b[k]); return r; };
+const total = (c) => Object.values(c).reduce((s, v) => s + v, 0);
+const laptop = { laptop: 2 };   // офлайн: +2 лайка на ноутбуке
+const phone = { phone: 3 };     // офлайн: +3 на телефоне
+total(merge(laptop, phone));    // 5
+total(merge(phone, laptop));    // 5 — порядок слияния не важен
+\`\`\`
+
+- **LWW** — проще всего, но правка ноутбука просто исчезла. Плюс часы устройств расходятся, поэтому метки времени лучше брать с сервера или использовать номер версии.
+- **Проверка версии (\`ETag\`/\`If-Match\`, поле \`version\`)** — ничего не теряется молча, но нужен сценарий слияния и иногда — экран для пользователя.
+- **CRDT** — слияние без конфликтов и без потерь в любом порядке (обе правки дали 5). Цена — сложность и объём метаданных; оправдано в совместном редактировании, где обычно берут готовые библиотеки вроде Yjs или Automerge.
+
+### Где это применяется на практике
+
+- **Приложения для полевых сотрудников и складов**: инвентаризация, приёмка товара, акты осмотра — работают в подвалах и на трассе, синхронизируются при появлении связи.
+- **Формы и черновики в корпоративных системах**: длинная анкета или отчёт сохраняется в IndexedDB при каждом изменении и не теряется при обрыве или случайном закрытии вкладки.
+- **Списки задач, заметки, CRM**: мгновенная отметка «выполнено», лайк, смена статуса через оптимистичное обновление с откатом конкретной правки.
+- **Большие таблицы с инлайн-редактированием**: ячейка сразу показывает новое значение с индикатором «сохраняется», а при отказе сервера возвращается только она.
+- **Совместное редактирование** (документы, доски): CRDT, синхронизация поверх WebSocket и локальная копия в IndexedDB.
+
+## Важные нюансы и подводные камни
+
+- **Оптимистичный апдейт без отката.** Пользователь видит сохранённые данные, которых на сервере нет. Самая болезненная категория багов доверия.
+- **Откат через глобальный снапшот.** При параллельных операциях восстановление старого снимка стирает чужие, уже подтверждённые изменения. Откатывайте конкретную правку, а не всё состояние.
+- **Очередь без идемпотентности.** Повтор после таймаута создаёт второй платёж, хотя первый прошёл. Ключ мутации генерируется один раз и не меняется между попытками.
+- **Нечестный UX.** Если интерфейс не отличает «сохранено локально» от «подтверждено сервером», пользователь узнает правду в самый неподходящий момент. Нужны статусы «синхронизируется», «не сохранено», «конфликт».
+- **Молчаливый откат.** Отменить изменение без уведомления хуже, чем показать ошибку: пользователь уверен, что всё сохранено.
+- **Бесконечный повтор бизнес-ошибки.** \`400\` или \`403\` от сервера не исправятся повтором; такая мутация блокирует всю очередь. Помечайте её \`failed\` и идите дальше или просите пользователя решить.
+- **Background Sync — не везде.** Только Chromium; без запасных триггеров в Safari и Firefox очередь будет ждать до следующего открытия приложения.
+- **\`navigator.onLine\` врёт в сторону оптимизма.** \`true\` не значит, что сервер доступен.
+- **Раздувание IndexedDB без чистки.** Квота кончается, запись падает, и приложение внезапно перестаёт работать офлайн. Чистите подтверждённые данные, следите за \`navigator.storage.estimate()\` и просите \`navigator.storage.persist()\`.
+- **Браузер может стереть данные.** При нехватке места или, в Safari, у сайта, с которым давно не взаимодействовали, хранилища могут быть очищены. Неотправленный outbox — самое ценное, что есть у клиента; держите его маленьким и синхронизируйте как можно раньше.
+- **Две вкладки — два отправителя.** Если каждая вкладка запускает \`flush\`, одна мутация может уйти дважды. Идемпотентность спасает от дублей, а Web Locks API (\`navigator.locks.request\`) позволяет выбрать одного отправителя.
+- **Тестирование только happy path.** Сетевые сбои, частичная синхронизация, конфликт версий — именно там живут баги offline-first. Тестируйте с офлайн-режимом DevTools и в e2e (например, \`context.setOffline(true)\` в Playwright).
+- **Изменение схемы данных.** Новая версия приложения должна уметь прочитать старые записи и старые мутации из outbox — для этого есть миграции в \`onupgradeneeded\`.
+
+**Плюсы:** мгновенный отклик интерфейса, работа без сети, устойчивость к плохой связи, ввод пользователя не теряется.
+**Минусы:** заметно сложнее архитектура (очередь, идемпотентность, конфликты, миграции локальной схемы), нужна поддержка на сервере, сложное тестирование, риск рассинхрона и квоты хранилища.
+
+## Как это спрашивают на собеседовании
+
+**Главный вывод:** в offline-first UI читает и пишет локальное хранилище, а сеть только синхронизирует: изменения идут в outbox в IndexedDB и доставляются по порядку с идемпотентными ключами. Оптимистичное обновление откатывает конкретную правку (слой неподтверждённых изменений), а не восстанавливает глобальный снимок, и всегда сообщает пользователю об откате.
+
+Типичные формулировки: «Как сделать, чтобы приложение работало без интернета?», «Как реализовать оптимистичное обновление с откатом?», «Что будет, если запрос дошёл, а ответ потерялся?», «Как решать конфликты при синхронизации?».
+
+Что могут спросить следом:
+
+- *Как решаете конфликт, если два устройства правили одну запись?* — Версия или \`ETag\` с \`If-Match\`: устаревшая запись получает \`412\`, затем автоматическое слияние по полям или явный экран разрешения; для совместного редактирования — CRDT.
+- *Почему важен порядок в очереди?* — «Создать, потом удалить» и «удалить, потом создать» дают разный результат, а следующие мутации ссылаются на результат предыдущих; поэтому отправка последовательная.
+- *Что такое ключ идемпотентности?* — Уникальный \`id\` мутации, сгенерированный один раз; по нему сервер распознаёт повтор и не выполняет операцию дважды.
+- *Можно ли положиться на Background Sync?* — Нет: он есть только в Chromium, нужны запасные триггеры — старт приложения, \`online\`, \`visibilitychange\`, таймер.
+- *Где хранить данные?* — В IndexedDB: она асинхронная, вмещает много и хранит объекты; localStorage синхронный, маленький и только для строк.
+
+### Ответ на 1 минуту
+
+> Принцип offline-first: локальное хранилище — источник истины для UI, а сеть только синхронизирует. Service Worker кэширует app shell по cache-first, чтобы приложение стартовало без сети, данные лежат в IndexedDB, и интерфейс читает оттуда. Каждое изменение я применяю локально и кладу в outbox в IndexedDB с уникальным ключом идемпотентности, а sync-слой отправляет очередь по порядку с backoff — при старте, по событию \`online\` и через Background Sync там, где он есть, то есть только в Chromium. Оптимистичное обновление делаю через подтверждённое состояние плюс слой неподтверждённых правок: при ошибке убираю только свою правку и показываю уведомление — глобальный снапшот при параллельных операциях стёр бы чужие изменения. Конфликты решаю осознанно: LWW прост, но теряет данные, версия через \`If-Match\` и ответ 412 даёт слить правки, CRDT — для совместного редактирования. И обязательно честный статус «сохраняется» или «не сохранено».`,
       en: `## In short
 
 Offline-first means **local storage becomes the source of truth for the UI, and the network is demoted to a sync mechanism**. The UI always reads from IndexedDB and always writes to it; pushing to the server is a separate background process.
@@ -6971,49 +8469,309 @@ Why this works: the snapshot is taken **before** applying, so rollback is always
       en: 'How do you implement authentication with token refresh and silent renewal on the frontend?',
     },
     answer: {
-      ru: `## Коротко
+      ru: `## В чём суть
 
-Есть **два токена с разными ролями**. Access — короткий пропуск на 5–15 минут, лежит в памяти и ходит в каждом запросе. Refresh — долгий, лежит в httpOnly-куке, недоступной JavaScript, и нужен только чтобы выпросить новый access. Задача фронтенда — обновлять access **до** того, как пользователь упрётся в 401.
+В схеме с обновлением есть **два токена с разными ролями**. Access-токен — короткий пропуск на 5–15 минут: лежит в памяти и уходит в каждом запросе к API. Refresh-токен — долгий: лежит в httpOnly-cookie, недоступной JavaScript, и нужен только чтобы получить новый access. Задача фронтенда — незаметно обновлять access, по возможности **до** того, как пользователь упрётся в 401, и правильно обработать 401, если это всё-таки случилось.
 
-Аналогия: пропуск в бизнес-центре. Access — бумажный талон на 15 минут, его не жалко: украли — через четверть часа он бесполезен. Refresh — ваша именная карта в закрытом кармане, по ней на ресепшне выдают новый талон. И карту при каждом обмене меняют на новую (ротация): если старой попытались воспользоваться — значит, её украли, и охрана блокирует всё.
+Аналогия: пропуск в бизнес-центре. Access — бумажный талон на 15 минут, его не жалко: украли — через четверть часа он бесполезен. Refresh — ваша именная карта во внутреннем кармане, по ней на ресепшене выдают новый талон. И карту при каждом обмене меняют на новую (ротация): если кто-то пришёл со старой картой, значит, её украли, и охрана блокирует всё.
 
-## Как это работает по шагам
+**Какую проблему решает.** Один долгоживущий токен — это компромисс без хороших вариантов: короткий заставляет пользователя логиниться каждые 15 минут, длинный в случае кражи работает у злоумышленника неделями. Пара токенов разделяет задачи: то, что ходит в каждом запросе и рискует утечь, живёт минуты; то, что живёт долго, спрятано от JavaScript и предъявляется только одному эндпоинту. Но наивная реализация на фронтенде ломается сразу: пять параллельных запросов получают 401 и запускают пять обновлений, с ротацией это мгновенный разлогин, а ошибка в интерсепторе даёт бесконечный цикл.
 
-1. **Access token** — короткоживущий, хранится **в памяти** (переменная, сигнал), не в localStorage: localStorage читается любым XSS-скриптом.
-2. **Refresh token** — долгоживущий, лежит в **httpOnly + Secure + SameSite** куке, недоступной JS. Обновление идёт credentialled-запросом, где кука уходит автоматически.
-3. **Реактивный сценарий:** пришёл \`401\` → интерсептор запускает refresh и после успеха повторяет исходный запрос.
-4. **Проблема одновременных 401:** пять параллельных запросов получат 401 одновременно, и наивная реализация запустит пять refresh. Лечение — **single-flight**: первый запускает обновление, остальные ждут тот же результат через \`shareReplay(1)\` или мьютекс-Subject.
-5. **Silent renewal — проактивный сценарий:** обновлять access **до истечения**, по таймеру от \`exp\`, чтобы пользователь вообще не встречал 401. В OIDC это silent renew через скрытый iframe или refresh-token grant.
-6. **Refresh token rotation:** каждый refresh выдаёт новый refresh-токен и инвалидирует старый. Украденный одноразовый токен бесполезен, а **повторное использование старого = сигнал компрометации**, и сервер убивает всю сессию.
-7. **CSRF:** раз refresh лежит в куке, нужна защита — \`SameSite\` плюс double-submit-токен.
-8. **Logout:** ревокация на сервере, очистка куки и сброс access из памяти — все три шага, иначе выход только «визуальный».
+## Словарик терминов
 
-## Пример
+- **Аутентификация** — проверка, кто вы. **Авторизация** — проверка, что вам можно.
+- **Access-токен** — короткоживущий токен, который клиент прикладывает к запросам к API в заголовке \`Authorization: Bearer <token>\`.
+- **Refresh-токен** — долгоживущий токен, которым можно получить новый access-токен на специальном эндпоинте.
+- **JWT (JSON Web Token)** — формат токена из трёх частей через точку: заголовок, полезная нагрузка (claims) и подпись, всё в base64url.
+- **Claim \`exp\`** — поле JWT «истекает в», в секундах от 1 января 1970 года (Unix time).
+- **401 Unauthorized** — сервер не принял учётные данные (токен истёк или неверен). Не путать с **403 Forbidden** — «знаю, кто вы, но нельзя».
+- **Интерсептор (\`HttpInterceptorFn\`)** — функция Angular, через которую проходит каждый запрос \`HttpClient\`: может изменить запрос, обработать ответ и ошибку.
+- **\`HttpContextToken\`** — типизированный флажок, который едет вместе с запросом и виден интерсепторам.
+- **httpOnly-cookie** — cookie, которую браузер отправляет сам, но JavaScript прочитать не может; XSS её не украдёт.
+- **\`Secure\` и \`SameSite\`** — атрибуты cookie: отправлять только по HTTPS / не отправлять (или ограниченно отправлять) с запросами, пришедшими с чужого сайта.
+- **\`withCredentials\`** — флаг запроса «отправь cookie и прими \`Set-Cookie\`», нужен для запросов на другой домен.
+- **XSS (межсайтовый скриптинг)** — чужой JavaScript выполняется на вашей странице и может читать всё, что доступно JS: localStorage, переменные, DOM.
+- **CSRF (подделка межсайтового запроса)** — чужой сайт заставляет браузер отправить запрос к вам, и браузер сам прикладывает ваши cookie.
+- **Single-flight** — приём «один запрос на всех»: первый вызывающий запускает операцию, остальные ждут её результат.
+- **\`shareReplay\`** — оператор RxJS, который делит одну подписку на источник между всеми подписчиками и повторяет последнее значение опоздавшим.
+- **Silent renewal (тихое обновление)** — обновление access-токена заранее, без участия пользователя.
+- **OIDC (OpenID Connect)** — надстройка над OAuth 2.0 для входа пользователей; в ней описан и тихий вход через скрытый iframe с \`prompt=none\`.
+- **Ротация refresh-токенов (rotation)** — каждый обмен выдаёт новый refresh-токен, а старый становится недействительным.
+- **Обнаружение повторного использования (reuse detection)** — если пришёл уже использованный refresh-токен, сервер считает его украденным и отзывает всю сессию.
+- **Ревокация (revocation)** — отзыв токена на сервере, после которого он перестаёт работать досрочно.
+- **\`BroadcastChannel\`** — API для сообщений между вкладками одного сайта.
+- **Web Locks API (\`navigator.locks\`)** — браузерные блокировки, общие для всех вкладок сайта: «этот код выполняет только одна вкладка за раз».
 
-\`\`\`ts
-// single-flight: одно обновление на всех
-private refresh$ = this.doRefresh().pipe(shareReplay(1));
+## Как это работает под капотом
 
-catchError(err => {
-  if (err.status === 401) return this.refresh$.pipe(switchMap(() => retry(req)));
-  return throwError(() => err);
-})
+Схема по шагам:
+
+1. **Логин.** Сервер отвечает access-токеном в теле JSON и ставит refresh-токен через \`Set-Cookie\` с атрибутами \`HttpOnly; Secure; SameSite\`. Поэтому JavaScript видит только access, а refresh браузер хранит и отправляет сам.
+2. **Access хранится в памяти** — в сигнале или поле сервиса, а не в localStorage: localStorage читается любым XSS-скриптом, а память вкладки исчезает при перезагрузке и недоступна другим сайтам.
+3. **Каждый запрос к своему API** проходит через интерсептор, который добавляет \`Authorization: Bearer <access>\`.
+4. **Реактивный сценарий:** пришёл \`401\` → интерсептор вызывает \`POST /auth/refresh\` (cookie уходит автоматически) → получает новый access → повторяет исходный запрос **один раз**.
+5. **Проблема одновременных 401:** при загрузке дашборда десять запросов получают 401 почти одновременно. Поэтому refresh делается single-flight: первый запускает обновление, остальные подписываются на тот же результат.
+6. **Проактивный сценарий (silent renewal):** по \`exp\` access-токена ставится таймер, и обновление происходит за минуту до истечения — пользователь вообще не встречает 401.
+7. **Ротация:** каждый refresh выдаёт новый refresh-токен и инвалидирует старый. Украденный одноразовый токен бесполезен, а **повторное предъявление старого — сигнал компрометации**, и сервер убивает всю сессию.
+8. **CSRF:** раз refresh лежит в cookie, эндпоинт обновления надо защитить: \`SameSite\`, проверка \`Origin\` и/или CSRF-токен (double-submit).
+9. **Перезагрузка страницы:** access из памяти пропал — это нормально; при старте приложение тихо вызывает refresh по cookie и восстанавливает сессию.
+10. **Logout** — три шага: ревокация refresh на сервере, очистка cookie (\`Set-Cookie\` с истёкшим сроком) и сброс access из памяти. Плюс оповещение остальных вкладок. Иначе выход только «визуальный».
+
+### Пример 1. Где хранить токены
+
+\`\`\`text
+Set-Cookie: refresh_token=8f3c...e1; HttpOnly; Secure; SameSite=Strict; Path=/auth/refresh; Max-Age=1209600
 \`\`\`
 
-Почему так: \`shareReplay(1)\` превращает refresh в единственный запрос, результат которого получают все ожидающие. Без этого при загрузке дашборда с десятью виджетами вы получите десять параллельных refresh и, при включённой ротации, мгновенный разлогин.
+- \`HttpOnly\` — JavaScript cookie не видит, XSS её не прочитает.
+- \`Secure\` — только по HTTPS.
+- \`SameSite=Strict\` — браузер не приложит cookie к запросу, инициированному чужим сайтом.
+- \`Path=/auth/refresh\` — cookie уходит **только** на эндпоинт обновления, а не с каждым запросом к API. Меньше мест, где она может «засветиться».
+- \`Max-Age=1209600\` — 14 дней жизни сессии.
 
-## Что сказать на собеседовании
+\`\`\`ts
+@Injectable({ providedIn: 'root' })
+export class AuthService {
+  readonly accessToken = signal<string | null>(null);  // только память вкладки
+  readonly isLoggedIn = computed(() => this.accessToken() !== null);
+}
+\`\`\`
 
-> Access-токен делаю короткоживущим, на 5–15 минут, и храню в памяти — в localStorage нельзя, это классическая XSS-уязвимость. Refresh-токен долгоживущий и лежит в httpOnly Secure SameSite-куке, недоступной JavaScript, обновление идёт credentialled-запросом. Реактивная схема: на 401 интерсептор запускает refresh и повторяет исходный запрос. Ключевая деталь — проблема одновременных 401: несколько параллельных запросов не должны порождать несколько refresh, поэтому делаю single-flight через \`shareReplay(1)\` — первый запускает обновление, остальные ждут его результата. Плюс silent renewal: обновляю access проактивно по таймеру от claim \`exp\`, чтобы пользователь вообще не встречал 401. По безопасности обязательна ротация refresh-токенов — каждый обмен выдаёт новый и инвалидирует старый, а повторное использование старого трактуется как компрометация и рвёт сессию; при хранении в куке нужна CSRF-защита; при логауте — ревокация на сервере, очистка куки и сброс access из памяти. И синхронизация логаута между вкладками через \`BroadcastChannel\`.
+Почему не localStorage: любой скрипт на странице — внедрённый через XSS или пришедший с заражённым npm-пакетом — выполнит \`localStorage.getItem('token')\` и отправит токен себе. Память тоже доступна XSS-скрипту, пока он работает на странице, но украсть оттуда **долгоживущий** секрет нельзя: refresh в httpOnly-cookie, а access умрёт через 15 минут. Это снижение ущерба, а не полная защита: от XSS защищают санитизация и CSP.
 
-## Ловушки
+### Пример 2. Наивный интерсептор: шторм обновлений
+
+\`\`\`ts
+// ❌ каждый 401 запускает свой refresh
+catchError((err) => err.status === 401
+  ? auth.doRefresh().pipe(switchMap((t) => next(withToken(req, t))))
+  : throwError(() => err))
+\`\`\`
+
+Дашборд с пятью виджетами открылся с истёкшим токеном → пять 401 → пять параллельных \`POST /auth/refresh\` с одной и той же cookie. Без ротации это просто лишняя нагрузка. С ротацией первый refresh выдаёт новый токен и гасит старый, а остальные четыре приходят со **старым** — сервер видит повторное использование, считает токен украденным и отзывает сессию. Пользователь вылетает на логин через секунду после открытия страницы.
+
+### Пример 3. Ловушка: \`shareReplay\` в поле класса
+
+Частый «фикс» — сделать общий поток обновления полем класса:
+
+\`\`\`ts
+// ❌ поток создаётся один раз на всю жизнь сервиса
+private refresh$ = this.doRefresh().pipe(shareReplay(1));
+\`\`\`
+
+Первую волну 401 это действительно решает: один refresh на всех. Но \`shareReplay(1)\` **запоминает ответ навсегда**: источник уже завершился, и все следующие подписчики получают тот же старый токен без нового запроса. Проверено с \`HttpTestingController\`:
+
+\`\`\`text
+refresh-запросов в волне 1: 1
+/api/a повтор с Bearer new1
+/api/b повтор с Bearer new1
+/api/c повтор с Bearer new1
+--- через 15 минут токен снова истёк ---
+refresh-запросов в волне 2: 0
+/api/d повтор с Bearer new1      ← протухший токен из кэша shareReplay
+/api/d error 401
+\`\`\`
+
+Общий поток должен жить ровно столько, сколько идёт одно обновление, и сбрасываться по его окончании. Классическая альтернатива \`shareReplay\` — «мьютекс» на флаге и \`BehaviorSubject\`: первый 401 ставит флаг \`isRefreshing\` и обнуляет Subject, остальные ждут через \`filter(Boolean)\` и \`take(1)\`, пока Subject не выдаст новый токен. Суть та же: одно обновление, все ждут его результат, и состояние сбрасывается после завершения.
+
+### Пример 4. Правильный single-flight интерсептор
+
+\`\`\`ts
+import { HttpClient, HttpContext, HttpContextToken, HttpErrorResponse, HttpInterceptorFn } from '@angular/common/http';
+import { Injectable, inject, signal } from '@angular/core';
+import { Observable, catchError, finalize, map, shareReplay, switchMap, tap, throwError } from 'rxjs';
+
+export const SKIP_AUTH = new HttpContextToken<boolean>(() => false);
+
+@Injectable({ providedIn: 'root' })
+export class AuthService {
+  private http = inject(HttpClient);
+  readonly accessToken = signal<string | null>(null);
+  private refreshInFlight$: Observable<string> | null = null;
+
+  refresh(): Observable<string> {
+    this.refreshInFlight$ ??= this.http
+      .post<{ accessToken: string }>('/auth/refresh', null, {
+        withCredentials: true,                            // refresh-cookie уйдёт сама
+        context: new HttpContext().set(SKIP_AUTH, true),  // наш интерсептор этот запрос не трогает
+      })
+      .pipe(
+        map((r) => r.accessToken),
+        tap((token) => this.accessToken.set(token)),
+        finalize(() => (this.refreshInFlight$ = null)),   // обновление закончилось — следующий будет новым
+        shareReplay(1),                                   // все ждущие получают один и тот же результат
+      );
+    return this.refreshInFlight$;
+  }
+
+  logout(): void { this.accessToken.set(null); /* + запрос на ревокацию и переход на логин */ }
+}
+
+export const authInterceptor: HttpInterceptorFn = (req, next) => {
+  if (req.context.get(SKIP_AUTH) || !req.url.startsWith('/api/')) return next(req); // чужим доменам токен не шлём
+  const auth = inject(AuthService);
+  const withToken = (r: typeof req, token: string | null) =>
+    token ? r.clone({ setHeaders: { Authorization: \`Bearer \${token}\` } }) : r;
+
+  return next(withToken(req, auth.accessToken())).pipe(
+    catchError((err) => {
+      if (!(err instanceof HttpErrorResponse) || err.status !== 401) return throwError(() => err);
+      return auth.refresh().pipe(
+        catchError((refreshErr) => { auth.logout(); return throwError(() => refreshErr); }), // refresh не удался
+        switchMap((token) => next(withToken(req, token))),  // повтор ровно один раз
+      );
+    }),
+  );
+};
+// app.config.ts: provideHttpClient(withInterceptors([authInterceptor]))
+\`\`\`
+
+Тот же тест, что и в примере 3:
+
+\`\`\`text
+refresh-запросов в волне 1: 1
+/api/a повтор с Bearer new1
+/api/b повтор с Bearer new1
+/api/c повтор с Bearer new1
+--- через 15 минут токен снова истёк ---
+refresh-запросов в волне 2: 1
+/api/d повтор с Bearer new2
+--- refresh-cookie истекла, /auth/refresh ответил 401 ---
+logout()
+/api/e error 401
+ещё refresh-запросов после отказа: 0
+\`\`\`
+
+Что здесь важно. \`??=\` создаёт поток, только если обновление сейчас не идёт. \`finalize\` стоит **до** \`shareReplay\`, поэтому срабатывает, когда завершился сам HTTP-запрос, и обнуляет поле. Запрос на refresh помечен \`SKIP_AUTH\` через \`HttpContextToken\` — иначе 401 от самого refresh снова запустил бы refresh, и получилась бы рекурсия. Повтор исходного запроса идёт через \`next\`, то есть **мимо** этого интерсептора: если он снова получит 401, второго обновления не будет — бесконечного цикла нет. И токен прикладывается только к своему API: интерсептор, который добавляет \`Authorization\` ко всем запросам подряд, отправит токен и на сторонние домены.
+
+### Пример 5. Silent renewal по таймеру от \`exp\`
+
+Чтобы пользователь не встречал 401 вовсе, access обновляют заранее. Для этого нужно прочитать \`exp\` из JWT. Полезная нагрузка — это base64url, и в ней может быть кириллица, поэтому простого \`atob\` мало:
+
+\`\`\`ts
+function decodeJwtPayload(jwt: string) {
+  const base64 = jwt.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'); // base64url → base64
+  const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+  return JSON.parse(new TextDecoder().decode(bytes));                    // байты → UTF-8 строка
+}
+
+const payload = decodeJwtPayload(token);
+console.log(payload);
+// { sub: '42', name: 'Ада', exp: 1767225600, iat: 1767224700 }
+console.log(payload.exp - payload.iat);
+// 900 — токен живёт 15 минут; если прошла минута, обновлять через 13 минут (за минуту до exp)
+\`\`\`
+
+С одним \`JSON.parse(atob(...))\` вместо имени «Ада» получатся «кракозябры»: \`atob\` возвращает байты как символы Latin-1. Декодирование нужно только для планирования — **проверять подпись на клиенте бессмысленно**, это делает сервер.
+
+Планировщик на RxJS: каждый новый токен перезапускает таймер благодаря \`switchMap\`.
+
+\`\`\`ts
+import { takeUntilDestroyed, toObservable } from '@angular/core/rxjs-interop';
+import { EMPTY, switchMap, timer } from 'rxjs';
+
+// внутри конструктора AuthService (нужен контекст внедрения)
+
+toObservable(this.accessToken).pipe(
+  switchMap((token) => {
+    if (!token) return EMPTY;
+    const { exp } = decodeJwtPayload(token);
+    const delay = Math.max(0, exp * 1000 - Date.now() - 60_000); // за минуту до истечения
+    return timer(delay).pipe(switchMap(() => this.refresh()));   // тот же single-flight
+  }),
+  takeUntilDestroyed(),
+).subscribe();
+\`\`\`
+
+Три тонкости. **Часы клиента врут**: если на компьютере время сдвинуто на 10 минут, расчёт от \`exp\` промахнётся; надёжнее считать от \`expires_in\` из ответа сервера относительно момента получения. **Фоновые вкладки** браузер «усыпляет», и таймер сработает позже — поэтому реактивная обработка 401 остаётся обязательной, а при возврате на вкладку (\`visibilitychange\`) стоит проверить срок. И **\`setTimeout\` не умеет ждать дольше примерно 24,8 суток** (2 147 483 647 мс): большее значение переполняется, и колбэк срабатывает сразу.
+
+### Silent renew в OIDC: скрытый iframe
+
+В классической OIDC-схеме тихое обновление делали так: в скрытом iframe открывали страницу авторизации провайдера с \`prompt=none\`. Если у провайдера жива сессия (его cookie), он сразу возвращает новый код или токен без показа формы. Проблема в том, что cookie провайдера в iframe на вашем сайте — это **сторонние (third-party) cookie**. Safari блокирует их по умолчанию, Firefox по умолчанию изолирует их по сайтам (iframe не видит обычную сессию провайдера), в Chrome это зависит от настроек пользователя и режима инкогнито. Итог: в части браузеров iframe-обновление молча не работает, и пользователя выкидывает на логин. Поэтому современный ответ — refresh-токен с ротацией (через httpOnly-cookie вашего бэкенда или BFF), а не iframe.
+
+### Ротация и гонка между вкладками
+
+Ротация защищает от кражи refresh-токена, но порождает гонку, о которой часто забывают. У каждой вкладки свой access в памяти и свой таймер. Две вкладки одновременно решили обновиться с одной и той же cookie: первая получила новый refresh, вторая пришла со старым — и сервер, увидев повторное использование, отозвал сессию. Решения:
+
+\`\`\`ts
+// только одна вкладка обновляет токен; остальные ждут и берут результат
+await navigator.locks.request('auth-refresh', async () => {
+  if (tokenStillFresh()) return;                 // другая вкладка уже обновила — ничего не делаем
+  await firstValueFrom(auth.refresh());
+});
+\`\`\`
+
+- **Web Locks API** сериализует обновление между вкладками, а новым access вкладка-победитель делится через \`BroadcastChannel\`.
+- **Окно терпимости на сервере**: некоторые провайдеры позволяют настроить короткий период, в течение которого только что заменённый refresh-токен ещё принимается и не считается кражей.
+
+### Восстановление сессии после перезагрузки
+
+\`\`\`ts
+// app.config.ts
+provideAppInitializer(() =>
+  inject(AuthService).refresh().pipe(catchError(() => of(null))), // нет cookie — просто гость
+),
+\`\`\`
+
+При старте приложение один раз вызывает refresh: cookie жива — получаем access и пользователь «внутри», cookie нет — показываем экран входа. Пользователь не замечает, что access хранился только в памяти.
+
+### CSRF и logout
+
+Refresh в cookie означает, что браузер приложит её к любому запросу на \`/auth/refresh\`, в том числе инициированному чужим сайтом. От кражи токена это не страшно (ответ чужой сайт не прочитает из-за CORS), но эндпоинты, которые **меняют состояние** по cookie, надо защитить: \`SameSite=Strict\` или \`Lax\`, проверка заголовка \`Origin\` на сервере и CSRF-токен по схеме double-submit (сервер кладёт токен в обычную cookie, клиент копирует его в заголовок, сервер сверяет). В Angular последнее встроено: \`HttpClient\` читает cookie \`XSRF-TOKEN\` и добавляет заголовок \`X-XSRF-TOKEN\` к изменяющим запросам (не \`GET\` и не \`HEAD\`) на свой же origin; имена настраиваются через \`withXsrfConfiguration\`.
+
+\`\`\`ts
+logout(): void {
+  this.http.post('/auth/logout', null, { withCredentials: true, context: new HttpContext().set(SKIP_AUTH, true) })
+    .subscribe();                                       // сервер отзывает refresh и стирает cookie
+  this.accessToken.set(null);                           // сброс из памяти
+  new BroadcastChannel('auth').postMessage('logout');   // остальные вкладки тоже выходят
+}
+\`\`\`
+
+### Где это применяется на практике
+
+- **Корпоративные SPA с SSO** (Keycloak, Azure AD, Okta): access в памяти, refresh через бэкенд или BFF в httpOnly-cookie, интерсептор с single-flight.
+- **Дашборды с десятками параллельных запросов**: без single-flight первая же загрузка с истёкшим токеном запускает шторм обновлений.
+- **Финтех и банкинг**: короткий access (5 минут), ротация refresh с reuse detection, logout во всех вкладках и на всех устройствах.
+- **Долгоживущие вкладки** (мониторинг, трейдинг): проактивное обновление по таймеру плюс проверка при возврате на вкладку.
+- **Приложения с WebSocket**: перед истечением access сокет получает новый токен или переподключается с ним.
+
+## Важные нюансы и подводные камни
 
 - **Токены в localStorage.** Любой XSS — и сессия угнана. Классический вопрос-ловушка на собеседовании.
-- **Гонки refresh без single-flight** — шторм запросов, а с ротацией ещё и мгновенный разлогин, потому что второй refresh приходит со старым токеном.
-- **Бесконечный retry-цикл.** Если сервер стабильно отдаёт 401, интерсептор будет обновлять и повторять вечно; нужен лимит попыток и выход на логин.
-- **Логаут только в одной вкладке.** Синхронизируйте через \`BroadcastChannel\` или storage event, иначе в соседней вкладке пользователь всё ещё «внутри».
-- **Refresh-запрос через тот же интерсептор** — 401 на refresh запускает refresh, и получается рекурсия. Исключайте этот URL явно.
-- **Спросят следом:** почему access в памяти теряется при перезагрузке страницы и это нормально (его тихо восстанавливают refresh-ом по куке) и чем httpOnly-кука лучше localStorage при том, что от CSRF она не защищает (она закрывает XSS, а CSRF закрывают SameSite и токен).`,
+- **Гонки refresh без single-flight.** Шторм запросов, а с ротацией ещё и мгновенный разлогин, потому что второй refresh приходит со старым токеном.
+- **\`shareReplay\` в поле класса.** Первую волну 401 решает, а дальше вечно отдаёт старый токен. Общий поток должен сбрасываться после завершения (\`finalize\` + \`??=\`).
+- **Бесконечный retry-цикл.** Если сервер стабильно отдаёт 401, интерсептор будет обновлять и повторять вечно. Повторяйте исходный запрос ровно один раз, а при отказе refresh — выход на логин.
+- **Refresh-запрос через тот же интерсептор.** 401 на refresh запускает refresh, и получается рекурсия. Исключайте его явно — лучше флагом \`HttpContextToken\`, чем сравнением URL.
+- **Токен утекает на чужие домены.** Интерсептор добавляет \`Authorization\` ко всем запросам, включая CDN и сторонние API. Проверяйте адрес назначения.
+- **Обновление на 403.** 403 означает «нет прав», новый токен его не исправит; refresh — только на 401.
+- **Логаут только в одной вкладке.** Синхронизируйте через \`BroadcastChannel\` или событие \`storage\`, иначе в соседней вкладке пользователь всё ещё «внутри».
+- **Гонка вкладок при ротации.** Две вкладки обновляются одновременно — одна из них предъявляет уже погашенный токен и рвёт сессию. Web Locks или окно терпимости на сервере.
+- **Таймер от \`exp\` по часам клиента.** Сдвинутые часы, усыплённые фоновые вкладки и переполнение \`setTimeout\` после ~24,8 суток. Реактивная обработка 401 нужна всегда.
+- **Silent renew в iframe.** Ломается там, где сторонние cookie блокируются или изолируются (по умолчанию в Safari и Firefox).
+- **httpOnly не защищает от CSRF.** Она закрывает чтение токена через XSS, а CSRF закрывают \`SameSite\`, проверка \`Origin\` и CSRF-токен.
+- **Logout без ревокации.** Если сервер не отозвал refresh, украденная cookie продолжает работать до истечения срока.
+
+**Плюсы:** короткое окно для украденного access, долгий секрет недоступен JavaScript, пользователь не логинится каждые 15 минут, ротация позволяет обнаружить кражу.
+**Минусы:** заметная сложность на клиенте (single-flight, таймеры, вкладки), нужна защита от CSRF для cookie-эндпоинтов, гонки при ротации, зависимость от поведения браузеров с cookie.
+
+## Как это спрашивают на собеседовании
+
+**Главный вывод:** access — короткий и в памяти, refresh — долгий в httpOnly Secure SameSite-cookie с ротацией. Интерсептор на 401 делает одно общее обновление на все упавшие запросы (single-flight, который сбрасывается после завершения) и повторяет каждый запрос один раз, а проактивный таймер от \`exp\` обновляет токен до истечения.
+
+Типичные формулировки: «Как реализовать refresh token в Angular?», «Что будет, если пять запросов одновременно получат 401?», «Где хранить JWT на фронтенде?», «Как сделать, чтобы пользователя не выкидывало каждые 15 минут?».
+
+Что могут спросить следом:
+
+- *Почему access в памяти пропадает при перезагрузке и это нормально?* — При старте приложение тихо вызывает refresh по httpOnly-cookie и восстанавливает access.
+- *Чем httpOnly-cookie лучше localStorage, если от CSRF она не защищает?* — Она закрывает кражу токена через XSS, а CSRF закрывается отдельно: \`SameSite\`, проверка \`Origin\`, CSRF-токен.
+- *Как избежать рекурсии в интерсепторе?* — Помечать запрос refresh через \`HttpContextToken\` и пропускать его, а исходный запрос повторять через \`next\` один раз.
+- *Что такое reuse detection?* — Повторное предъявление уже использованного refresh-токена сервер считает кражей и отзывает всю цепочку сессии.
+- *Как синхронизировать вкладки?* — Logout и новые токены через \`BroadcastChannel\`, само обновление — под Web Locks, чтобы его выполняла одна вкладка.
+
+### Ответ на 1 минуту
+
+> Access-токен делаю короткоживущим, на 5–15 минут, и храню в памяти — в localStorage его украдёт любой XSS. Refresh-токен долгоживущий и лежит в httpOnly Secure SameSite-cookie с \`Path\` только на эндпоинт обновления. Реактивная схема: на 401 функциональный интерсептор вызывает refresh и повторяет исходный запрос один раз. Ключевая деталь — одновременные 401: делаю single-flight, общий поток с \`shareReplay\`, который сбрасывается в \`finalize\` после завершения; если положить его в поле класса навсегда, он вечно будет отдавать старый токен. Сам refresh помечаю через \`HttpContextToken\`, чтобы не было рекурсии. Плюс silent renewal — таймер от \`exp\` за минуту до истечения, а при перезагрузке тихий refresh по cookie. По безопасности — ротация refresh с обнаружением повторного использования, Web Locks против гонки вкладок, CSRF-защита cookie-эндпоинтов и logout с ревокацией на сервере и оповещением вкладок через \`BroadcastChannel\`.`,
       en: `## In short
 
 There are **two tokens with different jobs**. The access token is a short 5–15 minute pass, kept in memory and attached to every request. The refresh token is long-lived, kept in an httpOnly cookie that JavaScript cannot read, and exists only to obtain a new access token. The frontend's job is to renew the access token **before** the user hits a 401.
@@ -7069,43 +8827,423 @@ Why this works: \`shareReplay(1)\` collapses the refresh into a single request w
       en: 'Implement debounce with leading/trailing support and cancel. Explain its use.',
     },
     answer: {
-      ru: `## Коротко
+      ru: `## В чём суть
 
-Debounce откладывает вызов функции до тех пор, пока не пройдёт \`wait\` миллисекунд **без новых вызовов**. Каждый новый вызов **сбрасывает таймер** заново. То есть функция срабатывает один раз — когда поток событий утих.
+Нужно написать функцию-обёртку \`debounce(fn, wait, options)\`. Она возвращает новую функцию, которую можно дёргать сколько угодно часто, а настоящая \`fn\` выполнится только тогда, когда вызовы **затихнут** на \`wait\` миллисекунд. Плюс два режима — \`trailing\` (вызов в конце серии, по умолчанию) и \`leading\` (вызов в начале серии) — и метод \`cancel()\`, отменяющий отложенный вызов. На деле задача проверяет не знание слова «debounce», а умение работать с замыканиями, таймерами, \`this\` и пограничными случаями.
 
-Аналогия: автоматическая дверь в лифте. Пока люди заходят, дверь каждый раз начинает отсчёт заново; закроется она только когда три секунды никто не входил. Throttle — это, наоборот, дверь по расписанию: закрывается каждые пять секунд независимо от того, кто заходит.
+Аналогия: автоматические двери лифта. Пока люди заходят, двери каждый раз начинают отсчёт заново и закрываются, только когда три секунды никто не входил, — это trailing. Leading — лифт, который трогается с первым же пассажиром, а следующих не замечает, пока поток людей не иссякнет. Throttle, для сравнения, — двери по расписанию: закрываются каждые пять секунд, сколько бы людей ни шло.
 
-## Как это работает по шагам
+**Какую проблему решает.** Многие события в браузере идут пачками: \`input\` срабатывает на каждую букву, \`resize\` и \`scroll\` — десятки раз в секунду. Если на каждое событие отправлять запрос или пересчитывать раскладку, то при наборе слова «angular» уйдёт семь запросов вместо одного, ответы могут прийти не в том порядке, а сервер получит в семь раз больше нагрузки. Debounce превращает пачку событий в один вызов с финальным значением.
 
-1. При каждом вызове **сохраняем последние аргументы и \`this\`** — при trailing сработает именно последний набор.
-2. Если таймер уже был — **сбрасываем** его и заводим новый на \`wait\` мс.
-3. **Trailing (по умолчанию):** когда таймер наконец дотикал без прерываний, вызываем функцию.
-4. **Leading:** вызываем сразу на первом событии, а дальше молчим, пока не наступит новая пауза.
-5. **\`cancel()\`** сбрасывает таймер и забывает накопленные аргументы — нужен при уничтожении компонента.
-6. **Отличие от throttle:** debounce реагирует на **конец** всплеска (один раз после паузы), throttle ограничивает частоту до одного раза в \`wait\` и работает **во время** всплеска.
+## Словарик терминов
 
-## Пример
+- **Debounce («подавление дребезга»)** — приём, при котором функция вызывается один раз после того, как поток вызовов затих на заданное время. Термин из электроники: так гасят «дребезг» контактов кнопки.
+- **\`wait\` (интервал тишины)** — сколько миллисекунд без новых вызовов нужно выждать, прежде чем выполнить функцию.
+- **Всплеск (burst)** — серия вызовов, идущих чаще, чем раз в \`wait\`: например, буквы, набираемые подряд.
+- **Trailing edge (задний фронт)** — вызов в конце всплеска, после паузы. Режим по умолчанию.
+- **Leading edge (передний фронт)** — вызов сразу на первом событии всплеска; остальные события этого всплеска игнорируются.
+- **\`setTimeout\` / \`clearTimeout\`** — функции таймера: первая планирует вызов через N мс и возвращает идентификатор, вторая отменяет запланированный вызов по этому идентификатору.
+- **Замыкание (closure)** — способность функции помнить переменные того места, где она создана. В замыкании живут \`timer\` и \`lastArgs\` между вызовами.
+- **\`this\` (контекст вызова)** — объект, «на котором» вызвана функция: в \`panel.save()\` это \`panel\`. Теряется, если функцию вызвать «голой».
+- **\`fn.apply(ctx, args)\`** — вызвать \`fn\` с явно заданным \`this\` = \`ctx\` и массивом аргументов \`args\`.
+- **\`cancel()\`** — метод, который отменяет запланированный вызов и забывает накопленные аргументы.
+- **\`flush()\`** — метод (есть в lodash), который выполняет отложенный вызов немедленно, не дожидаясь паузы.
+- **\`maxWait\`** — опция lodash: максимальное время, которое вызов может откладываться, даже если всплеск не кончается.
+- **Throttle (троттлинг)** — родственный приём: вызывать не чаще раза в \`wait\`, но регулярно, прямо во время всплеска.
+- **\`debounceTime\`** — оператор RxJS, который делает debounce для потока значений (Observable).
+- **Big-O, \`O(1)\`** — оценка того, как растут время и память с ростом входа; \`O(1)\` значит «не растут вообще, константа».
 
-\`\`\`ts
-const search = debounce((q: string) => api.search(q), 300);
-input.addEventListener('input', e => search((e.target as HTMLInputElement).value));
-// печатаем "angular" за 500 мс → один запрос вместо семи
+## Как это работает под капотом
+
+### Уточняющие вопросы перед кодом
+
+Прежде чем писать, задайте интервьюеру несколько вопросов. Это показывает инженерное мышление и избавляет от переписывания на середине:
+
+- Какие режимы нужны и что по умолчанию? Разумный ответ — как в lodash: \`leading: false\`, \`trailing: true\`.
+- Если включены оба режима, а вызов был всего один, — выполнять функцию один раз или два? Правильно — один.
+- С какими аргументами вызывать в trailing — с первыми или с последними? С последними: нам нужно финальное значение.
+- Нужно ли возвращать результат \`fn\`? Обычно нет: вызов отложен, и в момент обращения результата ещё не существует.
+- Нужны ли \`cancel\`, \`flush\`, \`maxWait\`? В этой задаче просят \`cancel\`, остальное можно назвать как расширения.
+
+### Идея алгоритма простыми словами
+
+1. При каждом вызове запоминаем последние аргументы и \`this\`, потому что сработать должен именно последний вызов.
+2. Если таймер уже тикает, отменяем его и заводим новый на \`wait\` мс — поэтому каждый новый вызов «отодвигает» срабатывание.
+3. Если до конца отсчёта никто не позвонил, таймер срабатывает — значит, наступила пауза, и мы вызываем \`fn\` с сохранёнными аргументами (trailing).
+4. Для leading смотрим на таймер: \`timer === null\` означает «это первый вызов нового всплеска», поэтому вызываем \`fn\` сразу.
+5. Если всплеск состоял из одного leading-вызова, в конце паузы вызывать \`fn\` нельзя — иначе одна и та же функция сработает дважды.
+6. \`cancel()\` останавливает таймер и стирает аргументы, поэтому после него отложенного вызова уже не будет.
+
+Решение удобно строить по шагам: сначала минимальная рабочая версия, потом исправляем её дефекты один за другим. Во всех примерах ниже \`wait = 300\`, а время \`t\` отсчитывается от первого вызова.
+
+### Шаг 1. Наивная версия: только trailing
+
+\`\`\`js
+function debounce(fn, wait) {
+  let timer = null;
+  return (...args) => {
+    clearTimeout(timer);                         // сбросили предыдущий отсчёт
+    timer = setTimeout(() => fn(...args), wait); // начали новый
+  };
+}
+
+const search = debounce(q => console.log(q), 300);
+search('a');   // t=0
+search('an');  // t=100
+search('ang'); // t=200
+// t=500: ang
 \`\`\`
 
-Почему так: сеть дёргается один раз, с финальным значением. Именно поэтому debounce — правильный выбор для поиска-as-you-type: промежуточные «a», «an», «ang» никому не нужны.
+Каждый вызов убивает таймер предыдущего, поэтому выживает только последний, и через 300 мс тишины печатается \`ang\`. Аргументы при этом последние «бесплатно»: каждый вызов создаёт свой колбэк таймера со своими \`args\`. Но у версии есть дефект — потерянный \`this\`:
 
-## Что сказать на собеседовании
+\`\`\`js
+const panel = {
+  items: [],
+  add(x) { this.items.push(x); },
+};
+panel.addLater = debounce(panel.add, 300);
+panel.addLater('x');
+// через 300 мс: TypeError: Cannot read properties of undefined (reading 'items')
+\`\`\`
 
-> Debounce откладывает вызов функции до тех пор, пока не пройдёт заданный интервал без новых вызовов; каждый новый вызов сбрасывает таймер. Применяется там, где нужен только финальный результат всплеска событий: поиск по мере ввода, ресайз окна, валидация поля. Отличие от throttle принципиальное: debounce реагирует на конец всплеска и срабатывает один раз после паузы, а throttle ограничивает частоту до одного вызова в интервал и работает прямо во время всплеска — поэтому для скролла нужен throttle, а для автодополнения debounce. Есть два режима: trailing по умолчанию — вызов после паузы, и leading — вызов на первом событии с тишиной до следующей паузы. Сложность O(1) по времени и памяти. Из практических нюансов: обязательно сохранять \`this\` и аргументы последнего вызова, обязательно иметь \`cancel\` и звать его при уничтожении компонента, иначе получим утечку и вызов после destroy. В Angular для потоков я предпочту RxJS \`debounceTime\`, ручная реализация нужна для DOM-утилит.
+Внутри таймера \`fn(...args)\` вызывается «голой» функцией, а в строгом режиме (он включён в модулях и классах) у такой функции \`this === undefined\`. К тому же обёртка — стрелочная функция, и своего \`this\` у неё нет вовсе.
 
-## Ловушки
+### Шаг 2. Сохраняем \`this\` и последние аргументы
 
-- **Потерянный \`this\`.** Если внутри вызвать \`fn(...args)\` вместо \`fn.apply(lastThis, lastArgs)\`, метод класса сломается.
-- **Старые аргументы.** При trailing надо вызывать с **последними** аргументами, а не с теми, что были при заведении таймера.
-- **Нет \`cancel\`** — после ухода с роута таймер дотикает и дёрнет уничтоженный компонент.
-- **Debounce вместо throttle на скролле:** прогресс-бар не обновится ни разу, пока пользователь не остановится.
-- **Общий debounce на несколько независимых источников** — события одного гасят события другого.
-- **Спросят следом:** как сделать так, чтобы debounce возвращал промис с результатом, и почему в RxJS \`debounceTime\` внутри \`switchMap\` ещё и отменяет предыдущий запрос — то, чего ручной debounce сам не делает.`,
+\`\`\`js
+function debounce(fn, wait) {
+  let timer = null;
+  return function (...args) {          // обычная функция: получает свой this
+    clearTimeout(timer);
+    timer = setTimeout(() => fn.apply(this, args), wait); // стрелка берёт this снаружи
+  };
+}
+
+panel.addLater = debounce(panel.add, 300);
+panel.addLater('x');
+// через 300 мс: panel.items = ['x']
+\`\`\`
+
+Обёртка теперь обычная \`function\`, и при вызове \`panel.addLater('x')\` её \`this\` равен \`panel\`. Стрелка внутри \`setTimeout\` своего \`this\` не имеет и берёт его у обёртки, а \`fn.apply(this, args)\` передаёт его в оригинал.
+
+Для контраста — частая ошибка «устаревших аргументов». Её пишут, когда путают debounce с «не запускать, пока ждём»:
+
+\`\`\`js
+// ❌ таймер не перезапускается, новые аргументы выбрасываются
+return function (...args) {
+  if (timer) return;
+  timer = setTimeout(() => { timer = null; fn.apply(this, args); }, wait);
+};
+// вызовы 'a' (t=0), 'an' (t=100), 'ang' (t=200)
+// t=300: a   ← первая буква вместо финального слова, и пауза не дождалась
+\`\`\`
+
+### Шаг 3. Добавляем leading — и ловим двойной вызов
+
+Первая попытка: если таймера нет, значит, всплеск только начался — вызываем сразу.
+
+\`\`\`js
+function debounce(fn, wait, { leading = false, trailing = true } = {}) {
+  let timer = null;
+  return function (...args) {
+    const callNow = leading && timer === null; // первый вызов всплеска?
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      timer = null;
+      if (trailing) fn.apply(this, args);       // ❌ не проверяем, был ли leading
+    }, wait);
+    if (callNow) fn.apply(this, args);
+  };
+}
+
+const d = debounce(q => console.log(q), 300, { leading: true, trailing: true });
+d('a');
+// t=0:   a
+// t=300: a   ← тот же вызов второй раз
+\`\`\`
+
+Одиночный вызов сработал дважды: сначала как leading, потом как trailing. Если бы так отправлялась форма оплаты, пользователь заплатил бы два раза. Исправление — в trailing вызывать \`fn\` только тогда, когда последний вызов **не** был leading-вызовом, то есть добавить условие \`!callNow\`.
+
+### Шаг 4. Финальная версия с \`cancel\`
+
+Это и есть код из сниппета под ответом, с пояснениями:
+
+\`\`\`ts
+interface DebounceOptions { leading?: boolean; trailing?: boolean; }
+
+function debounce<T extends (...args: any[]) => void>(
+  fn: T,
+  wait: number,
+  { leading = false, trailing = true }: DebounceOptions = {},
+) {
+  let timer: ReturnType<typeof setTimeout> | null = null; // идёт ли сейчас всплеск
+  let lastArgs: Parameters<T> | null = null;              // аргументы последнего вызова
+  let lastThis: unknown;                                  // this последнего вызова
+
+  function debounced(this: unknown, ...args: Parameters<T>) {
+    lastArgs = args;
+    lastThis = this;
+    const callNow = leading && timer === null;            // первый вызов всплеска
+
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => {                            // пауза наступила
+      timer = null;
+      if (trailing && lastArgs && !callNow) {             // !callNow — защита от дубля
+        fn.apply(lastThis, lastArgs);
+      }
+      lastArgs = null;
+    }, wait);
+
+    if (callNow) fn.apply(this, args);
+  }
+
+  debounced.cancel = () => {
+    if (timer) clearTimeout(timer);
+    timer = null;
+    lastArgs = null;
+  };
+  return debounced;
+}
+\`\`\`
+
+Тонкое место — \`callNow\` внутри колбэка таймера. Каждый вызов заводит новый таймер, поэтому выживает таймер **последнего** вызова, и \`callNow\` в нём тоже от последнего вызова. Если последний вызов был leading (а это возможно, только если он был единственным во всплеске), trailing пропускается. Если во всплеске были ещё вызовы, у последнего \`callNow === false\`, и trailing срабатывает с его аргументами. \`lastArgs\` нужен как отдельная переменная, потому что его обнуляет \`cancel()\`: после отмены таймер уже не сработает, а следующий всплеск начнётся с чистого листа.
+
+### Трассировка: набираем «angular»
+
+Режим по умолчанию (только trailing), семь нажатий с интервалом 80 мс:
+
+\`\`\`text
+t=0    'a'        timer=null → leading выключен; таймер на t=300
+t=80   'an'       clearTimeout; новый таймер на t=380
+t=160  'ang'      новый таймер на t=460
+t=240  'angu'     новый таймер на t=540
+t=320  'angul'    новый таймер на t=620  (таймер на 300 уже отменён в t=240)
+t=400  'angula'   новый таймер на t=700
+t=480  'angular'  новый таймер на t=780
+t=780  таймер сработал: trailing=true, lastArgs=['angular'], callNow=false → fn('angular')
+\`\`\`
+
+Итог: один вызов вместо семи, с финальным словом.
+
+Режим \`{ leading: true, trailing: true }\`, вызовы \`'a'\` в t=0, \`'b'\` в t=100, \`'c'\` в t=450:
+
+\`\`\`text
+t=0    'a'  timer=null → callNow=true → fn('a') сразу; таймер на t=300 (callNow=true)
+t=100  'b'  timer есть → callNow=false; таймер на t=400 (callNow=false), lastArgs=['b']
+t=400  таймер: trailing и !callNow → fn('b'); timer=null
+t=450  'c'  timer=null → снова начало всплеска → fn('c') сразу; таймер на t=750
+t=750  таймер: callNow=true → trailing пропущен
+\`\`\`
+
+Итог: \`a\` в 0, \`b\` в 400, \`c\` в 450. Обратите внимание: \`c\` сработал всего через 50 мс после \`b\`. Debounce не гарантирует минимальный интервал между вызовами — это задача throttle.
+
+### Сложность
+
+Каждый вызов делает фиксированный набор действий: записать две переменные, отменить таймер, завести новый. Неважно, вызвали функцию 10 раз или 10 000 — работа на один вызов одинаковая, это \`O(1)\` по времени. Память тоже \`O(1)\`: в любой момент хранится один таймер, одна ссылка на последние аргументы и одна на \`this\`, старые вызовы ничего после себя не оставляют.
+
+### Тест-кейсы
+
+Ожидаемые результаты при \`wait = 300\` (все проверены прогоном):
+
+- Trailing, вызовы \`'a'\`/\`'an'\`/\`'ang'\` в 0/100/200 → один вызов в t=500 с \`'ang'\`.
+- Trailing, вызовы в 0 и 400 → два вызова: \`'a'\` в 300 и \`'b'\` в 700, потому что пауза была длиннее \`wait\`.
+- \`{ leading: true, trailing: false }\`, вызовы в 0/100/200 и потом в 600 → \`'a'\` в 0 и \`'x'\` в 600.
+- \`{ leading: true, trailing: true }\`, один вызов → ровно один вызов в t=0, не два.
+- \`{ leading: true, trailing: true }\`, вызовы в 0/100/200 → \`'a'\` в 0 и \`'ang'\` в 500.
+- \`{ leading: false, trailing: false }\` → функция не вызывается никогда (вырожденная конфигурация, стоит её запретить или задокументировать).
+- Вызовы в 0/100, \`cancel()\` в 150 → ничего не вызвано; новый вызов \`'z'\` в 500 → сработает в 800.
+- Метод объекта \`panel.addLater('x')\` → \`this\` внутри оригинала равен \`panel\`.
+
+Так эти случаи выглядят в Vitest (тестовый раннер по умолчанию в новых Angular-проектах) с поддельными таймерами — они позволяют «перематывать» время без реального ожидания:
+
+\`\`\`ts
+describe('debounce', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it('trailing: один вызов с последними аргументами', () => {
+    const spy = vi.fn();
+    const d = debounce(spy, 300);
+    d('a'); vi.advanceTimersByTime(100);
+    d('an'); vi.advanceTimersByTime(100);
+    d('ang');
+    vi.advanceTimersByTime(299);
+    expect(spy).not.toHaveBeenCalled();     // ещё 1 мс до срабатывания
+    vi.advanceTimersByTime(1);
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy).toHaveBeenCalledWith('ang');
+  });
+
+  it('leading + trailing: одиночный вызов срабатывает один раз', () => {
+    const spy = vi.fn();
+    const d = debounce(spy, 300, { leading: true, trailing: true });
+    d('a');
+    expect(spy).toHaveBeenCalledTimes(1);   // leading — сразу
+    vi.advanceTimersByTime(1000);
+    expect(spy).toHaveBeenCalledTimes(1);   // trailing не продублировал
+  });
+
+  it('cancel: отложенный вызов не происходит', () => {
+    const spy = vi.fn();
+    const d = debounce(spy, 300);
+    d('a');
+    d.cancel();
+    vi.advanceTimersByTime(1000);
+    expect(spy).not.toHaveBeenCalled();
+  });
+});
+// ✓ 3 tests passed
+\`\`\`
+
+### \`setTimeout\` и \`clearTimeout\`
+
+\`setTimeout(cb, ms)\` кладёт \`cb\` в очередь задач не раньше чем через \`ms\` миллисекунд и возвращает идентификатор: в браузере это число, в Node.js — объект \`Timeout\`. \`clearTimeout(id)\` отменяет вызов, если он ещё не произошёл; вызов с \`null\` или \`undefined\` безопасен и ничего не делает.
+
+\`\`\`js
+const id = setTimeout(() => console.log('tick'), 300);
+clearTimeout(id);   // ничего не напечатается
+clearTimeout(null); // без ошибки
+\`\`\`
+
+Именно пара «отменить старый — завести новый» и даёт эффект «сбрасываем отсчёт при каждом вызове». Тип идентификатора различается между средами, поэтому в TypeScript пишут \`ReturnType<typeof setTimeout>\` — «то, что возвращает \`setTimeout\` в текущей среде».
+
+### Замыкание: где живёт состояние
+
+Каждый вызов \`debounce(...)\` создаёт свои переменные \`timer\`, \`lastArgs\`, \`lastThis\`, и возвращённая функция «помнит» именно их.
+
+\`\`\`js
+const d1 = debounce(q => console.log('d1', q), 300);
+const d2 = debounce(q => console.log('d2', q), 300);
+d1('a'); d2('b');
+// t=300: d1 a
+// t=300: d2 b   ← у каждой обёртки свой таймер, они не гасят друг друга
+\`\`\`
+
+Отсюда практическое правило: одна debounced-обёртка — на один независимый источник событий. Если два поля формы делят одну обёртку, ввод во втором поле отменит отложенный вызов первого.
+
+### \`this\` и \`fn.apply\`
+
+\`this\` определяется в момент вызова: \`panel.add()\` — \`this\` равен \`panel\`, \`const f = panel.add; f()\` — \`this\` равен \`undefined\` в строгом режиме. \`fn.apply(ctx, args)\` позволяет вызвать функцию с нужным \`this\` и аргументами из массива.
+
+\`\`\`js
+function greet(greeting) { return \`\${greeting}, \${this.name}\`; }
+greet.apply({ name: 'Anna' }, ['Hi']); // 'Hi, Anna'
+\`\`\`
+
+В debounce \`apply\` нужен потому, что оригинал вызывается позже и из другого места (из таймера), а контекст должен остаться тем, что был у последнего вызова обёртки.
+
+### Debounce против throttle на одном потоке событий
+
+Возьмём 10 событий со значениями 0…9, по одному каждые 100 мс (t=0…900), и интервал 300 мс:
+
+\`\`\`text
+debounce (trailing)            → один вызов: t=1200 со значением 9
+debounce (leading)             → один вызов: t=0 со значением 0
+throttle (leading + trailing)  → t=0: 0, t=300: 3, t=600: 6, t=900: 9
+\`\`\`
+
+Debounce ждёт конца всплеска и молчит всё время, пока он идёт. Throttle выдаёт значения равномерно **во время** всплеска. Отсюда выбор: для поиска по мере ввода — debounce (промежуточные «a», «an», «ang» никому не нужны), для скролла и прогресс-бара — throttle (обновлять нужно в процессе). Строка про throttle проверена оператором RxJS \`throttleTime(300, undefined, { leading: true, trailing: true })\`.
+
+### \`debounceTime\` в RxJS — что берут в Angular
+
+Если события уже приходят потоком (\`valueChanges\` у формы, \`fromEvent\`), ручной debounce не нужен — есть оператор:
+
+\`\`\`ts
+@Component({ /* ... */ })
+export class UserSearchComponent {
+  private api = inject(UserApi);
+  query = new FormControl('', { nonNullable: true });
+
+  users = toSignal(
+    this.query.valueChanges.pipe(
+      debounceTime(300),                       // ждём паузу в наборе
+      distinctUntilChanged(),                  // 'ang' → 'angu' → 'ang' не шлём повторно
+      switchMap(q => this.api.search(q)),      // старый запрос отменяется при новом
+    ),
+    { initialValue: [] },
+  );
+}
+// набор "angular" за полсекунды → один HTTP-запрос через 300 мс после последней буквы
+\`\`\`
+
+\`debounceTime\` только откладывает значения, а отменяет устаревший HTTP-запрос \`switchMap\`: когда приходит новое значение, он отписывается от предыдущего внутреннего Observable. Ручной \`debounce\` такого не умеет: если запрос уже ушёл, а пользователь допечатал слово, ответы могут прийти в обратном порядке. \`toSignal\` сам отписывается при уничтожении компонента, поэтому \`cancel\` здесь не нужен. В экспериментальных Signal Forms (Angular 21, \`@angular/forms/signals\`) есть ещё правило \`debounce(path, ms)\`, которое откладывает запись значения из поля в модель.
+
+### Где это применяется на практике
+
+- **Поиск и автодополнение**: запрос к API после паузы в наборе, а не на каждую букву.
+- **Фильтры больших гридов**: ввод в поле фильтра колонки пересчитывает или перезапрашивает данные таблицы один раз, когда пользователь закончил печатать.
+- **Автосохранение черновика** формы или документа: сохраняем через 1–2 секунды после последней правки.
+- **\`resize\` окна или контейнера** (\`ResizeObserver\`): тяжёлый пересчёт раскладки графиков дашборда — после того, как пользователь отпустил край окна.
+- **Валидация поля на сервере** (занят ли логин): проверка после паузы, а не на каждый символ.
+- **Защита от двойного клика** по кнопке «Оплатить»: \`leading: true, trailing: false\` — первый клик проходит сразу, остальные клики всплеска игнорируются.
+
+## Важные нюансы и подводные камни
+
+- **Потерянный \`this\`.** Если внутри вызвать \`fn(...args)\` вместо \`fn.apply(lastThis, lastArgs)\` или сделать обёртку стрелочной, метод класса упадёт с \`TypeError\`.
+- **Устаревшие аргументы.** В trailing нужно вызывать с **последними** аргументами, а не с теми, что были при заведении первого таймера, — иначе в поиск уйдёт «a» вместо «angular».
+- **Двойной вызов при \`leading + trailing\`.** Без проверки \`!callNow\` одиночный вызов срабатывает дважды — для отправки формы или оплаты это реальный баг.
+- **Нет \`cancel\` — вызов после уничтожения.** Ушли с роута, а таймер дотикал и дёрнул метод уничтоженного компонента или отправил запрос, который уже никому не нужен. В Angular отменяйте в \`DestroyRef.onDestroy\`: \`inject(DestroyRef).onDestroy(() => this.save.cancel())\`.
+- **\`cancel\` против \`flush\` для автосохранения.** При закрытии редактора \`cancel\` молча выбросит последние правки пользователя. Там нужен \`flush\` — «выполни отложенное прямо сейчас». В сниппете его нет; в lodash \`debounce\` есть и \`cancel\`, и \`flush\`.
+- **Непрерывный поток никогда не сработает.** Если события идут чаще, чем раз в \`wait\`, без единой паузы, trailing-вызов откладывается бесконечно: поиск не выполнится, пока пользователь печатает без остановки. Lodash решает это опцией \`maxWait\`; кстати, lodash \`throttle\` реализован именно как \`debounce\` с \`maxWait = wait\`.
+- **Debounce вместо throttle на скролле.** Прогресс-бар чтения не обновится ни разу, пока пользователь не остановится.
+- **Общий debounce на несколько независимых источников.** События одного источника гасят события другого. Особенно коварно, если обёртку создать на уровне модуля: тогда все экземпляры компонента делят один таймер.
+- **Debounce не возвращает результат.** Вызов отложен, и вернуть значение \`fn\` в момент обращения невозможно. Если нужен результат, возвращают промис, который разрешается, когда сработает отложенный вызов:
+
+\`\`\`ts
+function debounceAsync<A extends unknown[], R>(fn: (...args: A) => R | Promise<R>, wait: number) {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let waiting: Array<{ resolve: (v: R) => void; reject: (e: unknown) => void }> = [];
+
+  return (...args: A): Promise<R> => {
+    if (timer) clearTimeout(timer);
+    return new Promise<R>((resolve, reject) => {
+      waiting.push({ resolve, reject });
+      timer = setTimeout(async () => {
+        const batch = waiting;              // все, кто ждал в этом всплеске
+        waiting = [];
+        timer = null;
+        try {
+          const result = await fn(...args);
+          batch.forEach(w => w.resolve(result));
+        } catch (e) {
+          batch.forEach(w => w.reject(e));
+        }
+      }, wait);
+    });
+  };
+}
+
+const search = debounceAsync(async (q: string) => \`results for \${q}\`, 300);
+Promise.all([search('a'), search('an'), search('ang')]).then(console.log);
+// ['results for ang', 'results for ang', 'results for ang']
+\`\`\`
+
+- **Отменить уже ушедший запрос debounce не может.** Он управляет только моментом старта. Отмену делает \`switchMap\` в RxJS или \`AbortController\` для \`fetch\`.
+- **Таймеры в фоновых вкладках.** Браузеры замедляют таймеры неактивных вкладок, поэтому отложенный вызов может сработать заметно позже \`wait\`; точные цифры зависят от браузера и его политики энергосбережения.
+- **\`lastThis\` не обнуляется** ни после срабатывания, ни в \`cancel\`. Обычно это не важно, потому что обёртка живёт в том же компоненте, но формально она удерживает ссылку на последний контекст.
+
+**Плюсы:** \`O(1)\` по времени и памяти, ноль зависимостей, резко снижает число запросов и пересчётов, легко тестируется поддельными таймерами.
+**Минусы:** не возвращает результат, не отменяет уже начатую работу, при непрерывном потоке без \`maxWait\` может не сработать вообще, добавляет задержку \`wait\` к реакции интерфейса и требует ручной очистки через \`cancel\`.
+
+## Как это спрашивают на собеседовании
+
+**Главный вывод:** debounce — это «сбрасываемый таймер в замыкании»: каждый вызов отменяет предыдущий отсчёт, и функция срабатывает один раз после паузы с последними аргументами и \`this\`. Leading вызывает на старте всплеска, и при \`leading + trailing\` нельзя вызвать одиночный вызов дважды; \`cancel\` обязателен для очистки при уничтожении.
+
+Типичные формулировки: «Реализуйте debounce», «Чем debounce отличается от throttle?», «Как не слать запрос на каждую букву в поиске?», «Добавьте leading и cancel».
+
+Как вести себя во время кодинга: сначала проговорите уточняющие вопросы и договоритесь о поведении по умолчанию; напишите наивную trailing-версию за минуту и сразу скажите, какие у неё дефекты (\`this\`, leading, отмена); затем добавляйте возможности по одной, каждый раз проговаривая, какой сценарий они чинят; в конце прогоните вслух трассировку на трёх вызовах и назовите сложность.
+
+Что могут спросить следом:
+
+- *Как сделать, чтобы debounce возвращал результат?* — Вернуть промис и разрешить его (и все промисы того же всплеска) результатом отложенного вызова.
+- *Зачем \`flush\` и \`maxWait\`?* — \`flush\` выполняет отложенное немедленно (автосохранение при закрытии), \`maxWait\` гарантирует вызов хотя бы раз в N мс при непрерывном потоке.
+- *Почему \`debounceTime\` плюс \`switchMap\` в RxJS лучше ручного debounce для поиска?* — \`debounceTime\` только откладывает, а \`switchMap\` ещё и отменяет устаревший запрос, и порядок ответов не перепутается.
+- *Когда leading?* — Когда реакция нужна мгновенно, а повторы надо гасить: защита от двойного клика по кнопке отправки.
+- *Какая сложность?* — \`O(1)\` на вызов и \`O(1)\` памяти: один таймер и ссылки на последние аргументы.
+
+### Ответ на 1 минуту
+
+> Debounce откладывает вызов функции, пока поток вызовов не затихнет на \`wait\` миллисекунд: каждый новый вызов сбрасывает таймер, и функция срабатывает один раз с последними аргументами. Реализую через замыкание: храню \`timer\`, \`lastArgs\` и \`lastThis\`; на вызове делаю \`clearTimeout\` и завожу новый \`setTimeout\`, а в колбэке вызываю \`fn.apply(lastThis, lastArgs)\`, чтобы не потерять контекст метода. Для leading проверяю \`timer === null\` — это начало всплеска — и вызываю сразу, а в trailing пропускаю вызов, если последний вызов был leading, иначе одиночный клик сработает дважды. \`cancel\` очищает таймер и аргументы, его зову в \`DestroyRef.onDestroy\`. Сложность \`O(1)\` по времени и памяти. Применяю для поиска, фильтров грида, автосохранения и ресайза; для скролла нужен throttle. В Angular для потоков беру \`debounceTime\` со \`switchMap\`, который ещё и отменяет устаревший запрос.`,
       en: `## In short
 
 Debounce postpones a call until \`wait\` milliseconds have passed **with no new calls**. Every new call **resets the timer**. So the function fires exactly once — when the stream of events has settled.
@@ -7191,44 +9329,343 @@ function debounce<T extends (...args: any[]) => void>(
       en: 'Implement throttle with a trailing call. When is throttle better than debounce?',
     },
     answer: {
-      ru: `## Коротко
+      ru: `## В чём суть
 
-Throttle гарантирует, что функция вызовется **не чаще одного раза в \`wait\` миллисекунд**. В отличие от debounce, он работает **во время** непрерывного потока событий, а не только после его окончания.
+Нужно написать \`throttle(fn, wait)\` — обёртку, которая пропускает вызовы \`fn\` **не чаще одного раза в \`wait\` миллисекунд**. Первый вызов выполняется сразу (leading), а последний вызов внутри окна не теряется, а выполняется в конце окна (trailing). Вторая часть вопроса — понять, когда throttle лучше debounce: throttle работает **во время** непрерывного потока событий, debounce — только **после** него. Задача проверяет работу с временем, таймерами, замыканиями и умение не потерять последнее событие.
 
-Аналогия: турникет в метро. Люди подходят непрерывно, но пропускает он строго по одному в секунду — поток не останавливается, просто становится равномерным. Debounce же — это охранник, который открывает дверь только когда очередь окончательно рассосалась.
+Аналогия: турникет в метро. Люди подходят непрерывно, а он пропускает строго по одному в секунду: поток не останавливается, просто становится равномерным. Trailing — это правило «последнего в очереди всё равно пропустим, когда освободится». Debounce же — охранник, который открывает дверь, только когда очередь полностью рассосалась.
 
-## Как это работает по шагам
+**Какую проблему решает.** Браузер шлёт \`scroll\`, \`mousemove\`, \`pointermove\` примерно раз в кадр — это около 60 событий в секунду на обычном мониторе и больше на 120-герцовом. Если на каждое событие пересчитывать раскладку, обновлять прогресс-бар или слать аналитику, страница начинает подтормаживать (jank). При этом ждать окончания прокрутки, как делает debounce, нельзя: пользователь хочет видеть, как полоска прогресса едет **вместе** с прокруткой. Throttle даёт регулярные обновления с ограниченной частотой.
 
-1. Запоминаем время **последнего фактического вызова**.
-2. На новом событии считаем, сколько осталось до конца окна: \`wait - (now - lastCall)\`.
-3. Осталось ноль или меньше — **leading edge**: вызываем немедленно и обновляем \`lastCall\`.
-4. Окно ещё не истекло — планируем **trailing**-вызов на остаток окна, если он ещё не запланирован.
-5. При этом всегда сохраняем **последние** аргументы и \`this\`, чтобы trailing сработал с актуальным значением.
-6. **Зачем trailing:** без него последнее событие внутри окна просто теряется — прокрутка остановилась на позиции 780, а обработчик остался с 640.
-7. **Когда throttle, а не debounce:** скролл и прогресс-бар (обновлять надо во время прокрутки, а не после), мышиные перемещения для рисования (нужны равномерные сэмплы), rate-limiting вызовов API при непрерывном вводе. Debounce лучше там, где важен только **финальный** результат всплеска — например, автодополнение поиска.
+## Словарик терминов
 
-## Пример
+- **Throttle (троттлинг, «дросселирование»)** — ограничение частоты: функция выполняется не чаще одного раза в заданный интервал, даже если её вызывают постоянно.
+- **Окно (window)** — отрезок длиной \`wait\` после фактического вызова, в течение которого новые вызовы не выполняются сразу.
+- **Leading edge (передний фронт)** — вызов в начале окна, сразу на первом событии.
+- **Trailing edge (задний фронт)** — вызов в конце окна с аргументами последнего события, пришедшего внутри окна.
+- **\`lastCall\`** — момент последнего фактического вызова \`fn\`; от него отсчитывается окно.
+- **\`remaining\`** — сколько миллисекунд осталось до конца текущего окна: \`wait - (now - lastCall)\`.
+- **\`Date.now()\`** — текущее время в миллисекундах с 1 января 1970 года (по системным часам).
+- **\`performance.now()\`** — время в миллисекундах с момента загрузки страницы; монотонное, то есть никогда не идёт назад.
+- **\`setTimeout\` / \`clearTimeout\`** — запланировать вызов через N мс и отменить запланированный вызов.
+- **Замыкание (closure)** — функция помнит переменные места, где создана; в нём живут \`lastCall\`, \`timer\`, \`lastArgs\`.
+- **\`fn.apply(ctx, args)\`** — вызвать функцию с заданным \`this\` и массивом аргументов.
+- **Debounce** — родственный приём: вызвать один раз после того, как поток событий затих на \`wait\`.
+- **\`requestAnimationFrame\` (rAF)** — попросить браузер вызвать функцию перед следующей отрисовкой кадра.
+- **\`throttleTime\` / \`auditTime\`** — операторы RxJS для троттлинга потока значений.
+- **Jank** — заметные глазу подтормаживания интерфейса, когда кадр не успевает отрисоваться вовремя.
+- **Passive listener** — обработчик с \`{ passive: true }\`: обещание не вызывать \`preventDefault()\`, поэтому браузер прокручивает, не дожидаясь JS.
 
-\`\`\`ts
-const onScroll = throttle(() => updateProgressBar(window.scrollY), 100);
-window.addEventListener('scroll', onScroll, { passive: true });
-// событий сотни в секунду → максимум 10 обновлений, но они идут ВО ВРЕМЯ прокрутки
+## Как это работает под капотом
+
+### Уточняющие вопросы перед кодом
+
+- Нужен ли вызов сразу на первом событии (leading)? Обычно да: пользователь должен видеть реакцию немедленно.
+- Нужен ли trailing? Здесь — да, иначе последнее событие пропадёт.
+- С какими аргументами вызывать trailing? С последними пришедшими за окно.
+- Нужна ли отмена \`cancel()\` для очистки при уничтожении компонента? Да.
+- Должен ли результат \`fn\` возвращаться? Обычно нет; у lodash возвращается результат последнего фактического вызова.
+
+### Идея алгоритма простыми словами
+
+1. Храним время последнего фактического вызова \`lastCall\`; изначально 0, поэтому первое событие всегда попадает «за окно».
+2. На каждом событии считаем, сколько осталось до конца окна: \`remaining = wait - (now - lastCall)\`.
+3. Если \`remaining <= 0\`, окно истекло — вызываем \`fn\` немедленно (leading), запоминаем \`lastCall = now\` и на всякий случай отменяем висящий trailing-таймер.
+4. Если окно ещё идёт, а trailing-таймера нет — заводим его на **остаток** окна \`remaining\`, а не на полный \`wait\`.
+5. Если таймер уже есть — ничего не планируем, только обновляем \`lastArgs\` и \`lastThis\`, чтобы trailing выполнился со свежими данными.
+6. Когда таймер срабатывает, он сам становится фактическим вызовом: обновляет \`lastCall\` и вызывает \`fn\` с последними аргументами. Поэтому следующее окно отсчитывается уже от него.
+
+Построим решение по шагам. Входные данные для всех шагов: пользователь прокручивает страницу, события приходят каждые 80 мс, \`scrollY\` растёт на 100 px, всего 8 событий; \`wait = 300\`.
+
+\`\`\`text
+t=0:0px  t=80:100px  t=160:200px  t=240:300px  t=320:400px  t=400:500px  t=480:600px  t=560:700px
 \`\`\`
 
-Почему так: с debounce полоска прогресса не двинулась бы вообще, пока пользователь скроллит. Здесь же она едет плавно, а нагрузка ограничена сверху.
+### Шаг 1. Наивная версия: только leading
 
-## Что сказать на собеседовании
+\`\`\`js
+function throttle(fn, wait) {
+  let lastCall = 0;
+  return function (...args) {
+    const now = Date.now();
+    if (now - lastCall >= wait) {   // окно истекло — пропускаем
+      lastCall = now;
+      fn.apply(this, args);
+    }                               // иначе событие просто выбрасываем
+  };
+}
+// вызовы fn: t=0: 0px, t=320: 400px
+\`\`\`
 
-> Throttle гарантирует вызов не чаще одного раза в заданный интервал. Ключевое отличие от debounce: он выполняет обработчик во время непрерывного потока событий, а не только после паузы. Поэтому для скролла, прогресс-баров, перемещений мыши при рисовании и rate-limiting API нужен throttle, а debounce — там, где важен только финальный результат всплеска, как в автодополнении. Реализация: храню время последнего вызова, на новом событии считаю остаток окна; если окно истекло — вызываю сразу, это leading edge; если нет — планирую trailing-вызов на остаток. Trailing обязателен, иначе последнее событие внутри окна теряется и UI застревает на предпоследнем значении. Важная деталь реализации — считать время через \`Date.now()\` или \`performance.now()\`, а не полагаться только на \`setTimeout\`, иначе интервалы поплывут. И сохранять последние аргументы для trailing-вызова. Сложность O(1) по времени и памяти. В RxJS аналог — \`throttleTime\` с опцией \`trailing: true\`.
+Частота ограничена, но прокрутка остановилась на 700 px, а обработчик последний раз видел 400 px — индикатор застыл на устаревшей позиции. Все события после последнего вызова выброшены. Ровно так ведёт себя \`throttleTime(300)\` в RxJS по умолчанию.
 
-## Ловушки
+### Шаг 2. Добавляем trailing «в лоб» — и получаем дубль
 
-- **Throttle без trailing.** Последнее событие теряется: пользователь остановил скролл, а индикатор показывает позицию столетней давности.
-- **Опора только на \`setTimeout\`** без учёта реального прошедшего времени — интервалы плывут, особенно во вкладке в фоне.
-- **Потерянные аргументы и \`this\`** — та же ошибка, что и в debounce.
-- **Throttle там, где нужен debounce:** автодополнение начнёт слать запрос каждые 300 мс во время набора вместо одного в конце.
-- **Не забыть \`cancel\`** при уничтожении компонента, иначе запланированный trailing выстрелит в пустоту.
-- **Спросят следом:** чем throttle отличается от \`requestAnimationFrame\`-троттлинга (rAF привязан к кадру и не выполняется в фоновой вкладке — для визуальных обновлений он часто лучше) и что произойдёт при \`wait = 0\`.`,
+\`\`\`js
+function throttle(fn, wait) {
+  let lastCall = 0, timer = null, lastArgs = null;
+  return function (...args) {
+    const now = Date.now();
+    lastArgs = args;
+    if (now - lastCall >= wait) {
+      lastCall = now;
+      fn.apply(this, args);              // ❌ висящий таймер не отменён
+    } else if (!timer) {
+      timer = setTimeout(() => {         // ❌ ждём полный wait, а не остаток окна
+        timer = null;
+        lastCall = Date.now();
+        fn.apply(this, lastArgs);
+      }, wait);
+    }
+  };
+}
+// вызовы fn: t=0: 0px, t=320: 400px, t=380: 400px, t=700: 700px
+\`\`\`
+
+Последнее значение теперь доходит, но появились две ошибки. Trailing, заведённый в t=80 на полные 300 мс, должен был сработать в конце окна (t=300), а сработал в t=380. За это время в t=320 окно истекло и прошёл leading-вызов, а таймер никто не отменил — и в t=380 он вызвал \`fn\` второй раз с тем же \`400px\`, всего через 60 мс. Ограничение частоты нарушено, а интервалы между вызовами «плывут»: 320, 60, 320 мс.
+
+### Шаг 3. Финальная версия: таймер на остаток окна
+
+Это код из сниппета под ответом:
+
+\`\`\`ts
+function throttle<T extends (...args: any[]) => void>(fn: T, wait: number) {
+  let lastCall = 0;                                        // время последнего вызова fn
+  let timer: ReturnType<typeof setTimeout> | null = null;  // запланированный trailing
+  let lastArgs: Parameters<T> | null = null;
+  let lastThis: unknown;
+
+  function throttled(this: unknown, ...args: Parameters<T>) {
+    const now = Date.now();
+    const remaining = wait - (now - lastCall);             // сколько осталось до конца окна
+    lastArgs = args;
+    lastThis = this;
+
+    if (remaining <= 0) {                 // leading edge: окно истекло
+      if (timer) { clearTimeout(timer); timer = null; }    // trailing больше не нужен
+      lastCall = now;
+      fn.apply(this, args);
+    } else if (!timer) {                  // schedule trailing edge
+      timer = setTimeout(() => {
+        lastCall = Date.now();            // trailing — тоже фактический вызов
+        timer = null;
+        if (lastArgs) fn.apply(lastThis, lastArgs);
+      }, remaining);
+    }
+  }
+
+  throttled.cancel = () => {
+    if (timer) clearTimeout(timer);
+    timer = null;
+    lastCall = 0;                         // следующий вызов снова пройдёт сразу
+  };
+  return throttled;
+}
+// вызовы fn: t=0: 0px, t=300: 300px, t=600: 700px
+\`\`\`
+
+Обе ошибки шага 2 исправлены: таймер заводится на \`remaining\`, поэтому trailing срабатывает ровно в конце окна, а leading-ветка отменяет висящий таймер, поэтому дублей нет. Почему \`lastCall = 0\` работает для первого вызова: \`Date.now()\` — это порядка 1,7 триллиона миллисекунд, так что \`remaining\` получается огромным отрицательным числом, и первый вызов всегда leading.
+
+### Трассировка на входе со скроллом
+
+\`\`\`text
+t=0    0px    remaining = 300 - (огромное число) < 0 → leading: fn(0px), lastCall=0
+t=80   100px  remaining = 300 - 80 = 220 > 0, таймера нет → таймер на t=300; lastArgs=100px
+t=160  200px  remaining = 140, таймер есть → только lastArgs=200px
+t=240  300px  remaining = 60, таймер есть → lastArgs=300px
+t=300  таймер: lastCall=300, fn(300px)
+t=320  400px  remaining = 300 - 20 = 280 → таймер на t=600; lastArgs=400px
+t=400  500px  remaining = 200 → lastArgs=500px
+t=480  600px  remaining = 120 → lastArgs=600px
+t=560  700px  remaining = 40  → lastArgs=700px
+t=600  таймер: lastCall=600, fn(700px)
+\`\`\`
+
+Итог: три вызова ровно через каждые 300 мс, и последний — с финальной позицией 700 px. Восемь событий превратились в три вызова, а пользователь не потерял ни одного «состояния покоя». Тот же результат даёт RxJS \`throttleTime(300, undefined, { leading: true, trailing: true })\` на этих данных.
+
+### Сложность
+
+На каждый вызов — несколько арифметических операций, сравнение и, возможно, один \`setTimeout\`/\`clearTimeout\`. От числа событий работа на одно событие не зависит, поэтому время \`O(1)\` на вызов. Память \`O(1)\`: всегда одно число \`lastCall\`, максимум один таймер и ссылки на последние аргументы. Сколько бы событий ни пришло — 8 или 8 000, — хранится одно и то же.
+
+### Тест-кейсы
+
+Ожидаемые результаты при \`wait = 300\` (все проверены прогоном):
+
+- Один вызов в t=0 → один вызов \`fn\` сразу, trailing не планируется.
+- Вызовы \`a\`(0), \`b\`(100) → \`a\` в 0, \`b\` в 300.
+- Вызовы \`a\`(0), \`b\`(100), \`c\`(200) → \`a\` в 0, \`c\` в 300; \`b\` поглощён, потому что за окно пришло более свежее \`c\`.
+- Вызовы с интервалом больше окна: 0, 500, 1000 → три leading-вызова сразу же, таймеры не заводятся.
+- Вызовы \`a\`(0), \`b\`(100), \`c\`(310) → \`a\` в 0, \`b\` в 300, \`c\` в 600: окно после trailing отсчитывается от trailing.
+- Непрерывный поток каждые 16 мс в течение 2 секунд (125 событий) при \`wait = 100\` → 21 вызов, ровно каждые 100 мс.
+- \`cancel()\` в t=150 после вызовов в 0 и 100 → trailing отменён; новый вызов в t=200 проходит сразу, потому что \`cancel\` сбросил \`lastCall\`.
+- \`wait = 0\` → каждый вызов проходит синхронно, троттлинга нет.
+- Метод объекта → \`this\` внутри оригинала сохранён и для leading-, и для trailing-вызова.
+
+Первые два случая в виде теста Vitest; \`vi.useFakeTimers()\` подменяет и таймеры, и \`Date.now\`, поэтому время можно перематывать:
+
+\`\`\`ts
+describe('throttle', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it('первый вызов сразу, последний — в конце окна', () => {
+    const spy = vi.fn();
+    const t = throttle(spy, 300);
+    t('a');
+    expect(spy).toHaveBeenLastCalledWith('a');
+    vi.advanceTimersByTime(100); t('b');
+    vi.advanceTimersByTime(100); t('c');
+    expect(spy).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(100);            // t=300: конец окна
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(spy).toHaveBeenLastCalledWith('c');
+  });
+
+  it('cancel отменяет trailing', () => {
+    const spy = vi.fn();
+    const t = throttle(spy, 300);
+    t('a');
+    vi.advanceTimersByTime(100); t('b');
+    t.cancel();
+    vi.advanceTimersByTime(1000);
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+});
+// ✓ 2 tests passed
+\`\`\`
+
+### \`Date.now()\` против \`performance.now()\`
+
+\`Date.now()\` берёт время из системных часов. Если часы перевести назад (пользователь поменял время, синхронизация по сети), разница \`now - lastCall\` станет отрицательной, и \`remaining\` окажется огромным:
+
+\`\`\`js
+// lastCall записан, затем системные часы ушли на час назад, и пришло событие
+remaining = 300 - (-3_600_000 + 100); // 3 600 200 мс
+// trailing-вызов сработает примерно через час
+\`\`\`
+
+Это проверено прогоном с подменённым \`Date.now\`. \`performance.now()\` монотонный — он отсчитывает время от загрузки страницы и назад не идёт, поэтому в собственной реализации его стоит предпочесть. Lodash, к слову, тоже использует \`Date.now()\`, так что проблема не экзотическая, а просто редкая.
+
+### \`setTimeout\` только для trailing
+
+Таймер в этой реализации нужен ровно для одного — «доставить» последнее событие в конце окна. Решение «можно ли вызвать сейчас» принимается по реальному времени, а не по флагу, который сбросит таймер. Это важно, потому что таймер — лишь обещание вызвать «не раньше чем»: при загруженном главном потоке он срабатывает позже, а в фоновых вкладках браузеры дополнительно замедляют таймеры (насколько — зависит от браузера). Сравнение по времени не накапливает эти опоздания.
+
+### \`requestAnimationFrame\`: троттлинг по кадрам
+
+Для чисто визуальных обновлений (двигать элемент за курсором, перерисовать полоску) удобнее привязаться не к миллисекундам, а к кадрам:
+
+\`\`\`ts
+function rafThrottle<T extends (...args: any[]) => void>(fn: T) {
+  let frame: number | null = null;
+  let lastArgs: Parameters<T>;
+  return (...args: Parameters<T>) => {
+    lastArgs = args;                      // всегда помним самое свежее
+    if (frame !== null) return;           // кадр уже заказан
+    frame = requestAnimationFrame(() => {
+      frame = null;
+      fn(...lastArgs);
+    });
+  };
+}
+// 13 событий за 50 мс (каждые 4 мс) → 4 вызова, по одному на кадр, каждый с последним значением
+\`\`\`
+
+rAF вызывает функцию прямо перед отрисовкой, поэтому обновление никогда не происходит чаще, чем экран способен его показать, и всегда попадает в ближайший кадр. В большинстве браузеров rAF не вызывается в скрытых вкладках, что экономит батарею. Минус: частота зависит от монитора (60, 120, 144 Гц), поэтому для «не чаще раза в 100 мс» (аналитика, запросы) нужен обычный throttle.
+
+### \`throttleTime\` и \`auditTime\` в RxJS
+
+Для потоков в Angular обычно берут операторы. На том же входе со скроллом:
+
+\`\`\`ts
+scroll$.pipe(throttleTime(300));
+// t=0: 0px, t=320: 400px          — по умолчанию { leading: true, trailing: false }
+scroll$.pipe(throttleTime(300, undefined, { leading: true, trailing: true }));
+// t=0: 0px, t=300: 300px, t=600: 700px   — совпадает с нашим throttle
+scroll$.pipe(auditTime(300));
+// t=300: 300px, t=620: 700px      — только trailing: ждёт окно и отдаёт последнее
+scroll$.pipe(debounceTime(300));
+// t=860: 700px                    — один раз, через 300 мс после последнего события
+\`\`\`
+
+Главная ловушка: у \`throttleTime\` по умолчанию trailing выключен, и последнее значение теряется — ровно баг шага 1. В lodash \`throttle\` по умолчанию включены оба фронта.
+
+### Как выбрать между throttle и debounce
+
+- **Нужна реакция во время действия** (скролл, перетаскивание, рисование, ресайз с живым превью) — throttle.
+- **Нужен только итог действия** (поиск по мере ввода, автосохранение, валидация логина) — debounce.
+- **Нужно равномерно семплировать поток** (координаты мыши для рисования, телеметрия) — throttle: он даёт точки через равные интервалы.
+- **Нужно ограничить нагрузку на API при постоянном вводе** — throttle гарантирует потолок частоты; debounce при непрерывном вводе может не выстрелить вообще.
+- **Чисто визуальное обновление** — throttle по кадрам через \`requestAnimationFrame\`.
+
+Проверка на автодополнении: с throttle на 300 мс при наборе «angular» уйдёт запрос каждые 300 мс во время набора, а с debounce — один после паузы. Для поиска это лишние запросы, поэтому там debounce.
+
+### Где это применяется на практике
+
+- **Прогресс-бар чтения и «липкая» шапка**, которые зависят от позиции скролла:
+
+\`\`\`ts
+@Component({ selector: 'app-reading-progress', template: \`<div class="bar" [style.width.%]="progress()"></div>\` })
+export class ReadingProgressComponent {
+  progress = signal(0);
+
+  constructor() {
+    const update = throttle(() => {
+      const el = document.documentElement;
+      this.progress.set(Math.round((100 * el.scrollTop) / (el.scrollHeight - el.clientHeight)));
+    }, 100);
+    window.addEventListener('scroll', update, { passive: true });
+    inject(DestroyRef).onDestroy(() => {
+      window.removeEventListener('scroll', update);
+      update.cancel();                     // иначе trailing выстрелит после уничтожения
+    });
+  }
+}
+// прокрутка 2 секунды → около 20 обновлений вместо ~120 событий, последнее — с финальной позицией
+\`\`\`
+
+- **Drag-and-drop и ресайз колонок в больших гридах**: пересчитывать ширины и перерисовывать строки не чаще раза в кадр или в 50 мс.
+- **Отправка аналитики** (глубина скролла, движения мыши для тепловых карт) — не чаще раза в N мс.
+- **Подгрузка данных при скролле** (бесконечная лента): проверять «близко ли к низу» не на каждом событии.
+- **Совместное редактирование и курсоры**: рассылать позицию курсора через WebSocket не чаще 10 раз в секунду.
+- **Кнопки, которые можно нажимать часто**, но запросы должны идти с ограниченной частотой (например, «обновить данные дашборда»).
+
+## Важные нюансы и подводные камни
+
+- **Throttle без trailing.** Последнее событие теряется: пользователь остановил скролл, а индикатор показывает позицию столетней давности. Это поведение \`throttleTime\` по умолчанию.
+- **Trailing на полный \`wait\` вместо остатка окна.** Интервалы «плывут», а без отмены таймера в leading-ветке появляются двойные вызовы через несколько миллисекунд — пример шага 2.
+- **Опора только на \`setTimeout\`** без учёта реально прошедшего времени: опоздания таймеров накапливаются, особенно во вкладке в фоне.
+- **\`Date.now()\` не монотонный.** Перевод системных часов назад может отложить trailing-вызов на часы; \`performance.now()\` от этого защищён.
+- **Потерянные аргументы и \`this\`.** Та же ошибка, что и в debounce: trailing обязан вызываться с последними аргументами через \`fn.apply(lastThis, lastArgs)\`.
+- **Throttle там, где нужен debounce.** Автодополнение начнёт слать запрос каждые 300 мс во время набора вместо одного в конце.
+- **Забытый \`cancel\` при уничтожении компонента.** Запланированный trailing выстрелит в уничтоженный компонент; заодно снимите сам обработчик через \`removeEventListener\`.
+- **\`cancel\` в сниппете сбрасывает \`lastCall\`.** После отмены следующий вызов пройдёт сразу, даже если окно формально не истекло, — обычно это то, что нужно.
+- **\`wait = 0\` выключает троттлинг.** \`remaining\` всегда \`<= 0\`, и каждый вызов проходит синхронно.
+- **Нет опции \`leading: false\`.** В сниппете первый вызов всегда немедленный; lodash и RxJS позволяют выключить любой из фронтов.
+- **Тяжёлый обработчик всё равно тормозит.** Throttle снижает частоту, но если один вызов занимает 50 мс, кадры пропадут. Выносите тяжёлое в Web Worker или упрощайте сам расчёт.
+- **Scroll-обработчики в приложении с zone.js.** Каждое событие, пойманное внутри зоны Angular, запускает проверку изменений. Подписывайтесь в \`NgZone.runOutsideAngular\`, а внутрь возвращайтесь только на троттлированном вызове — или обновляйте сигнал, как в примере выше.
+
+**Плюсы:** гарантированный потолок частоты, регулярные обновления во время действия, \`O(1)\` по времени и памяти, trailing не теряет финальное состояние.
+**Минусы:** промежуточные события выбрасываются, частота подобрана «на глаз» и не привязана к кадрам, нужен ручной \`cancel\`, \`Date.now()\` уязвим к переводу часов.
+
+## Как это спрашивают на собеседовании
+
+**Главный вывод:** throttle пропускает не больше одного вызова за окно \`wait\`: первый — сразу, последний за окно — в его конце. Ключ реализации — считать остаток окна по реальному времени и заводить trailing-таймер на этот остаток, отменяя его при leading-вызове. Throttle — для реакции во время действия, debounce — для итога действия.
+
+Типичные формулировки: «Реализуйте throttle», «Чем throttle отличается от debounce и когда что выбрать?», «Почему прогресс-бар застревает на неправильной позиции?», «Как ограничить обработку скролла?».
+
+Как вести себя во время кодинга: начните с уточнения, нужны ли leading и trailing; напишите версию с одним \`lastCall\` и сразу покажите на примере, что последнее событие теряется; добавьте trailing и проговорите, почему таймер нужен на остаток окна и почему leading обязан его отменять; в конце прогоните трассировку на четырёх-пяти событиях и назовите сложность.
+
+Что могут спросить следом:
+
+- *Что будет при \`wait = 0\`?* — Троттлинга нет: каждый вызов проходит синхронно.
+- *Чем throttle отличается от \`requestAnimationFrame\`-троттлинга?* — rAF привязан к кадру и обычно не вызывается в фоновой вкладке, поэтому для визуальных обновлений он часто лучше; для «не чаще раза в 100 мс» нужен обычный throttle.
+- *Что делает \`throttleTime\` по умолчанию?* — Только leading, trailing выключен, поэтому последнее значение теряется; включается конфигом \`{ leading: true, trailing: true }\`.
+- *Почему \`performance.now()\`, а не \`Date.now()\`?* — Он монотонный и не прыгает при переводе системных часов.
+- *Как связаны throttle и debounce в lodash?* — Lodash \`throttle\` реализован как \`debounce\` с опцией \`maxWait\`, равной \`wait\`.
+
+### Ответ на 1 минуту
+
+> Throttle гарантирует, что функция выполнится не чаще раза в \`wait\` миллисекунд, причём во время непрерывного потока событий, а не после него, как debounce. Реализую так: храню время последнего фактического вызова и на каждом событии считаю остаток окна \`wait - (now - lastCall)\`. Если он не больше нуля — вызываю сразу, это leading, и отменяю висящий таймер. Если окно ещё идёт — завожу trailing-таймер на остаток окна и только обновляю последние аргументы и \`this\`. Trailing обязателен, иначе последнее событие теряется и прогресс-бар застревает на старой позиции. Сложность \`O(1)\`. Throttle беру для скролла, драга, ресайза колонок грида и аналитики, debounce — для поиска и автосохранения. Для чисто визуальных обновлений удобен \`requestAnimationFrame\`, а в RxJS — \`throttleTime\` с \`trailing: true\`, потому что по умолчанию он выключен.`,
       en: `## In short
 
 Throttle guarantees a function runs **at most once per \`wait\` milliseconds**. Unlike debounce, it keeps firing **during** a continuous stream of events, not just after it ends.
@@ -7312,50 +9749,382 @@ function throttle<T extends (...args: any[]) => void>(fn: T, wait: number) {
       en: 'Implement a deep clone that handles cyclic references, Map, Set, and Date.',
     },
     answer: {
-      ru: `## Коротко
+      ru: `## В чём суть
 
-Нужно рекурсивно скопировать объект так, чтобы клон **не делил ни одной ссылки** с оригиналом. Вся хитрость — в одной структуре данных: **WeakMap «оригинал → клон»**. Она разом решает и бесконечную рекурсию на циклах, и сохранение разделяемых ссылок.
+Нужно написать \`deepClone(value)\` — функцию, которая рекурсивно копирует объект так, чтобы копия **не делила ни одной ссылки** с оригиналом: меняете что угодно в клоне — оригинал не меняется. При этом функция не должна зависать на циклических ссылках, должна сохранять общие ссылки (один объект, встреченный дважды, остаётся одним объектом и в клоне) и правильно копировать \`Date\`, \`Map\`, \`Set\` и массивы. Вся хитрость — в одной структуре данных: **WeakMap «оригинал → клон»**, которая разом решает и циклы, и общие ссылки.
 
-Аналогия: перерисовываете карту метро от руки. Ветки пересекаются, и один и тот же узел встречается снова и снова. Если не отмечать «эту станцию я уже нарисовал, вот она», вы будете рисовать её бесконечно (цикл) или нарисуете две разных станции с одним названием (потеря общей ссылки). WeakMap — это ваш список уже нарисованных станций.
+Аналогия: перерисовываете карту метро от руки. Ветки пересекаются, и одна и та же пересадочная станция встречается снова и снова. Если не отмечать «эту станцию я уже нарисовал, вот она», вы будете рисовать её бесконечно (цикл) или нарисуете две разные станции с одним названием (потеря общей ссылки). WeakMap — ваш список уже нарисованных станций.
 
-## Как это работает по шагам
+**Какую проблему решает.** Присваивание \`const copy = obj\` и spread \`{ ...obj }\` копируют только верхний уровень: вложенные объекты остаются общими. Поменяли \`copy.address.city\` в форме редактирования — и тихо испортили исходную сущность в сторе, кэше или списке. А популярный трюк \`JSON.parse(JSON.stringify(obj))\` падает на циклах и молча портит данные: даты становятся строками, \`Map\` и \`Set\` — пустыми объектами. Глубокое копирование нужно, когда вы хотите изменять данные, не задевая оригинал: черновик формы, снимок для undo, изоляция тестовых данных.
 
-1. **Примитивы и \`null\`** возвращаем как есть — копировать нечего.
-2. **Особые типы обрабатываем отдельно**: \`Date\` → новый \`Date\` по таймстемпу, \`RegExp\` → новый по \`source\` и \`flags\`.
-3. **Проверяем WeakMap.** Если этот объект уже клонировали — возвращаем существующий клон. Это и есть защита от циклов и сохранение общих ссылок.
-4. **Создаём пустой клон и СРАЗУ кладём его в WeakMap** — до того, как начали копировать содержимое. Порядок критичен: иначе рекурсия вернётся к этому же объекту и не найдёт его в кэше.
-5. **Рекурсивно копируем содержимое:** элементы массива, пары \`Map\` (ключи тоже клонируем), значения \`Set\`, собственные ключи объекта через \`Reflect.ownKeys\` — так подхватываются и символы.
-6. **Прототип сохраняем** через \`Object.create(Object.getPrototypeOf(value))\`, иначе экземпляр класса превратится в обычный объект и потеряет методы.
-7. **Сложность:** время \`O(n)\` по числу узлов, память \`O(n)\` на клон плюс WeakMap.
+## Словарик терминов
 
-## Пример
+- **Поверхностная копия (shallow copy)** — копируется только верхний уровень; вложенные объекты общие. Так работают \`{ ...obj }\`, \`Object.assign\`, \`arr.slice()\`.
+- **Глубокая копия (deep copy, deep clone)** — копируются все уровни вложенности; клон не делит с оригиналом ни одного объекта.
+- **Ссылка (reference)** — переменная хранит не сам объект, а «адрес» объекта; две переменные могут указывать на один и тот же объект.
+- **Циклическая ссылка (cycle)** — объект прямо или через цепочку ссылается сам на себя: \`a.self = a\`, или \`parent.children[0].parent === parent\`.
+- **Общая ссылка (shared reference)** — один и тот же объект доступен из нескольких мест: \`a.x === a.y\`.
+- **\`WeakMap\`** — словарь, где ключи — только объекты и держатся «слабо»: не мешают сборщику мусора удалить объект, на который больше никто не ссылается.
+- **Прототип (prototype)** — объект, из которого экземпляр берёт методы; у \`new User()\` это \`User.prototype\`. Узнать — \`Object.getPrototypeOf\`, создать объект с заданным прототипом — \`Object.create(proto)\`.
+- **\`Reflect.ownKeys(obj)\`** — все собственные ключи объекта: строковые и символьные, перечисляемые и нет.
+- **\`Object.keys(obj)\`** — только собственные **перечисляемые строковые** ключи.
+- **Symbol** — уникальный примитив, который может быть ключом свойства; такие ключи не видны в \`Object.keys\` и \`JSON\`.
+- **\`structuredClone\`** — встроенная функция браузера и Node.js (во всех основных браузерах — с 2022 года), делающая глубокую копию по алгоритму structured clone — тому же, что используется в \`postMessage\`.
+- **\`DataCloneError\`** — ошибка, которую бросает \`structuredClone\`, если встретил то, что клонировать нельзя (функцию, DOM-узел).
+- **Стек вызовов (call stack)** — память под незавершённые вызовы функций; у глубокой рекурсии он кончается с \`RangeError: Maximum call stack size exceeded\`.
+
+## Как это работает под капотом
+
+### Уточняющие вопросы перед кодом
+
+- Какие типы обязаны поддерживаться? В задаче: объекты, массивы, \`Date\`, \`Map\`, \`Set\`, циклы. Стоит спросить про \`RegExp\`, классы, символьные ключи.
+- Что делать с функциями? Обычно — оставить ту же ссылку (функцию «скопировать» нельзя) или бросить ошибку, как \`structuredClone\`.
+- Нужно ли сохранять прототип, то есть чтобы клон \`new User()\` остался \`User\` с методами?
+- Нужно ли сохранять общие ссылки (\`a.x === a.y\` в клоне)? Обычно да.
+- Насколько глубокими бывают данные? Если десятки тысяч уровней — рекурсия не подойдёт, нужен обход со своим стеком.
+- Можно ли просто использовать \`structuredClone\`? Если да — это правильный ответ для продакшена, и стоит сказать об этом вслух.
+
+### Идея алгоритма простыми словами
+
+1. Примитивы (\`number\`, \`string\`, \`boolean\`, \`undefined\`, \`symbol\`, \`bigint\`) и \`null\` неизменяемы, поэтому их возвращаем как есть — копировать нечего.
+2. Особые типы обрабатываем отдельно, потому что их содержимое лежит во внутренних слотах, а не в свойствах: \`Date\` → новый \`Date\` с тем же временем, \`RegExp\` → новый по \`source\` и \`flags\`.
+3. Проверяем WeakMap: если этот объект уже клонировали, возвращаем готовый клон. Это и защита от циклов, и сохранение общих ссылок.
+4. Создаём пустой клон нужного типа и **сразу** кладём его в WeakMap — до копирования содержимого. Иначе рекурсия, дойдя по циклу до того же объекта, не найдёт его в кэше и пойдёт по кругу.
+5. Рекурсивно копируем содержимое: элементы массива, пары \`Map\` (и ключи, и значения), элементы \`Set\`, все собственные ключи объекта через \`Reflect.ownKeys\`.
+6. Для обычных объектов создаём клон через \`Object.create(Object.getPrototypeOf(value))\`, поэтому экземпляр класса остаётся экземпляром и сохраняет методы.
+
+Строим решение по шагам: от наивной рекурсии до финальной версии.
+
+### Шаг 1. Наивная рекурсия
+
+\`\`\`js
+function deepClone(value) {
+  if (value === null || typeof value !== 'object') return value;
+  const copy = Array.isArray(value) ? [] : {};
+  for (const key of Object.keys(value)) copy[key] = deepClone(value[key]);
+  return copy;
+}
+
+const user = { name: 'Ann', tags: ['admin'], address: { city: 'Minsk' } };
+const draft = deepClone(user);
+draft.address.city = 'Riga';
+draft.tags.push('x');
+console.log(user.address.city, user.tags); // Minsk ['admin']  ← оригинал не задет
+\`\`\`
+
+Для простого дерева данных этого достаточно. Но три проблемы видны сразу:
+
+\`\`\`js
+const shared = { id: 1 };
+const s = deepClone({ x: shared, y: shared });
+console.log(s.x === s.y); // false — общая ссылка распалась на две копии
+
+const a = { name: 'root' };
+a.self = a;
+deepClone(a); // RangeError: Maximum call stack size exceeded
+\`\`\`
+
+Цикл даёт бесконечную рекурсию: \`deepClone(a)\` → \`deepClone(a.self)\`, то есть снова \`deepClone(a)\`, и так до переполнения стека. Третья проблема — \`Date\`, \`Map\`, \`Set\` и экземпляры классов превращаются в пустые \`{}\` без методов.
+
+### Шаг 2. Кэш есть, но заполняется слишком поздно
+
+\`\`\`js
+function deepClone(value, seen = new WeakMap()) {
+  if (value === null || typeof value !== 'object') return value;
+  if (seen.has(value)) return seen.get(value);
+  const copy = Array.isArray(value) ? [] : {};
+  for (const key of Object.keys(value)) copy[key] = deepClone(value[key], seen);
+  seen.set(value, copy);   // ❌ клон попадает в кэш только ПОСЛЕ обхода
+  return copy;
+}
+
+deepClone({ x: shared, y: shared }); // x === y → true, общая ссылка уже сохраняется
+deepClone(a);                        // RangeError: Maximum call stack size exceeded
+\`\`\`
+
+Самая частая ошибка на живом кодинге. Общие ссылки она чинит: к моменту второй встречи \`shared\` уже полностью скопирован и лежит в кэше. А цикл — нет: пока мы копируем содержимое \`a\`, сам \`a\` ещё не в кэше, и рекурсия по \`a.self\` начинает копировать его заново.
+
+### Шаг 3. Кэш до обхода — циклы побеждены
+
+\`\`\`js
+function deepClone(value, seen = new WeakMap()) {
+  if (value === null || typeof value !== 'object') return value;
+  if (seen.has(value)) return seen.get(value);
+  const copy = Array.isArray(value) ? [] : {};
+  seen.set(value, copy);   // ✅ сначала «застолбили» клон, потом наполняем
+  for (const key of Object.keys(value)) copy[key] = deepClone(value[key], seen);
+  return copy;
+}
+
+const c = deepClone(a);
+console.log(c.self === c, c !== a); // true true
+\`\`\`
+
+Пустой клон можно положить в кэш заранее, потому что это объект, и ссылка на него не изменится, когда мы его наполним. Рекурсия, вернувшись к \`a\`, получит эту ссылку — ещё недозаполненную, но к концу работы уже полную. Остаётся проблема типов: \`{ d: new Date(0), m: new Map(), s: new Set() }\` превращается в \`{ d: {}, m: {}, s: {} }\`, а экземпляр класса теряет методы.
+
+### Шаг 4. Финальная версия: особые типы, прототип, символы
+
+Это код из сниппета под ответом:
+
+\`\`\`ts
+function deepClone<T>(value: T, seen = new WeakMap<object, any>()): T {
+  if (value === null || typeof value !== 'object') return value;               // примитивы, функции
+  if (value instanceof Date) return new Date(value.getTime()) as T;
+  if (value instanceof RegExp) return new RegExp(value.source, value.flags) as T;
+
+  const ref = value as unknown as object;
+  if (seen.has(ref)) return seen.get(ref);        // cycle / shared ref
+
+  if (Array.isArray(value)) {
+    const arr: any[] = [];
+    seen.set(ref, arr);                           // в кэш — до обхода
+    for (const item of value) arr.push(deepClone(item, seen));
+    return arr as T;
+  }
+  if (value instanceof Map) {
+    const map = new Map();
+    seen.set(ref, map);
+    value.forEach((v, k) => map.set(deepClone(k, seen), deepClone(v, seen))); // и ключи тоже
+    return map as T;
+  }
+  if (value instanceof Set) {
+    const set = new Set();
+    seen.set(ref, set);
+    value.forEach(v => set.add(deepClone(v, seen)));
+    return set as T;
+  }
+  const clone = Object.create(Object.getPrototypeOf(value));  // тот же прототип → методы на месте
+  seen.set(ref, clone);
+  for (const key of Reflect.ownKeys(value as object)) {       // строки + символы
+    clone[key] = deepClone((value as any)[key], seen);
+  }
+  return clone;
+}
+\`\`\`
+
+\`Date\` и \`RegExp\` проверяются до кэша и не попадают в него: у них нет вложенных объектов, поэтому зациклиться через них нельзя. Функции попадают в первую ветку (\`typeof\` даёт \`'function'\`, а не \`'object'\`) и возвращаются той же ссылкой.
+
+### Трассировка на примере с циклом и общей ссылкой
 
 \`\`\`ts
 const a: any = { name: 'root' };
 a.self = a;                       // цикл
 const shared = { id: 1 };
 a.x = shared; a.y = shared;       // одна ссылка дважды
-
 const c = deepClone(a);
-c.self === c;                     // true — цикл сохранён, не завис
-c.x === c.y;                      // true — общая ссылка осталась общей
-c.x === shared;                   // false — и при этом это уже копия
 \`\`\`
 
-Почему так: \`JSON.parse(JSON.stringify(a))\` на этом объекте просто бросит исключение. А если убрать цикл — потеряет \`undefined\`, функции и символы, превратит \`Date\` в строку, \`Map\` и \`Set\` в \`{}\`, а \`c.x\` и \`c.y\` станут двумя разными объектами.
+Пошагово:
 
-## Что сказать на собеседовании
+\`\`\`text
+deepClone(a)
+  объект, не Date/RegExp, в seen нет, не массив/Map/Set
+  cloneA = Object.create(Object.prototype); seen = { a → cloneA }
+  ключи a: ['name', 'self', 'x', 'y']
+  'name' → deepClone('root') → примитив → 'root'
+  'self' → deepClone(a) → seen.has(a) → вернуть cloneA      ← цикл замкнулся без рекурсии
+  'x'    → deepClone(shared): в seen нет
+             cloneS = {}; seen = { a → cloneA, shared → cloneS }
+             'id' → 1
+           вернуть cloneS
+  'y'    → deepClone(shared) → seen.has(shared) → вернуть cloneS  ← общая ссылка сохранена
+  вернуть cloneA
+\`\`\`
 
-> Задача — рекурсивно продублировать структуру, не разделяя ссылок с оригиналом, при этом не зациклиться на циклических ссылках, сохранить разделяемые ссылки — один объект, встреченный дважды, должен остаться одним и в клоне — и корректно скопировать Date, Map, Set и массивы. \`JSON.parse(JSON.stringify())\` для этого не годится: он теряет undefined, функции и символы, превращает Date в строку, а Map и Set в пустой объект, бросает исключение на циклах и не сохраняет ни прототипы, ни общие ссылки. Ключ решения — WeakMap из оригинала в клон: перед клонированием проверяем кэш и, если объект уже склонирован, возвращаем готовый клон; это одним приёмом решает и циклы, и разделяемые ссылки за O(1). Критично класть клон в WeakMap до рекурсивного обхода содержимого, иначе цикл всё равно повесит функцию. Сложность — O(n) по времени и памяти. В проде я возьму нативный \`structuredClone\`, который поддерживает циклы, Map, Set и Date; ручную реализацию спрашивают, чтобы проверить понимание. Ограничение обоих подходов — функции не клонируются, а для классов надо явно сохранять прототип через \`Object.create\`.
+\`\`\`ts
+c.self === c;      // true  — цикл сохранён, функция не зависла
+c.x === c.y;       // true  — общая ссылка осталась общей
+c.x === shared;    // false — и при этом это уже копия
+\`\`\`
 
-## Ловушки
+### Сложность
 
-- **Клон кладётся в WeakMap после обхода** — и защита от циклов не работает вообще. Самая частая ошибка на живом кодинге.
-- **\`JSON.parse(JSON.stringify())\` как ответ** — покажите, что знаете все пять его проблем, иначе вопрос на этом и закончится.
-- **Потерянный прототип:** экземпляр класса становится обычным объектом, методы исчезают.
-- **Ключи \`Map\` не клонируются** — если ключ объект, клон продолжит делить его с оригиналом.
+Пусть \`n\` — общее число объектов и свойств в структуре. Благодаря WeakMap каждый объект клонируется ровно один раз, а каждое свойство просматривается один раз; проверка и запись в WeakMap — \`O(1)\`. Значит, время \`O(n)\`: структура в 10 раз больше — работы в 10 раз больше. Память тоже \`O(n)\`: сам клон того же размера, плюс WeakMap с записью на каждый объект, плюс стек рекурсии глубиной с уровень вложенности.
+
+### Тест-кейсы
+
+Все результаты проверены прогоном финальной версии:
+
+\`\`\`ts
+deepClone(42);                                   // 42
+deepClone(null);                                 // null
+
+const src = { d: new Date('2024-01-15T10:00:00Z'), m: new Map([['k', 1]]), s: new Set([1, 2]), re: /ab+c/gi };
+const r = deepClone(src);
+r.d !== src.d && r.d.getTime() === src.d.getTime(); // true — новая дата с тем же временем
+r.m.get('k');                                    // 1, и r.m !== src.m
+r.re.flags;                                      // 'gi'
+
+class User { constructor(public name: string) {} greet() { return 'hi ' + this.name; } }
+const u = deepClone(new User('Ann'));
+u instanceof User;                               // true
+u.greet();                                       // 'hi Ann'
+
+const sym = Symbol('s');
+deepClone({ [sym]: 1 })[sym];                    // 1 — символьный ключ скопирован
+
+const fn = () => 1;
+deepClone({ fn }).fn === fn;                     // true — функции не копируются, ссылка та же
+\`\`\`
+
+Плюс уже разобранные: цикл (\`c.self === c\`), общая ссылка (\`c.x === c.y\`), изменение вложенного объекта в клоне не задевает оригинал.
+
+### \`JSON.parse(JSON.stringify())\` — почему это не ответ
+
+\`\`\`ts
+const shared = { id: 1 };
+const data = {
+  u: undefined, f() { return 1; }, [Symbol('s')]: 1,
+  d: new Date('2024-01-15T10:00:00Z'), m: new Map([['k', 1]]), st: new Set([1, 2]),
+  n: NaN, inf: Infinity, re: /ab+c/gi, sh1: shared, sh2: shared,
+};
+const j = JSON.parse(JSON.stringify(data));
+// { d: '2024-01-15T10:00:00.000Z', m: {}, st: {}, n: null, inf: null, re: {}, sh1: { id: 1 }, sh2: { id: 1 } }
+// j.sh1 === j.sh2 → false
+
+JSON.stringify(a);         // TypeError: Converting circular structure to JSON
+JSON.stringify({ b: 10n }); // TypeError: Do not know how to serialize a BigInt
+JSON.parse(JSON.stringify(new User('Ann'))) instanceof User; // false, greet пропал
+\`\`\`
+
+Пять главных проблем, которые надо уметь назвать: теряет \`undefined\`, функции и символы; превращает \`Date\` в строку; превращает \`Map\`, \`Set\` и \`RegExp\` в \`{}\`; бросает исключение на циклах (и на \`BigInt\`); не сохраняет ни прототипы, ни общие ссылки. Бонусом \`NaN\` и \`Infinity\` становятся \`null\`. Для данных, которые и так пришли из JSON (ответ API без дат-объектов), трюк работает, но в общем случае — нет.
+
+### \`structuredClone\` — что брать в продакшене
+
+\`\`\`ts
+const sc = structuredClone(a);
+sc.self === sc;   // true — циклы поддерживаются
+sc.x === sc.y;    // true — общие ссылки тоже
+
+structuredClone({ d: new Date(0), m: new Map([['k', 1]]), s: new Set([1]), re: /x/g, u: undefined, n: NaN, big: 10n });
+// всё на месте: Date, Map, Set, RegExp, undefined, NaN, 10n
+
+structuredClone({ f() {} });          // DOMException с name 'DataCloneError': функцию клонировать нельзя
+structuredClone(new User('Ann'));     // { name: 'Ann' } — instanceof User → false, методов нет
+structuredClone({ [Symbol('s')]: 1 }); // {} — символьные ключи отбрасываются
+\`\`\`
+
+Встроенный \`structuredClone\` есть во всех современных браузерах и в Node.js с 17-й версии. Он поддерживает циклы, общие ссылки, \`Date\`, \`Map\`, \`Set\`, \`RegExp\`, \`BigInt\`, типизированные массивы, \`Error\`, \`Blob\` и многое другое. Ограничения: функции и DOM-узлы бросают \`DataCloneError\`, прототип не сохраняется (экземпляр класса становится обычным объектом), символьные ключи и неперечисляемые свойства отбрасываются, геттеры превращаются в обычные значения. Ручную реализацию на собеседовании спрашивают, чтобы проверить понимание ссылок, рекурсии и циклов.
+
+### \`WeakMap\` — почему именно он
+
+\`WeakMap\` принимает в качестве ключей только объекты — ровно то, что нам нужно кэшировать, — и держит их слабо: если на объект больше никто не ссылается, сборщик мусора может удалить и запись.
+
+\`\`\`ts
+const seen = new WeakMap<object, unknown>();
+const key = { id: 1 };
+seen.set(key, 'clone');
+seen.get(key);   // 'clone'
+seen.set('str' as any, 1); // TypeError: Invalid value used as weak map key
+\`\`\`
+
+Честная оговорка: в этой функции \`seen\` живёт только во время одного вызова и потом целиком становится мусором, так что обычный \`Map\` сработал бы так же. Слабые ссылки начинают играть роль, если кэш переживает вызов — например, вы переиспользуете его между клонированиями. \`WeakMap\` здесь скорее правильная привычка, чем необходимость.
+
+### \`Reflect.ownKeys\` против \`Object.keys\`
+
+\`\`\`ts
+const sym = Symbol('meta');
+const obj = { a: 1, [sym]: 2 };
+Object.defineProperty(obj, 'hidden', { value: 3, enumerable: false });
+
+Object.keys(obj);       // ['a']
+Reflect.ownKeys(obj);   // ['a', 'hidden', Symbol(meta)]
+\`\`\`
+
+\`Object.keys\` теряет символьные и неперечисляемые ключи, поэтому финальная версия использует \`Reflect.ownKeys\`. Учтите побочный эффект: в клоне неперечисляемое свойство становится обычным перечисляемым, потому что копируется простым присваиванием.
+
+### \`Object.create(Object.getPrototypeOf(value))\` — сохраняем класс
+
+\`\`\`ts
+class Money { constructor(public amount: number) {} format() { return \`\${this.amount} €\`; } }
+const m = new Money(10);
+const copy = Object.create(Object.getPrototypeOf(m)); // пустой объект с прототипом Money.prototype
+copy.amount = m.amount;
+copy instanceof Money;  // true
+copy.format();          // '10 €'
+\`\`\`
+
+\`Object.create(proto)\` создаёт пустой объект, у которого прототип — \`proto\`, **не вызывая конструктор**. Поэтому методы класса доступны, а побочные эффекты конструктора не повторяются. Обратная сторона — если конструктор создаёт внутреннее состояние, которого нет в обычных свойствах, клон получится сломанным (см. нюансы про \`#private\` и типизированные массивы).
+
+### Обход без рекурсии — для очень глубоких структур
+
+В Node.js 20 финальная версия падала с \`RangeError\` примерно на 4 000 уровнях вложенности (например, связный список из 4 000 узлов); точный предел зависит от движка и размера стека. Если такие данные реальны, рекурсию заменяют явным стеком:
+
+\`\`\`ts
+function deepCloneIterative(root: any): any {
+  if (root === null || typeof root !== 'object') return root;
+  const seen = new WeakMap<object, any>();
+  const makeEmpty = (v: any) => (Array.isArray(v) ? [] : Object.create(Object.getPrototypeOf(v)));
+  const rootCopy = makeEmpty(root);
+  seen.set(root, rootCopy);
+  const stack: Array<[any, any]> = [[root, rootCopy]];   // пары «оригинал → его копия»
+  while (stack.length) {
+    const [src, dst] = stack.pop()!;
+    for (const key of Reflect.ownKeys(src)) {
+      const v = src[key];
+      if (v === null || typeof v !== 'object') { dst[key] = v; continue; }
+      if (seen.has(v)) { dst[key] = seen.get(v); continue; }
+      const copy = makeEmpty(v);
+      seen.set(v, copy);
+      dst[key] = copy;
+      stack.push([v, copy]);                             // содержимое скопируем позже
+    }
+  }
+  return rootCopy;
+}
+// список глубиной 100 000 → скопирован целиком; циклы и общие ссылки сохраняются
+\`\`\`
+
+Вместо стека вызовов используется обычный массив в куче, а он ограничен только памятью. Для краткости здесь только объекты и массивы; \`Date\`, \`Map\`, \`Set\` добавляются так же, как в рекурсивной версии.
+
+### Где это применяется на практике
+
+- **Черновик формы редактирования**: открыли сущность в диалоге — работаем с клоном; «Отмена» просто выбрасывает клон, оригинал в сторе не тронут.
+- **Undo/redo в редакторах и конструкторах дашбордов**: перед каждым изменением кладём снимок состояния в историю.
+- **Тесты**: каждая спецификация получает свою копию фикстуры, чтобы мутация в одном тесте не ломала другой.
+- **Конфигурации по умолчанию**: копируем шаблон настроек грида (колонки, фильтры, сортировка) перед тем, как пользователь его изменит, иначе правка «протечёт» во все гриды.
+- **Передача данных в Web Worker**: \`postMessage\` использует тот же алгоритм structured clone, поэтому ограничения у них общие.
+- **Где лучше НЕ клонировать глубоко**: обновление состояния в NgRx, NGXS и сигналах. Там используют иммутабельные обновления через spread с переиспользованием неизменённых веток — тогда \`OnPush\`, \`computed\` и мемоизированные селекторы видят, что изменилось, по смене ссылок.
+
+## Важные нюансы и подводные камни
+
+- **Клон кладётся в WeakMap после обхода.** Защита от циклов не работает вообще, хотя общие ссылки сохраняются — коварно, потому что половина тестов проходит.
+- **Ответ «просто \`JSON.parse(JSON.stringify())\`».** Покажите, что знаете все пять его проблем, иначе вопрос на этом и закончится.
+- **Потерянный прототип.** Без \`Object.create(Object.getPrototypeOf(...))\` экземпляр класса становится обычным объектом, методы исчезают. Так же ведёт себя \`structuredClone\`.
+- **Ключи \`Map\` не клонируются** — если ключ объект, клон продолжит делить его с оригиналом. Но у клонирования ключей есть обратная сторона: \`clone.get(originalKey)\` вернёт \`undefined\`, потому что ключ в клоне — уже другой объект. Если ключи — это внешние сущности (DOM-элементы, объекты из другого стора), их осознанно оставляют теми же ссылками.
 - **\`Object.keys\` вместо \`Reflect.ownKeys\`** теряет символьные и неперечисляемые ключи.
-- **Спросят следом:** почему именно \`WeakMap\`, а не \`Map\` (слабые ссылки не мешают сборке мусора), что \`structuredClone\` делает с функциями и DOM-узлами (бросает \`DataCloneError\`) и как обойти глубокую рекурсию на очень вложенных структурах (итеративный обход со стеком).`,
+- **Ключ \`__proto__\` из JSON.** \`JSON.parse('{"__proto__": {"isAdmin": true}}')\` создаёт **собственное** свойство \`__proto__\`. Присваивание \`clone['__proto__'] = ...\` в финальной версии меняет прототип клона: собственного ключа в клоне нет, зато \`clone.isAdmin === true\` (проверено). Это загрязнение прототипа одного объекта; лечится записью через \`Object.defineProperty(clone, key, { value, writable: true, enumerable: true, configurable: true })\`.
+- **\`Date\` не попадает в кэш.** \`{ a: d, b: d }\` с одной датой превратится в две разные даты: \`clone.a === clone.b\` → \`false\`. Обычно безвредно, но формально общая ссылка теряется.
+- **Разреженные массивы и свойства массива.** \`for...of\` по \`[1, , 3]\` даёт \`undefined\` на месте дырки, и в клоне она становится настоящим элементом; дополнительные свойства массива (\`arr.total = 3\`) не копируются.
+- **Геттеры вычисляются один раз.** \`{ get now() {...} }\` в клоне станет обычным свойством со значением на момент клонирования — так же делает и \`structuredClone\`.
+- **Внутренние слоты ломают клон.** Типизированные массивы, \`Blob\`, \`URL\`, \`Promise\`, классы с \`#private\`-полями хранят данные не в обычных свойствах. Финальная версия даёт для \`new Uint8Array([1, 2])\` объект, у которого \`.length\` бросает \`TypeError\`, а для класса с \`#balance\` геттер бросает \`TypeError: Cannot read private member\`. \`structuredClone\` типизированные массивы копирует корректно.
+- **Замороженность не сохраняется.** Клон \`Object.freeze(obj)\` уже не заморожен — для иммутабельного стора это важно.
+- **Функции не клонируются.** В финальной версии остаётся та же ссылка (и замыкание на старые данные), \`structuredClone\` бросает \`DataCloneError\` — ни один подход не «копирует» функцию.
+- **Глубокая рекурсия.** На структурах в тысячи уровней — \`RangeError\`; итеративный обход со своим стеком это снимает.
+- **Цена.** Глубокая копия большого состояния на каждое изменение — это \`O(n)\` работы и памяти плюс смена всех ссылок, из-за которой перерисовывается всё, что зависит от данных.
+
+**Плюсы:** полная изоляция копии, поддержка циклов и общих ссылок за \`O(1)\` на проверку, сохранение прототипов и символьных ключей, полный контроль над поддерживаемыми типами.
+**Минусы:** легко забыть тип или крайний случай (\`__proto__\`, \`#private\`, типизированные массивы), рекурсия ограничена стеком, \`O(n)\` по времени и памяти, а в продакшене почти всегда лучше \`structuredClone\`.
+
+## Как это спрашивают на собеседовании
+
+**Главный вывод:** deep clone — рекурсивный обход с WeakMap «оригинал → клон», куда клон кладётся **до** обхода содержимого: это одним приёмом решает циклы и общие ссылки. Особые типы (\`Date\`, \`RegExp\`, \`Map\`, \`Set\`) требуют своих веток, прототип сохраняется через \`Object.create\`. В продакшене — \`structuredClone\`, но нужно знать, что он теряет прототипы и не клонирует функции.
+
+Типичные формулировки: «Реализуйте глубокое копирование», «Почему \`JSON.parse(JSON.stringify())\` — плохой deep clone?», «Как обработать циклические ссылки?», «Чем \`structuredClone\` отличается от spread?».
+
+Как вести себя во время кодинга: сначала уточните поддерживаемые типы и судьбу функций; напишите наивную рекурсию и сразу назовите её проблемы (циклы, общие ссылки, особые типы); добавьте WeakMap и подчеркните вслух, что клон кладётся в кэш до обхода; затем добавьте ветки типов и прототип; в конце прогоните пример с \`a.self = a\` и \`a.x = a.y = shared\` и назовите сложность.
+
+Что могут спросить следом:
+
+- *Почему \`WeakMap\`, а не \`Map\`?* — Ключи — объекты, слабые ссылки не мешают сборке мусора; правда, в рамках одного вызова и \`Map\` бы справился.
+- *Что \`structuredClone\` делает с функциями и DOM-узлами?* — Бросает \`DataCloneError\`; ещё он теряет прототипы и символьные ключи.
+- *Как избежать переполнения стека на очень вложенных структурах?* — Итеративный обход с явным стеком пар «оригинал → копия».
+- *Почему не копировать всё состояние стора глубоко?* — Дорого и меняет все ссылки, ломая \`OnPush\` и мемоизацию; используют иммутабельные обновления со структурным разделением.
+- *Какая сложность?* — \`O(n)\` по времени и памяти, где \`n\` — число объектов и свойств.
+
+### Ответ на 1 минуту
+
+> Задача — рекурсивно скопировать структуру так, чтобы клон не делил ссылок с оригиналом, не зависал на циклах и сохранял общие ссылки. \`JSON.parse(JSON.stringify())\` не годится: теряет \`undefined\`, функции и символы, превращает \`Date\` в строку, а \`Map\` и \`Set\` в пустые объекты, падает на циклах и не сохраняет ни прототипы, ни общие ссылки. Ключ решения — WeakMap «оригинал → клон»: перед копированием проверяю кэш, а новый пустой клон кладу туда до обхода содержимого, иначе цикл всё равно уйдёт в бесконечную рекурсию. Для \`Date\`, \`RegExp\`, \`Map\` и \`Set\` отдельные ветки, прототип сохраняю через \`Object.create\`, ключи беру через \`Reflect.ownKeys\`. Сложность \`O(n)\` по времени и памяти. В проде беру \`structuredClone\`: он поддерживает циклы и эти типы, но теряет прототипы и бросает \`DataCloneError\` на функциях.`,
       en: `## In short
 
 You need to copy an object recursively so the clone **shares no reference at all** with the original. The whole trick lives in one data structure: a **WeakMap "original → clone"**. It solves infinite recursion on cycles and preservation of shared references in a single move.
@@ -7446,46 +10215,361 @@ function deepClone<T>(value: T, seen = new WeakMap<object, any>()): T {
       en: 'Implement memoize with a configurable cache key. What are the risks of memoization?',
     },
     answer: {
-      ru: `## Коротко
+      ru: `## В чём суть
 
-Мемоизация — это **кэш результатов чистой функции по её аргументам**. Вызвали с теми же аргументами — вернули готовый ответ, не считая заново. Работает только для **детерминированных функций без побочных эффектов**.
+Нужно написать \`memoize(fn, resolver)\` — обёртку, которая запоминает результаты функции по её аргументам. Вызвали с теми же аргументами — получили готовый ответ из кэша, не считая заново. \`resolver\` — настраиваемая функция, которая превращает аргументы в ключ кэша (по умолчанию \`JSON.stringify\`). Вторая половина вопроса важнее первой: мемоизация безопасна только для **детерминированных функций без побочных эффектов**, а неправильный ключ или неограниченный кэш превращают её в источник багов и утечек.
 
-Аналогия: калькулятор с блокнотом. Посчитали 17 × 43 — записали ответ. Спросили то же самое второй раз — читаем из блокнота. Но два условия: пример должен быть записан **точно так же** (это проблема ключа кэша), и блокнот нельзя вести бесконечно (это проблема памяти).
+Аналогия: калькулятор с блокнотом. Посчитали 17 × 43 — записали ответ. Спросили то же самое второй раз — читаем из блокнота. Но есть два условия: пример должен быть записан **точно так же** (это проблема ключа кэша), и блокнот нельзя вести бесконечно (это проблема памяти). А если вопрос звучит «сколько сейчас времени», записывать ответ бессмысленно — это проблема нечистых функций.
 
-## Как это работает по шагам
+**Какую проблему решает.** Одни и те же тяжёлые вычисления повторяются снова и снова: рекурсивный расчёт пересчитывает одни и те же подзадачи миллионы раз, ячейки большого грида форматируют одинаковые значения, метод в шаблоне Angular вызывается на каждой проверке изменений. Мемоизация меняет память на время: храним уже посчитанное и отдаём мгновенно.
 
-1. Из аргументов вызова строим **ключ** — строку или объект-идентификатор.
-2. Смотрим в \`Map\`: ключ есть — сразу возвращаем сохранённое значение.
-3. Ключа нет — вызываем исходную функцию, кладём результат в кэш под этим ключом, возвращаем.
-4. **Ключ — главная тонкость.** \`JSON.stringify(args)\` прост, но дорог и ломается на циклах, функциях и разном порядке ключей объекта. Кастомный \`resolver\` гибче: часто достаточно взять \`id\`. Если аргумент один и это объект — берите \`WeakMap\`, тогда сборщик мусора чистит кэш сам.
-5. **Обязательно предусмотрите \`clear()\`** — иначе кэш нечем сбросить при смене внешних условий.
-6. **Сложность:** поиск и вставка \`O(1)\` с \`Map\`, память \`O(k)\` по числу уникальных ключей.
-7. **В Angular** сигналы и \`computed\` дают мемоизацию из коробки, а пайпы стоит держать \`pure\`. Ручной memoize нужен для тяжёлых чистых вычислений вне реактивного контекста.
+## Словарик терминов
 
-## Пример
+- **Мемоизация (memoization)** — кэширование результатов функции по её аргументам: повторный вызов с теми же аргументами возвращает сохранённый результат.
+- **Чистая функция (pure function)** — функция, результат которой зависит только от аргументов и которая ничего не меняет снаружи.
+- **Детерминированность** — одинаковые аргументы всегда дают одинаковый результат. \`Math.random()\` и \`Date.now()\` — недетерминированы.
+- **Побочный эффект (side effect)** — любое действие кроме возврата значения: запрос в сеть, запись в переменную снаружи, лог, изменение DOM.
+- **Ключ кэша (cache key)** — строка или объект, по которому ищется сохранённый результат. Строится из аргументов.
+- **\`resolver\`** — функция, которая строит ключ из аргументов; в lodash так и называется.
+- **Попадание / промах (cache hit / miss)** — ключ найден в кэше / не найден, и функцию приходится вызывать.
+- **Коллизия ключей** — разные аргументы дали одинаковый ключ, и кэш возвращает чужой результат.
+- **\`Map\`** — встроенный словарь с ключами любого типа, методами \`has\`, \`get\`, \`set\`, \`delete\` и порядком вставки.
+- **\`WeakMap\`** — словарь с ключами-объектами, который не мешает сборщику мусора удалить объект-ключ.
+- **Утечка памяти (memory leak)** — память, которую программа держит, хотя данные больше не нужны; у кэша без границ она растёт бесконечно.
+- **LRU (Least Recently Used)** — политика вытеснения: при переполнении выкидывается то, что дольше всего не запрашивали.
+- **TTL (time to live)** — срок жизни записи в кэше, после которого она считается устаревшей.
+- **\`computed\`** — вычисляемый сигнал Angular: пересчитывается, только когда изменились сигналы, которые он читает, а в остальное время отдаёт сохранённое значение.
+- **Чистый пайп (pure pipe)** — пайп Angular, который вызывается заново, только когда изменился входной аргумент (для объектов — ссылка).
 
-\`\`\`ts
-// хорошо: тяжёлый чистый расчёт, ключ по id
-const priceFor = memoize((p: Product) => heavyPricing(p), (p) => p.id);
+## Как это работает под капотом
 
-// плохо: функция зависит от внешнего изменяемого состояния
-const rate = memoize(() => currentExchangeRate); // навсегда застрянет на первом курсе
+### Уточняющие вопросы перед кодом
+
+- Функция гарантированно чистая? Если она читает внешнее состояние, мемоизация даст устаревшие ответы.
+- Какие бывают аргументы: примитивы, объекты, функции? От этого зависит стратегия ключа.
+- Аргументы-объекты сравнивать по содержимому или по ссылке (тот же самый объект)?
+- Сколько уникальных аргументов ожидается? Если поток неограничен — нужен лимит (LRU) или \`WeakMap\`.
+- Нужен ли способ сбросить кэш (\`clear\`), время жизни записей, поддержка асинхронных функций?
+
+### Идея алгоритма простыми словами
+
+1. Создаём кэш в замыкании, чтобы он жил между вызовами обёртки и был у каждой мемоизированной функции свой.
+2. На вызове строим из аргументов ключ — функцией \`resolver\`.
+3. Если ключ есть в кэше (\`has\`), сразу возвращаем сохранённое — это попадание.
+4. Иначе вызываем оригинал через \`fn.apply(this, args)\`, чтобы сохранить \`this\`, кладём результат под ключом и возвращаем.
+5. Отдаём наружу метод \`clear()\`, чтобы кэш можно было сбросить, когда меняются внешние условия.
+
+### Шаг 1. Наивная версия
+
+\`\`\`js
+function memoize(fn) {
+  const cache = {};
+  return (...args) => {
+    const key = JSON.stringify(args);
+    if (cache[key]) return cache[key];   // ❌ проверка «на истинность»
+    return (cache[key] = fn(...args));
+  };
+}
+
+let calls = 0;
+const countChars = memoize(s => { calls++; return s.length; });
+countChars(''); countChars(''); countChars('');
+console.log(calls); // 3 — результат 0 ни разу не взят из кэша
 \`\`\`
 
-Почему так: в первом случае функция детерминирована — при том же \`id\` результат тот же. Во втором она читает изменяемое состояние, и кэш превращается в источник устаревших данных.
+Работает для «хороших» результатов, но ломается на ложных: \`0\`, \`''\`, \`false\`, \`null\`, \`undefined\` считаются промахом, и функция пересчитывается каждый раз. Обычный объект как кэш тоже неудобен: у него есть унаследованные ключи вроде \`toString\`, а очистить его можно только заменой.
 
-## Что сказать на собеседовании
+### Шаг 2. \`Map\` и проверка через \`has\`
 
-> Мемоизация кэширует результат чистой функции по её аргументам: повторный вызов с теми же аргументами возвращает сохранённое значение вместо пересчёта. Работает это только для детерминированных функций без побочных эффектов — это главное ограничение. Основная тонкость реализации — как из аргументов построить ключ: \`JSON.stringify\` прост, но дорог и ломается на циклах, функциях и разном порядке ключей; кастомный резолвер гибче, например по id; а для одного объекта-аргумента лучше \`WeakMap\`, потому что сборщик мусора чистит его сам. Сложность — O(1) на поиск и вставку, память O(k) по числу уникальных ключей. Риски конкретные: неограниченный кэш при бесконечном потоке аргументов — это утечка, лечится LRU или WeakMap; устаревшие результаты, если функция зависит от внешнего изменяемого состояния; неверный резолвер, схлопывающий разные аргументы в один ключ и дающий неправильный ответ; и накладные расходы — для дешёвой функции кэш медленнее прямого вычисления. В Angular сигналы и computed мемоизируют из коробки, ручной memoize нужен для тяжёлых чистых расчётов вне реактивного контекста.
+\`\`\`js
+function memoize(fn) {
+  const cache = new Map();
+  return (...args) => {
+    const key = JSON.stringify(args);
+    if (cache.has(key)) return cache.get(key); // ✅ «есть ли ключ», а не «истинно ли значение»
+    const result = fn(...args);
+    cache.set(key, result);
+    return result;
+  };
+}
 
-## Ловушки
+let calls = 0;
+const findUser = memoize(id => { calls++; return undefined; }); // «не нашли» — тоже результат
+findUser(1); findUser(1);
+console.log(calls); // 1
+\`\`\`
 
-- **Неограниченный кэш.** Мемоизация функции от произвольной строки — это утечка памяти с гарантией. Нужен LRU или \`WeakMap\`.
-- **Мемоизация нечистой функции.** Зависит от даты, случайности или внешнего стейта — кэш будет уверенно врать.
-- **Коллизии ключей.** Резолвер, возвращающий \`String(a) + String(b)\`, склеит \`('ab','c')\` и \`('a','bc')\` в один ключ.
+\`Map\` не имеет унаследованных ключей, умеет \`clear()\` и \`size\`, а проверка \`has\` отличает «ключа нет» от «результат равен \`undefined\`». Остаются две проблемы: ключ всегда \`JSON.stringify\` (а он подходит не для всех аргументов) и потерян \`this\`.
+
+### Шаг 3. Финальная версия: настраиваемый ключ, \`this\`, \`clear\`
+
+Это код из сниппета под ответом:
+
+\`\`\`ts
+function memoize<T extends (...args: any[]) => any>(
+  fn: T,
+  resolver: (...args: Parameters<T>) => string = (...a) => JSON.stringify(a), // ключ по умолчанию
+): T & { clear: () => void } {
+  const cache = new Map<string, ReturnType<T>>();
+
+  const memoized = function (this: unknown, ...args: Parameters<T>) {
+    const key = resolver(...args);
+    if (cache.has(key)) return cache.get(key)!;   // попадание
+    const result = fn.apply(this, args);           // промах: считаем с сохранением this
+    cache.set(key, result);
+    return result;
+  } as T & { clear: () => void };
+
+  memoized.clear = () => cache.clear();
+  return memoized;
+}
+\`\`\`
+
+Тип \`T & { clear: () => void }\` говорит TypeScript: «это та же функция, что \`fn\`, плюс метод \`clear\`», поэтому мемоизированная версия подставляется везде, где ожидался оригинал. \`function\`, а не стрелка — чтобы у обёртки был свой \`this\` и его можно было передать в оригинал.
+
+### Трассировка: числа Фибоначчи
+
+Классический пример, где мемоизация меняет всё. Важно, что рекурсия вызывает **мемоизированную** версию — иначе внутренние вызовы пройдут мимо кэша:
+
+\`\`\`ts
+let calls = 0;
+const fib: (n: number) => number = memoize((n: number): number => {
+  calls++;
+  return n < 2 ? n : fib(n - 1) + fib(n - 2);
+});
+\`\`\`
+
+Вызов \`fib(4)\` по шагам (ключ — \`JSON.stringify([n])\`):
+
+\`\`\`text
+fib(4): ключ "[4]" — промах → считаем fib(3) + fib(2)
+  fib(3): "[3]" — промах → fib(2) + fib(1)
+    fib(2): "[2]" — промах → fib(1) + fib(0)
+      fib(1): "[1]" — промах → 1;  кэш: [1]=1
+      fib(0): "[0]" — промах → 0;  кэш: [0]=0
+    fib(2) = 1;  кэш: [2]=1
+    fib(1): "[1]" — ПОПАДАНИЕ → 1
+  fib(3) = 2;  кэш: [3]=2
+  fib(2): "[2]" — ПОПАДАНИЕ → 1
+fib(4) = 3;  кэш: [4]=3
+\`\`\`
+
+Оригинал вызван 5 раз (для n = 4, 3, 2, 1, 0) вместо 9 без кэша. На больших числах разница огромна:
+
+\`\`\`ts
+fibPlain(30); // 832040, функция вызвана 2 692 537 раз
+fib(30);      // 832040, функция вызвана 31 раз
+\`\`\`
+
+Без кэша дерево вызовов растёт экспоненциально — каждый вызов порождает два. С кэшем каждое \`n\` считается ровно один раз.
+
+### Сложность
+
+Поиск и вставка в \`Map\` — в среднем \`O(1)\`: время не зависит от того, сколько записей в кэше. Но честная оценка одного вызова включает построение ключа: \`JSON.stringify\` проходит по всем аргументам, поэтому для большого объекта это \`O(размер аргументов)\`. Если аргумент — массив из 10 000 строк грида, сериализация может стоить дороже самого расчёта. Память — \`O(k)\`, где \`k\` — число уникальных ключей: каждый новый набор аргументов добавляет запись навсегда (пока не вызван \`clear\`).
+
+### Тест-кейсы
+
+Все результаты проверены прогоном финальной версии:
+
+\`\`\`ts
+let calls = 0, calls2 = 0, calls3 = 0;
+const square = memoize((n: number) => { calls++; return n * n; });
+square(4); square(4); square(5);
+// 16 16 25, calls = 2 — второй square(4) взят из кэша
+
+const findUser = memoize((id: number) => { calls2++; return undefined; });
+findUser(1); findUser(1);            // оригинал вызван 1 раз — undefined тоже кэшируется
+
+const g = memoize((x: number) => { calls3++; return x; });
+g(1); g(1); g.clear(); g(1);         // calls3 = 2 — после clear считаем заново
+
+let attempt = 0;
+const flaky = memoize((x: number) => { attempt++; if (attempt === 1) throw new Error('fail'); return x * 2; });
+flaky(1);                            // бросает 'fail' — исключение НЕ кэшируется
+flaky(1);                            // 2 — вторая попытка вычисляет заново
+\`\`\`
+
+### \`JSON.stringify\` как ключ по умолчанию: где он ломается
+
+\`\`\`ts
+const area = memoize((r: { w: number; h: number }) => r.w * r.h);
+area({ w: 2, h: 3 }); area({ h: 3, w: 2 });
+// два вычисления: ключи '[{"w":2,"h":3}]' и '[{"h":3,"w":2}]' разные
+
+const run = memoize((cb: () => number) => cb());
+run(() => 1); // 1
+run(() => 2); // 1 ❌ функция сериализуется в null, ключ '[null]' у обоих вызовов
+
+const show = memoize((x: unknown) => String(x));
+show(undefined); show(null); show(NaN); // 'undefined' все три раза — у всех ключ '[null]'
+
+const size = memoize((m: Map<string, number>) => m.size);
+size(new Map([['a', 1]])); // 1
+size(new Map());           // 1 ❌ любой Map сериализуется в {}
+
+const cyclic: any = {}; cyclic.self = cyclic;
+area(cyclic);              // TypeError: Converting circular structure to JSON — падает сам resolver
+\`\`\`
+
+Итого: разный порядок полей даёт разные ключи для одинаковых по смыслу аргументов (кэш не работает); функции, \`undefined\`, \`NaN\`, \`Map\`, \`Set\` дают одинаковые ключи для разных аргументов (кэш **возвращает неправильный ответ** — это хуже); циклы роняют вызов. Для примитивов и простых объектов из JSON-данных ключ по умолчанию нормален.
+
+### Свой \`resolver\`: ключ по смыслу
+
+\`\`\`ts
+// тяжёлый расчёт цены: продукт однозначно определяется id и версией
+const priceFor = memoize(
+  (p: Product) => heavyPricing(p),
+  (p) => \`\${p.id}:\${p.version}\`,
+);
+\`\`\`
+
+Хороший resolver быстрый и **однозначный**. Классическая ошибка — склейка без разделителя:
+
+\`\`\`ts
+const join = memoize((a: string, b: string) => \`\${a}|\${b}\`, (a, b) => String(a) + String(b));
+join('ab', 'c'); // 'ab|c'
+join('a', 'bc'); // 'ab|c' ❌ оба ключа — 'abc'
+\`\`\`
+
+Лечится разделителем, которого не может быть в данных, или \`JSON.stringify([a, b])\`.
+
+### \`WeakMap\`: кэш по ссылке на объект
+
+Если аргумент один и это объект, ключом может быть сам объект:
+
+\`\`\`ts
+function memoizeByRef<K extends object, R>(fn: (obj: K) => R) {
+  const cache = new WeakMap<K, R>();
+  return (obj: K): R => {
+    if (cache.has(obj)) return cache.get(obj)!;
+    const r = fn(obj);
+    cache.set(obj, r);
+    return r;
+  };
+}
+
+const total = memoizeByRef((order: { items: number[] }) => order.items.reduce((s, x) => s + x, 0));
+const o1 = { items: [10, 20] };
+total(o1); total(o1);            // 30, 30 — второй раз из кэша
+total({ items: [10, 20] });      // 30, но вычислено заново: другой объект — другой ключ
+o1.items.push(5);
+total(o1);                       // 30 ❌ объект мутировали, а ключ (ссылка) тот же
+\`\`\`
+
+Плюсы: ключ строится за \`O(1)\` без сериализации, а когда объект становится мусором, запись исчезает сама — утечки нет. Условие: данные должны быть **иммутабельными** (каждое изменение — новый объект), иначе кэш отдаст устаревший результат. В Angular-приложениях со стором и сигналами это условие обычно и так выполняется.
+
+### Ограниченный кэш: мемоизация с LRU
+
+\`\`\`ts
+function memoizeLru<A extends unknown[], R>(fn: (...args: A) => R, max = 100) {
+  const cache = new Map<string, R>();
+  return (...args: A): R => {
+    const key = JSON.stringify(args);
+    if (cache.has(key)) {
+      const v = cache.get(key)!;
+      cache.delete(key); cache.set(key, v);           // «освежили» — ключ переехал в конец
+      return v;
+    }
+    const v = fn(...args);
+    cache.set(key, v);
+    if (cache.size > max) cache.delete(cache.keys().next().value!); // выкинули самый давний
+    return v;
+  };
+}
+// max = 2, вызовы 1, 2, 1, 3, 1, 2 → оригинал вызван 4 раза:
+// 3 вытеснил 2 (1 только что использовали), а следующий 2 — промах
+\`\`\`
+
+\`Map\` хранит ключи в порядке вставки, поэтому первый ключ итератора — самый давно использованный. Память ограничена \`max\` записями при любом потоке аргументов.
+
+### Мемоизация асинхронных функций
+
+Кэшировать нужно **промис**, а не результат: тогда два одновременных вызова получат один и тот же запрос. Но базовая версия закэширует и отклонённый промис — и ошибка станет вечной:
+
+\`\`\`ts
+const badCached = memoize(fetchUser);  // первый вызов падает с 503
+await badCached(1);  // Error: 503
+await badCached(1);  // Error: 503 — снова, хотя сервер уже ожил; запрос даже не отправлен
+
+function memoizeAsync<A extends unknown[], R>(fn: (...args: A) => Promise<R>) {
+  const cache = new Map<string, Promise<R>>();
+  return (...args: A): Promise<R> => {
+    const key = JSON.stringify(args);
+    const hit = cache.get(key);
+    if (hit) return hit;
+    const p = fn(...args).catch((err) => {
+      cache.delete(key);                 // ошибку не кэшируем — следующий вызов попробует снова
+      throw err;
+    });
+    cache.set(key, p);
+    return p;
+  };
+}
+const good = memoizeAsync(fetchUser);
+good(1) === good(1);  // true — параллельные вызовы делят один запрос
+await good(1);        // 503 → запись удалена
+await good(1);        // { id: 1, name: 'Ann' } — новая попытка
+\`\`\`
+
+### Мемоизация в Angular: \`computed\`, чистые пайпы, селекторы
+
+\`\`\`ts
+const items = signal([10, 20, 30]);
+let runs = 0;
+const total = computed(() => { runs++; return items().reduce((s, x) => s + x, 0); });
+
+total(); total(); total();          // 60 60 60, runs = 1
+items.update(list => [...list, 40]);
+total(); total();                   // 100 100, runs = 2
+\`\`\`
+
+\`computed\` — мемоизация, которая сама знает свои зависимости: он запоминает, какие сигналы прочитал, и пересчитывается только после их изменения. Поэтому он безопаснее ручного memoize — нельзя забыть сбросить кэш при смене данных. Чистый пайп (\`pure: true\`, по умолчанию) вызывает \`transform\` заново только при изменении входа (для объектов — ссылки), то есть помнит один последний результат на каждое место в шаблоне. Селекторы NgRx (\`createSelector\`) тоже мемоизируют результат по последним аргументам. Ручной \`memoize\` нужен для тяжёлых чистых вычислений вне реактивного контекста: утилиты форматирования, расчёты в сервисах, парсинг.
+
+### Где это применяется на практике
+
+- **Форматирование в больших гридах**: одна и та же дата или сумма в тысячах ячеек форматируется один раз через мемоизированный \`Intl.DateTimeFormat\`/\`Intl.NumberFormat\` или готовую функцию форматирования.
+- **Вызовы методов в шаблонах**: \`{{ statusLabel(row) }}\` выполняется на каждой проверке изменений; заменяем на чистый пайп, \`computed\` или мемоизированную функцию.
+- **Тяжёлые расчёты дашборда**: агрегаты, перцентили, группировки по одним и тем же данным при переключении вкладок.
+- **Дедупликация запросов**: одновременные \`getUser(42)\` из разных компонентов получают один промис или Observable.
+- **Парсинг и компиляция**: разбор шаблона, регулярного выражения, markdown — по исходной строке.
+- **Рекурсивные алгоритмы с перекрывающимися подзадачами** (динамическое программирование): Фибоначчи, редакционное расстояние, раскладка дерева.
+
+## Важные нюансы и подводные камни
+
+- **Неограниченный кэш.** Мемоизация функции от произвольной строки (поисковый запрос, id из ленты) — утечка памяти с гарантией. Нужен LRU, TTL или \`WeakMap\`.
+- **Мемоизация нечистой функции.** Если функция зависит от даты, случайности или внешнего стейта, кэш будет уверенно врать: \`memoize(() => currentExchangeRate)\` вернёт \`1.1\` и после того, как курс стал \`1.3\` (проверено).
+- **Коллизии ключей.** Resolver \`String(a) + String(b)\` склеит \`('ab','c')\` и \`('a','bc')\`; \`JSON.stringify\` сводит функции, \`undefined\`, \`NaN\`, \`Map\` и \`Set\` к \`null\` или \`{}\`. Коллизия хуже промаха: она возвращает **чужой** результат.
 - **\`JSON.stringify\` на объектах с разным порядком полей** даёт разные ключи для одинаковых по смыслу аргументов — кэш не срабатывает вообще.
-- **Мемоизация дешёвых функций** — накладные расходы на построение ключа больше самой работы.
-- **Спросят следом:** как мемоизировать асинхронную функцию (кэшировать промис, а не результат, и удалять его при ошибке) и почему \`computed\` в Angular безопаснее ручного memoize (он сам знает свои зависимости и пересчитывается при их изменении).`,
+- **\`this\` не входит в ключ.** Если мемоизировать метод на прототипе, кэш общий для всех экземпляров: \`usd.convert(100)\` при курсе 2 даёт 200, а \`eur.convert(100)\` при курсе 3 — тоже 200 из кэша (проверено). Решение — кэш на экземпляр (мемоизировать в конструкторе) или включать идентификатор экземпляра в ключ.
+- **Кэш отдаёт одну и ту же ссылку.** Если вызывающий код мутирует возвращённый объект или массив, следующий вызов получит испорченный результат. Возвращайте иммутабельные данные.
+- **Мемоизация дешёвых функций.** Построение ключа и поиск дороже, чем \`a + b\`, — получаем замедление и расход памяти без пользы.
+- **Ключ дороже расчёта.** \`JSON.stringify\` большого массива на каждый вызов съедает весь выигрыш; используйте \`id\`, версию или \`WeakMap\` по ссылке.
+- **Рекурсия мимо кэша.** Если внутри рекурсивной функции вызывается исходная, а не мемоизированная версия, кэш используется только на верхнем уровне.
+- **Исключения не кэшируются** — это правильно: следующая попытка вычислит заново. А вот отклонённые промисы базовая версия кэширует, поэтому для асинхронных функций запись при ошибке надо удалять.
+- **\`WeakMap\` и мутации.** Кэш по ссылке работает только с иммутабельными данными: мутированный объект с той же ссылкой получит старый результат.
+
+**Плюсы:** резко ускоряет повторные тяжёлые вычисления (экспоненциальную рекурсию превращает в линейную), простая реализация, дедуплицирует одновременные асинхронные запросы.
+**Минусы:** расход памяти и риск утечки, устаревшие данные у нечистых функций, коллизии и промахи из-за неправильного ключа, накладные расходы на построение ключа, ручное управление сбросом кэша.
+
+## Как это спрашивают на собеседовании
+
+**Главный вывод:** memoize — это \`Map\` в замыкании «ключ из аргументов → результат», проверка через \`has\` и вызов через \`apply\`. Вся сложность — в ключе и в границах кэша: функция должна быть чистой, ключ однозначным и дешёвым, а кэш — ограниченным (LRU, TTL или \`WeakMap\`). В Angular реактивную мемоизацию дают \`computed\` и чистые пайпы.
+
+Типичные формулировки: «Реализуйте memoize», «Какие риски у мемоизации?», «Как мемоизировать функцию с объектом в аргументах?», «Чем \`computed\` лучше ручного кэша?».
+
+Как вести себя во время кодинга: уточните, чистая ли функция и какие бывают аргументы; напишите версию с \`Map\` и \`has\`, сразу оговорив, почему не \`if (cache[key])\`; добавьте \`resolver\`, \`apply\` и \`clear\`; прогоните \`fib(4)\` вслух, показав промахи и попадания; закончите списком рисков — память, устаревание, коллизии, накладные расходы — и решениями для каждого.
+
+Что могут спросить следом:
+
+- *Как мемоизировать асинхронную функцию?* — Кэшировать промис, а не результат, и удалять запись при отклонении.
+- *Почему \`computed\` безопаснее ручного memoize?* — Он сам отслеживает зависимости и пересчитывается при их изменении; забыть сбросить кэш невозможно.
+- *Как ограничить память?* — LRU с \`max\` записей на \`Map\` с порядком вставки, TTL для свежести или \`WeakMap\` для объектных ключей.
+- *Чем плох \`JSON.stringify\` как ключ?* — Зависит от порядка полей, сводит функции и \`undefined\` к \`null\` (коллизии), падает на циклах и стоит \`O(размер аргументов)\`.
+- *Чем отличается чистый пайп от мемоизации?* — Он помнит только последний вход и результат на каждое место в шаблоне.
+
+### Ответ на 1 минуту
+
+> Мемоизация кэширует результат чистой функции по аргументам: повторный вызов с теми же аргументами отдаёт сохранённое значение. Реализую через \`Map\` в замыкании: \`resolver\` строит ключ, по умолчанию \`JSON.stringify(args)\`; если \`has(key)\` — возвращаю из кэша, иначе вызываю \`fn.apply(this, args)\`, сохраняю и возвращаю; плюс метод \`clear\`. Проверяю именно \`has\`, чтобы кэшировались и \`0\`, и \`undefined\`. Поиск \`O(1)\`, но построение ключа стоит \`O(размер аргументов)\`, память \`O(k)\` по числу ключей. Риски: неограниченный кэш — утечка, лечится LRU или \`WeakMap\`; нечистая функция даёт устаревшие ответы; плохой ключ даёт коллизии — \`JSON.stringify\` сводит функции и \`undefined\` к \`null\`; для дешёвых функций кэш медленнее расчёта. Для асинхронных функций кэширую промис и удаляю его при ошибке. В Angular предпочитаю \`computed\` и чистые пайпы.`,
       en: `## In short
 
 Memoization is a **cache of a pure function's results, keyed by its arguments**. Call it with the same arguments and you get the stored answer instead of recomputing. It only works for **deterministic, side-effect-free functions**.
@@ -7556,55 +10640,290 @@ function memoize<T extends (...args: any[]) => any>(
       en: 'Implement a curry function supporting partial application of several arguments at a time.',
     },
     answer: {
-      ru: `## Коротко
+      ru: `## В чём суть
 
-Каррирование превращает функцию \`f(a, b, c)\` в **цепочку вызовов**, которую можно кормить аргументами по частям: \`f(a)(b)(c)\`, \`f(a, b)(c)\`, \`f(a)(b, c)\` — всё одно и то же. Оригинал сработает только тогда, когда наберётся достаточно аргументов.
+Нужно написать \`curry(fn)\` — функцию, которая превращает \`f(a, b, c)\` в **цепочку вызовов**, которую можно кормить аргументами по частям: \`f(a)(b)(c)\`, \`f(a, b)(c)\`, \`f(a)(b, c)\` и \`f(a, b, c)\` дают один и тот же результат. Оригинал выполняется только тогда, когда накопится достаточно аргументов. Задача проверяет понимание замыканий, свойства \`fn.length\`, \`this\` и неизменяемости накопленных данных.
 
-Аналогия: автомат с газировкой, которому нужны три монеты. Кинул одну — ждёт. Кинул ещё две — наливает. Не важно, кидал по одной или сразу парой: важно, что накопилось три.
+Аналогия: автомат с газировкой, которому нужны три монеты. Кинул одну — ждёт. Кинул ещё две — наливает. Ему всё равно, кидали вы по одной или сразу парой: важно, что накопилось три. А частичное применение — это когда вы заранее кинули одну монету и отдали автомат коллеге: ему осталось докинуть две.
 
-## Как это работает по шагам
+**Какую проблему решает.** Часто у функции есть «настроечные» аргументы, которые известны заранее, и «рабочие», которые приходят позже: поле и значение для фильтра известны при настройке грида, а строка таблицы — только при фильтрации. Каррирование позволяет зафиксировать первые аргументы и получить специализированную функцию (\`filterBy('status', 'active')\`), которую удобно передать в \`filter\`, \`map\` или собрать в цепочку \`pipe\` — а такие цепочки работают только с функциями от одного аргумента.
 
-1. У функции есть свойство \`fn.length\` — **арность**, число объявленных параметров. Это и есть «сколько монет нужно».
-2. Оборачиваем оригинал в функцию \`curried\`. При каждом вызове смотрим: накопленных аргументов уже \`>= fn.length\`?
-3. Хватает — вызываем оригинал через \`fn.apply(this, args)\`. \`apply\` тут не для красоты: он **сохраняет \`this\`**, иначе каррированный метод объекта потеряет контекст.
-4. Не хватает — возвращаем новую функцию, которая **держит уже собранные аргументы в замыкании** и ждёт остальные.
-5. Пришли новые — склеиваем \`[...args, ...rest]\` и снова идём на шаг 2. Так работают и \`c(1)(2)(3)\`, и \`c(1, 2)(3)\`: разница только в том, сколько аргументов пришло за один заход.
-6. **Сложность:** каждый шаг \`O(1)\` плюс копирование массива аргументов; память \`O(n)\` на накопленное.
+## Словарик терминов
 
-## Зачем это нужно
+- **Каррирование (currying)** — превращение функции от нескольких аргументов в цепочку функций, принимающих их по частям. Названо в честь логика Хаскелла Карри.
+- **Частичное применение (partial application)** — фиксация части аргументов функции; результат — новая функция, ждущая остальные.
+- **Арность (arity)** — число параметров, которые функция ожидает.
+- **\`fn.length\`** — встроенное свойство функции: сколько параметров объявлено **до** первого параметра со значением по умолчанию или rest-параметра.
+- **Rest-параметр (\`...args\`)** — параметр, собирающий все оставшиеся аргументы в массив.
+- **Вариадическая функция (variadic)** — функция, принимающая любое число аргументов, например \`Math.max\`.
+- **Замыкание (closure)** — функция помнит переменные места, где создана; так промежуточная функция помнит уже собранные аргументы.
+- **\`this\` (контекст вызова)** — объект, на котором вызвана функция; теряется при вызове «голой» функции.
+- **\`fn.apply(ctx, args)\`** — вызвать функцию с заданным \`this\` и массивом аргументов.
+- **\`Function.prototype.bind\`** — создаёт копию функции с зафиксированным \`this\` и, при желании, первыми аргументами.
+- **Унарная функция (unary)** — функция от одного аргумента.
+- **Композиция (\`pipe\` / \`compose\`)** — объединение функций в цепочку, где результат одной становится аргументом следующей.
+- **Плейсхолдер (placeholder)** — специальное значение (в lodash — \`_\`), которое позволяет пропустить аргумент и передать его позже.
 
-- **Частичное применение:** зафиксировал первые аргументы — получил специализированную функцию, \`const add5 = add(5)\`.
-- **Композиция:** \`pipe\`/\`compose\` собираются из унарных функций, а каррирование как раз превращает многоаргументные в унарные.
-- **Переиспользование конфигурации** без классов и объектов настроек.
+## Как это работает под капотом
 
-## Пример
+### Уточняющие вопросы перед кодом
 
-\`\`\`ts
-const sum = (a: number, b: number, c: number) => a + b + c;
+- Можно ли передавать несколько аргументов за раз (\`f(1, 2)(3)\`) или строго по одному? В этой задаче — несколько.
+- Откуда брать арность: из \`fn.length\` или передавать явно? Для функций с rest и значениями по умолчанию \`fn.length\` не подходит.
+- Что делать с лишними аргументами (\`f(1, 2, 3, 4)\` при арности 3)? Обычно передать в оригинал как есть.
+- Нужно ли сохранять \`this\`, чтобы каррировать методы объектов?
+- Можно ли переиспользовать промежуточную функцию: \`const add1 = c(1)\` и потом \`add1(2)(3)\`, \`add1(10)(20)\`? Должно быть можно.
+- Нужны ли плейсхолдеры, как в lodash? Обычно нет.
+
+### Идея алгоритма простыми словами
+
+1. Узнаём, сколько аргументов нужно оригиналу, — это \`fn.length\`.
+2. Оборачиваем оригинал в функцию \`curried\`. При каждом вызове смотрим: накопленных аргументов уже не меньше \`fn.length\`?
+3. Если хватает — вызываем оригинал через \`fn.apply(this, args)\`: \`apply\` здесь сохраняет \`this\`, иначе каррированный метод объекта потеряет контекст.
+4. Если не хватает — возвращаем новую функцию, которая держит уже собранные аргументы в замыкании и ждёт остальные.
+5. Когда приходят новые аргументы, склеиваем **новый** массив \`[...args, ...rest]\` и снова идём на шаг 2. Новый, а не изменённый старый — поэтому промежуточную функцию можно вызывать много раз независимо.
+
+### Шаг 1. Наивная версия: аргументы по одному
+
+\`\`\`js
+function curry(fn) {
+  return function curried(...args) {
+    if (args.length >= fn.length) return fn(...args);
+    return (next) => curried(...args, next);    // ❌ принимает ровно один аргумент
+  };
+}
+
+const sum = (a, b, c) => a + b + c;
 const c = curry(sum);
 c(1)(2)(3);   // 6
 c(1, 2)(3);   // 6
-c(1)(2, 3);   // 6
-
-// а вот здесь всё ломается:
-const weird = (a: number, b = 1, ...rest: number[]) => a + b;
-weird.length; // 1 — ни b, ни rest не посчитаны
+c(1)(2, 3);   // function ❌ тройка молча потерялась, результат так и не вычислен
 \`\`\`
 
-Почему так: \`fn.length\` считает только параметры **до** первого значения по умолчанию и не учитывает rest. Каррирование такой функции «выстрелит» после первого же аргумента.
+Промежуточная функция объявлена как \`(next) => ...\` и забирает только первый аргумент, всё остальное выбрасывает. Ошибки нет — просто вместо числа возвращается функция, и баг всплывает где-то дальше.
 
-## Что сказать на собеседовании
+### Шаг 2. Типичная ошибка: общий изменяемый массив
 
-> Каррирование превращает функцию от нескольких аргументов в цепочку, которую можно вызывать по частям: \`f(a)(b)(c)\`, \`f(a, b)(c)\` и \`f(a)(b, c)\` эквивалентны. Реализация опирается на арность \`fn.length\`: аргументов хватает — вызываем оригинал через \`apply\`, чтобы сохранить \`this\`; не хватает — возвращаем функцию, которая держит собранные аргументы в замыкании. Каждый шаг O(1), память O(n). Польза — частичное применение и композиция: \`pipe\` и \`compose\` работают с унарными функциями. Главное ограничение: \`fn.length\` не отражает реальную арность у rest-параметров и параметров со значением по умолчанию, поэтому такие и вариадические функции каррировать нельзя. И злоупотреблять не стоит: глубокое каррирование ухудшает читаемость стека и отладку, в проде хватает \`bind\` или стрелочной обёртки.
+\`\`\`js
+function curry(fn) {
+  const acc = [];                 // ❌ один массив на все цепочки
+  return function next(...args) {
+    acc.push(...args);
+    if (acc.length >= fn.length) return fn(...acc);
+    return next;
+  };
+}
 
-## Ловушки
+const p = curry(sum)(1);
+p(2)(3);     // 6
+p(10)(20);   // TypeError: p(...) is not a function
+\`\`\`
 
-- **\`fn.length\` врёт.** Rest-параметры и значения по умолчанию в неё не входят — каррирование сработает раньше срока.
-- **Вариадические функции** каррировать нельзя в принципе: непонятно, когда останавливаться.
-- **Потеря \`this\`.** Без \`apply\` (или стрелки, замыкающей \`this\`) каррированный метод объекта отваливается.
-- **Вызов без аргументов.** \`c()\` не двигает счётчик и просто возвращает новую функцию — легко получить бесконечное «ожидание».
-- **Отладка.** Стек превращается в цепочку одинаковых \`curried\` — трейс читать тяжело.
-- **Спросят следом:** чем каррирование отличается от частичного применения через \`bind\` — карри даёт цепочку шагов и знает свою арность, \`bind\` фиксирует часть аргументов один раз и ничего не ждёт.`,
+Вторая цепочка дописала \`10\` в тот же массив \`[1, 2, 3]\`: длина стала 4, оригинал вызвался сразу и вернул число \`6\`, а вызов \`(20)\` на числе упал. Мораль: накопленные аргументы нельзя мутировать, каждая промежуточная функция должна получать свою копию.
+
+### Шаг 3. Финальная версия
+
+Это код из сниппета под ответом:
+
+\`\`\`ts
+function curry<T extends (...args: any[]) => any>(fn: T) {
+  return function curried(this: unknown, ...args: any[]): any {
+    if (args.length >= fn.length) {          // аргументов хватает
+      return fn.apply(this, args);           // вызываем оригинал, сохраняя this
+    }
+    // не хватает: ждём остальные; args — в замыкании, склейка создаёт НОВЫЙ массив
+    return (...rest: any[]) => curried.apply(this, [...args, ...rest]);
+  };
+}
+
+const sum = (a: number, b: number, c: number) => a + b + c;
+const c = curry(sum);
+c(1)(2)(3);     // 6
+c(1, 2)(3);     // 6
+c(1)(2, 3);     // 6
+c(1, 2, 3);     // 6
+\`\`\`
+
+Промежуточная функция — стрелка, поэтому её \`this\` берётся из вызова \`curried\`, который её создал, и передаётся дальше через \`apply\`. А \`(...rest)\` принимает любое число аргументов — это и даёт «по нескольку за раз».
+
+### Трассировка
+
+\`c(1)(2, 3)\`:
+
+\`\`\`text
+c(1)        curried: this=undefined, args=[1]; 1 < fn.length (3)
+            → вернуть стрелку A1, в замыкании args=[1]
+A1(2, 3)    rest=[2, 3] → curried.apply(this, [1, 2, 3])
+            curried: args=[1, 2, 3]; 3 >= 3 → fn.apply(this, [1, 2, 3]) → 6
+\`\`\`
+
+\`c(1)(2)(3)\`:
+
+\`\`\`text
+c(1)   args=[1]       → 1 < 3 → стрелка A1 (помнит [1])
+A1(2)  args=[1, 2]    → 2 < 3 → стрелка A2 (помнит [1, 2])
+A2(3)  args=[1, 2, 3] → 3 >= 3 → sum(1, 2, 3) = 6
+\`\`\`
+
+Переиспользование промежуточной функции:
+
+\`\`\`text
+const add1 = c(1);   add1 помнит [1]
+add1(2)(3)           [1] + [2] → [1, 2] → [1, 2, 3] → 6
+add1(10)(20)         [1] + [10] → [1, 10] → [1, 10, 20] → 31   ← массив add1 не тронут
+\`\`\`
+
+### Сложность
+
+Каждый вызов в цепочке делает сравнение и копирует накопленные аргументы в новый массив — это \`O(k)\`, где \`k\` — сколько аргументов уже собрано. Если подавать \`n\` аргументов строго по одному, суммарно копируется \`1 + 2 + … + n\` элементов, то есть \`O(n²)\`. Звучит страшно, но \`n\` здесь — арность функции, обычно 2–5, так что на практике это константа. Память — \`O(n)\` на цепочку: каждая промежуточная функция держит свою копию собранных аргументов.
+
+### Тест-кейсы
+
+Все результаты проверены прогоном финальной версии:
+
+\`\`\`ts
+const c = curry((a: number, b: number, c: number) => a + b + c);
+c(1)(2)(3);            // 6
+c(1, 2)(3);            // 6
+c(1)(2, 3);            // 6
+c(1, 2, 3);            // 6
+c(1)(2)(3, 4);         // 6 — лишний аргумент передан в оригинал и проигнорирован
+c()(1)()(2)(3);        // 6 — пустые вызовы ничего не добавляют, просто возвращают новую функцию
+typeof c(1)(2);        // 'function' — аргументов ещё не хватает
+
+const add1 = c(1);
+add1(2)(3);            // 6
+add1(10)(20);          // 31 — промежуточные функции независимы
+
+const obj = { base: 10, add: curry(function (this: any, a: number, b: number) { return this.base + a + b; }) };
+obj.add(1)(2);         // 13 — this сохранён по всей цепочке
+const f = obj.add(1);
+f(2);                  // 13 — даже если промежуточную функцию вызвать отдельно
+\`\`\`
+
+### \`fn.length\`: откуда берётся арность и где она врёт
+
+\`\`\`ts
+function f(a, b) {}
+f.length;                          // 2
+((a, b = 2, c) => {}).length;      // 1 — считаются параметры только до первого со значением по умолчанию
+((...args) => {}).length;          // 0 — rest не считается
+(({ a, b }) => {}).length;         // 1 — деструктуризация — это один параметр
+
+const weird = (a: number, b = 1, ...rest: number[]) => a + b;
+curry(weird)(5);                   // 6 — сработало после первого же аргумента: b взят по умолчанию
+\`\`\`
+
+\`fn.length\` — единственный способ узнать арность без подсказки, но он отражает **объявление**, а не реальное использование. Поэтому для функций с параметрами по умолчанию и rest арность передают явно.
+
+### Явная арность — каррирование вариадических функций
+
+\`\`\`ts
+function curryN<T extends (...args: any[]) => any>(fn: T, arity = fn.length) {
+  return function curried(this: unknown, ...args: any[]): any {
+    if (args.length >= arity) return fn.apply(this, args);
+    return (...rest: any[]) => curried.apply(this, [...args, ...rest]);
+  };
+}
+
+const total = (...nums: number[]) => nums.reduce((s, x) => s + x, 0);
+curry(total)();              // 0 — length 0, оригинал вызывается сразу, без аргументов
+curryN(total, 3)(1)(2)(3);   // 6
+curryN(weird, 2)(5)(10);     // 15
+\`\`\`
+
+Вариадическую функцию нельзя каррировать по \`fn.length\` — непонятно, когда остановиться. Но с явной арностью можно: вы сами говорите «жди трёх аргументов». Так устроен \`_.curry(func, arity)\` в lodash.
+
+### \`this\` и \`fn.apply\`
+
+\`this\` определяется в момент вызова: в \`obj.add(1)\` он равен \`obj\`. В финальной версии первый вызов \`curried\` получает \`this = obj\`, стрелка запоминает его лексически (у стрелок нет своего \`this\`), и \`apply\` передаёт его до самого оригинала. Если бы промежуточная функция была обычной \`function\`, её \`this\` при вызове \`f(2)\` был бы \`undefined\`, и метод упал бы.
+
+\`\`\`ts
+function greet(this: { name: string }, greeting: string) { return \`\${greeting}, \${this.name}\`; }
+greet.apply({ name: 'Anna' }, ['Hi']); // 'Hi, Anna'
+\`\`\`
+
+### Каррирование против \`bind\`
+
+\`\`\`ts
+const sum = (a: number, b: number, c: number) => a + b + c;
+const add1 = sum.bind(null, 1);
+add1(2, 3);   // 6
+add1(2);      // NaN — bind ничего не ждёт: 1 + 2 + undefined
+\`\`\`
+
+\`bind\` фиксирует \`this\` и часть аргументов **один раз** и возвращает обычную функцию, которая выполнится сразу при следующем вызове, сколько бы аргументов ни пришло. Каррированная функция знает свою арность и ждёт, пока аргументов не станет достаточно. Для простого «зафиксировать первый аргумент» в продакшене часто хватает \`bind\` или стрелки \`(b, c) => sum(1, b, c)\` — они понятнее при чтении и в стектрейсе.
+
+### Композиция: зачем нужны унарные функции
+
+\`\`\`ts
+const pipe = (...fns: Array<(x: any) => any>) => (x: any) => fns.reduce((v, fn) => fn(v), x);
+const add = curry((a: number, b: number) => a + b);
+const mul = curry((a: number, b: number) => a * b);
+
+const calc = pipe(add(1), mul(10));
+calc(4);   // 50 — (4 + 1) * 10
+\`\`\`
+
+\`pipe\` передаёт по цепочке одно значение, поэтому каждое звено должно быть функцией от одного аргумента. Каррирование превращает \`add(a, b)\` в такое звено: \`add(1)\` — «прибавь единицу». Тот же принцип — в RxJS: \`map(x => x * 2)\` — это частично применённый оператор, функция, которая ждёт исходный Observable:
+
+\`\`\`ts
+const double = map((x: number) => x * 2);
+typeof double;                              // 'function'
+double(of(1, 2, 3)).subscribe(console.log); // 2, 4, 6
+\`\`\`
+
+### Где это применяется на практике
+
+- **Фильтры и предикаты в гридах**:
+
+\`\`\`ts
+const filterBy = curry((field: string, value: unknown, row: Record<string, unknown>) => row[field] === value);
+const rows = [{ id: 1, status: 'active' }, { id: 2, status: 'blocked' }, { id: 3, status: 'active' }];
+rows.filter(filterBy('status', 'active')).map(r => r.id); // [1, 3]
+\`\`\`
+
+- **Фабрики валидаторов в Angular-формах**: \`Validators.minLength(3)\` — по сути частичное применение: настройка сейчас, контрол — потом. Свои валидаторы пишут так же: \`const maxAmount = (limit: number) => (control: AbstractControl) => ...\`.
+- **Операторы RxJS**: все пайпаемые операторы — функции, которые сначала получают настройки, а потом источник; поэтому их можно складывать в \`pipe\` и выносить в переменные.
+- **Фабрики селекторов в NgRx**: \`selectOrderById = (id: string) => createSelector(selectOrders, orders => orders[id])\` — параметр фиксируется сейчас, состояние стора придёт потом.
+- **Конфигурируемые утилиты**: логгер с зафиксированным уровнем и модулем \`log('error')('auth')(message)\`, форматтер валюты \`formatMoney('EUR')(amount)\`.
+- **Функциональные библиотеки**: Ramda каррирует все свои функции, lodash предлагает \`_.curry\` с плейсхолдерами и пакет \`lodash/fp\` с автокаррированием.
+
+## Важные нюансы и подводные камни
+
+- **\`fn.length\` врёт.** Rest-параметры и параметры после первого значения по умолчанию в него не входят — каррирование сработает раньше срока: \`curry(weird)(5)\` вернул \`6\` после первого же аргумента.
+- **Вариадические функции** нельзя каррировать по \`fn.length\`: при длине 0 оригинал вызывается сразу. Решение — явная арность вторым параметром, как в \`_.curry(func, arity)\`.
+- **Потеря \`this\`.** Без \`apply\` или без стрелки, лексически замыкающей \`this\`, каррированный метод объекта отваливается.
+- **Мутация накопленных аргументов.** Общий массив с \`push\` ломает переиспользование промежуточных функций — вторая цепочка видит аргументы первой. Только \`[...args, ...rest]\`.
+- **Аргументы «по одному» вместо «по нескольку».** Промежуточная функция вида \`(next) => ...\` молча выбрасывает лишние аргументы: \`c(1)(2, 3)\` возвращает функцию вместо \`6\`.
+- **Вызов без аргументов.** \`c()\` не двигает счётчик и просто возвращает новую функцию. Это не бесконечный цикл, но легко получить функцию там, где ждали значение, и не заметить.
+- **Передача в \`map\` и \`filter\` без частичного применения.** Эти методы передают в колбэк три аргумента \`(value, index, array)\`. \`[1, 2, 3].map(add)\` при арности 2 вызывает \`add(1, 0)\`, \`add(2, 1)\`, \`add(3, 2)\` и даёт \`[1, 3, 5]\`, а не массив функций. А вот \`[1, 2, 3].map(add(10))\` даёт ожидаемое \`[11, 12, 13]\`.
+- **Типы теряются.** В сниппете результат имеет тип \`any\`, и TypeScript не поймает \`c(1)('x')\`. Точная типизация каррирования с «несколькими аргументами за раз» требует сложных рекурсивных типов — их пишут авторы библиотек.
+- **Отладка.** Стек превращается в цепочку одинаковых \`curried\` и безымянных стрелок — трейс читать тяжело.
+- **Читаемость в команде.** \`format('EUR')(2)(amount)\` понятен автору, но не всем коллегам. Глубокое каррирование в обычном Angular-коде — скорее запах, чем преимущество.
+
+**Плюсы:** удобное частичное применение и переиспользование конфигурации без классов, естественная стыковка с \`pipe\`, \`map\`, \`filter\` и операторами RxJS, промежуточные функции независимы и переиспользуемы.
+**Минусы:** зависимость от ненадёжного \`fn.length\`, сложная типизация, тяжёлая отладка, хуже читаемость для команды, небольшие накладные расходы на создание промежуточных функций.
+
+## Как это спрашивают на собеседовании
+
+**Главный вывод:** curry — это рекурсивная обёртка: если накоплено не меньше \`fn.length\` аргументов, вызываем оригинал через \`apply\`, иначе возвращаем функцию, которая склеивает **новый** массив \`[...args, ...rest]\` и вызывает себя снова. Слабое место — \`fn.length\`, который не учитывает rest и параметры по умолчанию; лечится явной арностью.
+
+Типичные формулировки: «Реализуйте curry», «Сделайте так, чтобы \`sum(1)(2)(3)\` и \`sum(1, 2)(3)\` работали одинаково», «Чем каррирование отличается от частичного применения и \`bind\`?».
+
+Как вести себя во время кодинга: уточните, можно ли передавать по нескольку аргументов и как определять арность; напишите условие «хватает — вызываем» и рекурсивный возврат функции; вслух объясните, почему \`apply\` и почему новый массив, а не \`push\`; прогоните \`c(1)(2, 3)\` и переиспользование \`add1\`; в конце назовите ограничение \`fn.length\` и предложите явную арность.
+
+Что могут спросить следом:
+
+- *Чем каррирование отличается от частичного применения через \`bind\`?* — Карри даёт цепочку и знает свою арность, \`bind\` фиксирует часть аргументов один раз и ничего не ждёт.
+- *Как каррировать функцию с rest-параметрами?* — Передать арность явно: \`curryN(fn, 3)\`.
+- *Почему промежуточная функция — стрелка?* — Она лексически берёт \`this\` из вызова \`curried\` и передаёт его дальше через \`apply\`.
+- *Где это встречается в Angular?* — Фабрики валидаторов, пайпаемые операторы RxJS, предикаты фильтров.
+- *Какая сложность?* — Каждый шаг копирует накопленные аргументы, \`O(k)\`; при арности 2–5 это константа.
+
+### Ответ на 1 минуту
+
+> Каррирование превращает функцию от нескольких аргументов в цепочку, которую можно вызывать по частям: \`f(1)(2)(3)\`, \`f(1, 2)(3)\` и \`f(1)(2, 3)\` эквивалентны. Реализация опирается на \`fn.length\`: если накопленных аргументов не меньше, вызываю оригинал через \`fn.apply(this, args)\`, чтобы сохранить контекст; если меньше — возвращаю стрелку, которая склеивает новый массив \`[...args, ...rest]\` и рекурсивно вызывает \`curried\`. Именно новый массив, а не \`push\`, иначе промежуточные функции начнут делить состояние. Каждый шаг копирует накопленное, но при арности 2–5 это константа. Польза — частичное применение и композиция: \`pipe\` работает с унарными функциями, так же устроены операторы RxJS и фабрики валидаторов. Главное ограничение: \`fn.length\` не учитывает rest и параметры по умолчанию, поэтому для них передаю арность явно, как в lodash.`,
       en: `## In short
 
 Currying turns \`f(a, b, c)\` into a **chain of calls** you can feed arguments to in pieces: \`f(a)(b)(c)\`, \`f(a, b)(c)\`, \`f(a)(b, c)\` — all the same thing. The original only runs once enough arguments have piled up.
@@ -7682,51 +11001,345 @@ const c = curry(sum);
       en: 'Implement a type-safe EventEmitter with on/off/once/emit. Where is this pattern used?',
     },
     answer: {
-      ru: `## Коротко
+      ru: `## В чём суть
 
-EventEmitter — это **доска объявлений**. Одна часть системы вешает объявление («заказ оплачен»), другие на него реагируют, и при этом друг о друге они ничего не знают. Это паттерн **Observer/PubSub**, а его смысл — **слабая связанность**.
+Нужно написать класс \`EventEmitter\` с четырьмя методами: \`on\` (подписаться на событие), \`off\` (отписаться), \`once\` (подписаться на одно срабатывание) и \`emit\` (разослать событие подписчикам). «Типобезопасный» значит, что TypeScript проверяет и имя события, и форму данных: опечатка в имени или не тот тип payload — ошибка компиляции. Задача проверяет знание паттерна Observer, структур \`Map\`/\`Set\`, дженериков и того, где у такого кода прячутся утечки и баги порядка вызовов.
 
-Аналогия: подъездный чат. Кто-то пишет «привезли воду» — реагируют подписанные. Отправитель не знает поимённо, кто читает; читатель может выйти в любой момент. А если при переезде из чата не выйти — уведомления продолжат приходить вечно: это ровно утечка памяти в эмиттере.
+Аналогия: доска объявлений или подъездный чат. Кто-то пишет «привезли воду» — реагируют те, кто подписан. Отправитель не знает поимённо, кто читает; читатель может выйти в любой момент. Но если при переезде из чата не выйти, уведомления продолжат приходить вечно — это ровно утечка памяти в эмиттере.
 
-## Как это работает по шагам
+**Какую проблему решает.** Без эмиттера модуль, который знает о событии, вынужден напрямую вызывать всех, кому оно интересно: сервис корзины импортирует бейдж в шапке, аналитику, рекомендации — и любая новая реакция требует правки отправителя. Эмиттер разрывает эту связь: отправитель говорит «корзина изменилась», а кто и как реагирует — решают сами подписчики. Это и есть **слабая связанность**: части системы можно добавлять и убирать, не трогая друг друга.
 
-1. Внутри — \`Map\`: **имя события → набор обработчиков**. \`Set\` вместо массива, чтобы не было дублей и удаление было \`O(1)\`.
-2. **\`on(event, handler)\`** — кладём обработчик в набор и **возвращаем функцию отписки**. Это важнее, чем кажется: вызывающему больше не нужно хранить ссылку на сам handler.
-3. **\`off(event, handler)\`** — убираем из набора. Забыли — обработчик и всё его замыкание (компонент, DOM-узел, стор) живут вечно.
-4. **\`once(event, handler)\`** — оборачиваем handler в обёртку, которая **сначала снимает саму себя**, а потом вызывает оригинал.
-5. **\`emit(event, payload)\`** — синхронно проходим по подписчикам. Перед итерацией **копируем набор**: подписчик может подписать или отписать кого-то прямо во время рассылки, и итератор оригинала поедет.
-6. Каждый вызов — в \`try/catch\`: падение одного подписчика не должно останавливать остальных.
-7. **Сложность:** \`on\`/\`off\` — \`O(1)\`, \`emit\` — \`O(k)\` по числу подписчиков события; память — \`O(n)\` подписок.
-8. **Где встречается:** \`EventEmitter\` в Node.js, DOM-события, шина событий между модулями и микрофронтендами. В Angular \`@Output()\` — это EventEmitter поверх RxJS Subject. Везде смысл один: коммуникация без прямых ссылок, вместо тесной связки через DI.
+## Словарик терминов
 
-## Типобезопасность
+- **Observer (Наблюдатель)** — паттерн, где объект-издатель хранит список подписчиков и уведомляет их о событиях.
+- **PubSub (publish/subscribe, издатель/подписчик)** — разновидность Observer с именованными каналами-событиями; издатель и подписчики не знают друг о друге.
+- **Событие (event)** — именованный сигнал «что-то произошло», например \`'order:paid'\`, с данными-payload.
+- **Payload (полезная нагрузка)** — данные, которые передаются вместе с событием: \`{ id: '42' }\`.
+- **Обработчик, подписчик (handler, listener)** — функция, которую эмиттер вызывает при событии.
+- **Функция отписки (unsubscribe)** — функция, которую возвращает \`on\`; её вызов снимает подписку.
+- **Слабая связанность (loose coupling)** — модули взаимодействуют, не имея прямых ссылок друг на друга.
+- **\`Map\`** — словарь «ключ → значение» с ключами любого типа; здесь «имя события → набор обработчиков».
+- **\`Set\`** — коллекция уникальных значений с добавлением, удалением и проверкой за \`O(1)\`.
+- **Дженерик (generic)** — параметр типа: \`EventEmitter<Events>\` — эмиттер для конкретной карты событий.
+- **\`keyof Events\`** — тип-объединение всех ключей объекта-типа: имена событий.
+- **\`Events[K]\`** — индексированный тип: тип payload для события \`K\`.
+- **Утечка памяти (memory leak)** — объект больше не нужен, но на него есть ссылка, и сборщик мусора не может его удалить.
+- **Синхронный вызов** — \`emit\` вызывает обработчики прямо сейчас, один за другим, и возвращает управление только после всех.
+- **\`Subject\`** — объект RxJS, который одновременно Observable и «эмиттер»: у него есть \`next\`, \`error\`, \`complete\` и все операторы.
+- **\`EventTarget\` / \`CustomEvent\`** — встроенный в браузер механизм событий (\`addEventListener\`, \`dispatchEvent\`) и событие с произвольными данными в поле \`detail\`.
 
-Дженерик \`Events extends Record<string, any>\` — это карта «событие → тип payload». Тогда \`emit('order:paid', ...)\` проверяется на компиляции: и имя события, и форма данных. Опечатка в имени становится ошибкой типа, а не тихо потерянным событием, которое никто никогда не поймает.
+## Как это работает под капотом
 
-## Пример
+### Уточняющие вопросы перед кодом
+
+- Что возвращает \`on\`: ничего или функцию отписки? Лучше функцию отписки — это главный способ избежать утечек.
+- Может ли один и тот же обработчик подписаться дважды? Если да — вызывать его дважды (как в Node.js) или один раз?
+- \`emit\` синхронный или асинхронный?
+- Что делать, если обработчик бросил исключение: прервать рассылку или продолжить для остальных?
+- Что происходит, если во время \`emit\` обработчик подписывает или отписывает кого-то? Видит ли это текущая рассылка?
+- Нужна ли проверка типов payload на этапе компиляции?
+
+### Идея алгоритма простыми словами
+
+1. Внутри храним \`Map\`: имя события → \`Set\` обработчиков. \`Set\`, а не массив, — чтобы не было дублей, а удаление было \`O(1)\`.
+2. \`on\` кладёт обработчик в набор и сразу **возвращает функцию отписки**, поэтому вызывающему не нужно отдельно хранить ссылку на обработчик.
+3. \`off\` удаляет обработчик из набора. Забыли вызвать — обработчик и всё его замыкание живут вечно.
+4. \`once\` оборачивает обработчик в функцию-обёртку, которая **сначала снимает саму себя**, потом вызывает оригинал; в наборе лежит именно обёртка.
+5. \`emit\` берёт **копию** набора и синхронно обходит её — так подписки и отписки во время рассылки не ломают обход.
+6. Каждый вызов обёрнут в \`try/catch\`, чтобы падение одного подписчика не остановило остальных.
+
+### Шаг 1. Минимальный эмиттер — и сразу утечка
 
 \`\`\`ts
-const bus = new EventEmitter<{ 'order:paid': { id: string } }>();
+class Emitter {
+  private handlers: Record<string, Array<(p: any) => void>> = {};
+  on(event: string, fn: (p: any) => void) { (this.handlers[event] ??= []).push(fn); }
+  emit(event: string, payload: any) { (this.handlers[event] ?? []).forEach(fn => fn(payload)); }
+}
 
-const off = bus.on('order:paid', (p) => console.log(p.id)); // p типизирован
-bus.emit('order:paid', { id: '42' });
-off(); // отписались — утечки нет
+const bus = new Emitter();
+class CartBadge {
+  count = 0;
+  constructor(bus: Emitter, public name: string) {
+    bus.on('cart:changed', (n: number) => { this.count = n; console.log(\`\${this.name} updated to \${n}\`); });
+  }
+}
+// пользователь трижды зашёл на страницу и ушёл — компонент создан и «уничтожен» три раза
+for (let i = 1; i <= 3; i++) new CartBadge(bus, \`badge#\${i}\`);
+bus.emit('cart:changed', 5);
+// badge#1 updated to 5
+// badge#2 updated to 5
+// badge#3 updated to 5
 \`\`\`
 
-Почему так: \`on\` сразу возвращает отписку, поэтому очистка не требует хранить handler отдельно — закрыт самый частый источник утечек.
+Рассылка работает, но отписаться нельзя. Каждый «уничтоженный» компонент остаётся в памяти — его держит замыкание обработчика внутри шины — и продолжает реагировать на события. Через час работы в SPA таких зомби-обработчиков могут быть сотни.
 
-## Что сказать на собеседовании
+### Шаг 2. Добавляем \`off\` и \`once\` на массивах — и теряем обработчики
 
-> EventEmitter — это реализация Observer, он же PubSub: издатель эмитит именованные события, подписчики реагируют, друг о друге не зная, отсюда слабая связанность. Внутри — карта «событие → набор обработчиков»: \`on\` добавляет и возвращает отписку, \`off\` удаляет, \`once\` оборачивает handler обёрткой, снимающей себя, \`emit\` синхронно обходит подписчиков. Сложность: \`on\` и \`off\` — O(1), \`emit\` — O(k) по подписчикам, память O(n). Главная беда ручных эмиттеров — утечки: забытый \`off\` держит handler со всем замыканием, поэтому \`on\` обязан возвращать unsubscribe. Ещё: перед обходом набор надо копировать, потому что подписчик может отписаться во время \`emit\`, и каждый вызов оборачивать в try/catch. Типобезопасность даёт дженерик-карта «событие → payload», а в Angular это \`@Output()\` поверх Subject.
+\`\`\`ts
+class Emitter {
+  private handlers: Record<string, Array<(p: any) => void>> = {};
+  on(event: string, fn: (p: any) => void) { (this.handlers[event] ??= []).push(fn); }
+  off(event: string, fn: (p: any) => void) {
+    const list = this.handlers[event];
+    const i = list?.indexOf(fn) ?? -1;
+    if (i >= 0) list!.splice(i, 1);
+  }
+  once(event: string, fn: (p: any) => void) {
+    const wrap = (p: any) => { this.off(event, wrap); fn(p); };
+    this.on(event, wrap);
+  }
+  emit(event: string, payload: any) {
+    for (const fn of this.handlers[event] ?? []) fn(payload);   // ❌ обходим живой массив
+  }
+}
 
-## Ловушки
+const bus = new Emitter();
+bus.once('saved', () => console.log('toast: сохранено'));
+bus.once('saved', () => console.log('analytics: save'));
+bus.on('saved', () => console.log('refresh list'));
 
-- **Забытый \`off\` — утечка памяти.** Handler держит замыкание, а через него компонент и DOM. Главный минус ручных эмиттеров.
-- **Мутация списка во время \`emit\`.** Обработчик, который подписывает или отписывает кого-то, ломает итерацию — копируйте набор перед обходом.
-- **Одно исключение рвёт рассылку.** Без \`try/catch\` подписчики после упавшего просто не получат событие.
-- **\`once\` нельзя снять по оригинальному handler** — в наборе лежит обёртка. Поэтому \`once\` тоже обязан возвращать unsubscribe.
-- **\`emit\` синхронный.** Тяжёлый подписчик блокирует и остальных, и вызывающий код; асинхронность придётся вводить руками.
-- **Спросят следом:** чем это отличается от RxJS Subject — Subject даёт поток с операторами, завершением и каналом ошибок, а эмиттер это просто рассылка; и почему шина событий между модулями легко превращается в неотлаживаемую «магию» — по коду не видно, кто на что реагирует.`,
+bus.emit('saved', null);
+// toast: сохранено
+// refresh list                ← analytics пропущен
+bus.emit('saved', null);
+// analytics: save             ← сработал только сейчас, а refresh list пропущен
+\`\`\`
+
+Первая обёртка \`once\` удалила себя через \`splice\`, массив сдвинулся влево, и итератор, перейдя к индексу 1, перепрыгнул через \`analytics\`. Во второй рассылке то же самое случилось с \`refresh list\`. Баг плавающий: зависит от порядка подписок, и в тестах его легко не заметить.
+
+### Шаг 3. Финальная версия
+
+Это код из сниппета под ответом:
+
+\`\`\`ts
+type Handler<P> = (payload: P) => void;
+
+class EventEmitter<Events extends Record<string, any>> {
+  private listeners = new Map<keyof Events, Set<Handler<any>>>(); // событие → набор обработчиков
+
+  on<K extends keyof Events>(event: K, handler: Handler<Events[K]>): () => void {
+    if (!this.listeners.has(event)) this.listeners.set(event, new Set());
+    this.listeners.get(event)!.add(handler);
+    return () => this.off(event, handler);          // функция отписки
+  }
+
+  off<K extends keyof Events>(event: K, handler: Handler<Events[K]>): void {
+    this.listeners.get(event)?.delete(handler);
+  }
+
+  once<K extends keyof Events>(event: K, handler: Handler<Events[K]>): () => void {
+    const wrap: Handler<Events[K]> = (p) => { this.off(event, wrap); handler(p); }; // сначала снять себя
+    return this.on(event, wrap);
+  }
+
+  emit<K extends keyof Events>(event: K, payload: Events[K]): void {
+    // copy to allow mutation during iteration
+    for (const handler of [...(this.listeners.get(event) ?? [])]) {
+      try { handler(payload); } catch (e) { console.error(e); }  // один упал — остальные получат
+    }
+  }
+}
+\`\`\`
+
+\`[...set]\` делает снимок обработчиков на момент начала рассылки: что бы ни происходило с набором дальше, обход идёт по неизменному массиву. \`once\` возвращает функцию отписки от \`on\` — она снимает именно обёртку, поэтому отменить \`once\` до срабатывания можно.
+
+### Трассировка
+
+\`\`\`ts
+type AppEvents = { 'order:paid': { id: string; amount: number }; 'user:logout': void };
+const bus = new EventEmitter<AppEvents>();
+
+const off = bus.on('order:paid', p => console.log('A got', p.id));
+bus.once('order:paid', p => console.log('once got', p.id));
+bus.emit('order:paid', { id: '42', amount: 100 });
+bus.emit('order:paid', { id: '43', amount: 50 });
+off();
+bus.emit('order:paid', { id: '44', amount: 10 });
+\`\`\`
+
+\`\`\`text
+on(A)          listeners: 'order:paid' → Set{A}; возвращена off = () => off('order:paid', A)
+once(B)        создана обёртка W; Set{A, W}
+emit(42)       снимок [A, W]
+                 A(42)  → "A got 42"
+                 W(42)  → off(W): Set{A}; затем B(42) → "once got 42"
+emit(43)       снимок [A] → "A got 43"
+off()          Set{} — пустой набор остаётся в Map
+emit(44)       снимок [] → ничего
+\`\`\`
+
+Вывод: \`A got 42\`, \`once got 42\`, \`A got 43\` — ровно это печатает прогон.
+
+### Типобезопасность: \`keyof\` и \`Events[K]\`
+
+Дженерик \`Events\` — это карта «имя события → тип payload». Метод \`emit<K extends keyof Events>(event: K, payload: Events[K])\` связывает два параметра: TypeScript выводит \`K\` из имени события и требует, чтобы payload имел тип \`Events[K]\`.
+
+\`\`\`ts
+bus.on('order:paid', (p) => p.amount.toFixed(2));   // p выведен как { id: string; amount: number }
+bus.emit('order:payed', { id: '42', amount: 100 });
+// error TS2345: Argument of type '"order:payed"' is not assignable to parameter of type 'keyof AppEvents'.
+bus.emit('order:paid', { id: 42, amount: 100 });
+// error TS2322: Type 'number' is not assignable to type 'string'.
+bus.on('order:paid', (p) => p.total);
+// error TS2339: Property 'total' does not exist on type '{ id: string; amount: number; }'.
+\`\`\`
+
+Опечатка в имени становится ошибкой компиляции, а не тихо потерянным событием, которое никто никогда не поймает. Ограничение \`Record<string, any>\`, а не \`Record<string, unknown>\`, выбрано не случайно: карту событий, описанную через \`interface\`, TypeScript принимает только с \`any\` — у интерфейсов нет неявной индексной сигнатуры (проверено \`tsc\`).
+
+### Сложность
+
+\`on\`, \`off\` — \`O(1)\`: добавление и удаление в \`Set\` и поиск в \`Map\` не зависят от числа подписчиков. \`emit\` — \`O(k)\`, где \`k\` — число подписчиков этого события: копия набора плюс один вызов на каждого. Копирование удваивает константу, но не меняет порядок роста. Память — \`O(n)\`, где \`n\` — общее число активных подписок.
+
+### Тест-кейсы
+
+Все результаты проверены прогоном финальной версии:
+
+- \`on\` + \`emit\` → обработчик получает payload.
+- Вызов функции, которую вернул \`on\`, → следующие \`emit\` обработчик не получает.
+- \`once\` + два \`emit\` → обработчик сработал ровно один раз.
+- Функция отписки от \`once\` до первого \`emit\` → обработчик не сработает никогда.
+- \`off(event, исходныйHandler)\` для подписки через \`once\` → **не** снимает её: в наборе лежит обёртка, обработчик всё равно сработает.
+- Один и тот же обработчик подписан дважды → вызывается один раз (\`Set\` убирает дубли).
+- Первый обработчик бросает исключение → в консоль пишется ошибка, второй обработчик всё равно получает событие.
+- \`emit\` события без подписчиков → ничего не происходит, ошибок нет.
+- Первый обработчик во время \`emit\` отписывает второго → второй **получает** текущее событие (снимок), но не получит следующее.
+- Обработчик события \`a\` вызывает \`emit('b')\` → обработчики \`b\` выполняются **до** оставшихся обработчиков \`a\`: порядок \`a1\`, \`b1\`, \`a2\`.
+
+### Почему копия перед обходом обязательна
+
+С массивом без копии удаление сдвигает элементы, и итератор перепрыгивает через обработчик (шаг 2). С \`Set\` без копии проблема другая: элементы, **добавленные** во время обхода, тоже будут посещены в этом же обходе.
+
+\`\`\`ts
+// Set без копии: обработчик, который во время рассылки подписывает новый обработчик
+bus.on('tick', function spawn() { calls++; bus.on('tick', () => spawn()); });
+bus.emit('tick');
+// каждый новый обработчик тут же вызывается в этой же рассылке и добавляет следующий —
+// бесконечный цикл (в проверке пришлось остановить его искусственно на 6-м вызове)
+\`\`\`
+
+Снимок \`[...set]\` фиксирует, кто получит **это** событие. Такая же семантика у \`EventEmitter\` в Node.js. А в DOM-шном \`EventTarget\` всё наоборот: обработчик, снятый во время рассылки, текущее событие **не** получит — проверено на встроенном \`EventTarget\`. Обе семантики допустимы; важно знать, какую выбрали вы, и сказать об этом на собеседовании.
+
+### \`Map\` и \`Set\` вместо объекта и массива
+
+\`\`\`ts
+const handlers = new Set<() => void>();
+const h = () => console.log('h');
+handlers.add(h); handlers.add(h);
+handlers.size;       // 1 — дубль не добавился
+handlers.delete(h);  // true, за O(1), без indexOf и splice
+\`\`\`
+
+\`Map\` принимает ключи любого типа (в том числе \`symbol\`) и не имеет унаследованных ключей вроде \`toString\`, в отличие от обычного объекта. \`Set\` даёт уникальность и удаление за \`O(1)\` вместо \`indexOf\` + \`splice\` за \`O(k)\`. Обратная сторона: подписать один обработчик дважды «специально» нельзя — в Node.js, где обработчики хранятся в массиве, можно.
+
+### \`EventEmitter\` в Node.js
+
+Встроенный класс \`node:events\` устроен похоже: \`on\`/\`off\`/\`once\`/\`emit\`, синхронная рассылка по снимку массива. Две особенности, о которых любят спрашивать:
+
+\`\`\`ts
+import { EventEmitter } from 'node:events';
+const ee = new EventEmitter();
+for (let i = 0; i < 11; i++) ee.on('data', () => {});
+// MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 data listeners added...
+ee.emit('error', new Error('no handler'));
+// бросает исключение: событие 'error' без подписчика роняет вызывающий код
+\`\`\`
+
+По умолчанию больше 10 подписчиков на одно событие считается подозрением на утечку, и Node.js печатает предупреждение (лимит меняется через \`setMaxListeners\`). Событие \`'error'\` без подписчика бросается как исключение.
+
+### \`EventTarget\`, \`CustomEvent\` и \`AbortSignal\` в браузере
+
+\`\`\`ts
+const target = new EventTarget();
+const ac = new AbortController();
+target.addEventListener('cart', (e) => console.log((e as CustomEvent).detail), { signal: ac.signal });
+target.dispatchEvent(new CustomEvent('cart', { detail: { count: 3 } })); // { count: 3 }
+ac.abort();
+target.dispatchEvent(new CustomEvent('cart', { detail: { count: 4 } })); // ничего — подписка снята
+
+target.addEventListener('ready', () => console.log('once'), { once: true });
+\`\`\`
+
+Встроенный механизм умеет то же самое: \`once: true\` вместо \`once\`, а \`signal\` от \`AbortController\` снимает сразу много подписок одним \`abort()\`. Через \`window.dispatchEvent(new CustomEvent(...))\` часто общаются микрофронтенды, которые не делят общий JS-код. Минус — нет типизации payload: \`detail\` приходится приводить вручную.
+
+### Angular: \`@Output()\`, \`output()\` и \`Subject\`
+
+\`EventEmitter\` из \`@angular/core\` для \`@Output()\` — это наследник RxJS \`Subject\` (в типах: \`interface EventEmitter<T> extends Subject<T>, OutputRef<T>\`). Современная функция \`output()\` возвращает \`OutputEmitterRef\` — лёгкий эмиттер с \`emit\` и \`subscribe\`, уже **не** Subject; Angular сам снимает подписки при уничтожении компонента.
+
+\`\`\`ts
+@Component({ selector: 'app-order-row', template: \`<button (click)="paid.emit(order().id)">Оплатить</button>\` })
+export class OrderRowComponent {
+  order = input.required<Order>();
+  paid = output<string>();                  // родитель: (paid)="onPaid($event)"
+}
+\`\`\`
+
+Для общения между несвязанными компонентами в Angular обычно делают сервис-шину на \`Subject\`:
+
+\`\`\`ts
+@Injectable({ providedIn: 'root' })
+export class CartEvents {
+  private readonly changed = new Subject<number>();
+  readonly changed$ = this.changed.asObservable();   // наружу — только чтение
+  notify(count: number) { this.changed.next(count); }
+}
+
+// в компоненте
+inject(CartEvents).changed$.pipe(takeUntilDestroyed()).subscribe(n => this.count.set(n));
+\`\`\`
+
+Отличие \`Subject\` от простого эмиттера: это поток с операторами (\`filter\`, \`debounceTime\`, \`switchMap\`), с каналами \`error\` и \`complete\` и с готовыми средствами отписки (\`takeUntilDestroyed\`, \`async\`-пайп). Если же используете свой эмиттер, функция отписки из \`on\` подходит в \`DestroyRef.onDestroy\` без обёрток — у неё та же сигнатура \`() => void\`:
+
+\`\`\`ts
+const off = bus.on('order:paid', p => this.lastPaid.set(p.id));
+inject(DestroyRef).onDestroy(off);
+\`\`\`
+
+### Где это применяется на практике
+
+- **\`@Output()\` и \`output()\` в Angular** — дочерний компонент сообщает родителю «строку выбрали», «форму отправили».
+- **Шина событий между модулями**: «пользователь разлогинился» — очищают кэши, закрывают WebSocket, сбрасывают сторы.
+- **Микрофронтенды**: общение через \`CustomEvent\` на \`window\`, когда приложения не делят код.
+- **Обёртки над сторонними библиотеками**: графики, карты, редакторы публикуют события (\`zoom\`, \`select\`), а Angular-компонент подписывается.
+- **WebSocket-клиент**: входящее сообщение по типу превращается в типизированное событие \`'price:update'\`, \`'order:filled'\`.
+- **Node.js**: потоки, HTTP-сервер, процессы — всё построено на \`EventEmitter\`.
+
+## Важные нюансы и подводные камни
+
+- **Забытый \`off\` — утечка памяти.** Обработчик держит замыкание, а через него компонент, DOM и данные. Главный минус ручных эмиттеров; поэтому \`on\` возвращает функцию отписки, а в Angular её вешают на \`DestroyRef.onDestroy\`.
+- **Мутация списка во время \`emit\`.** С массивом обработчики пропускаются, с живым \`Set\` новые обработчики вызываются в той же рассылке и могут зациклиться. Копируйте набор перед обходом.
+- **Одно исключение рвёт рассылку.** Без \`try/catch\` подписчики после упавшего не получат событие. Но и \`console.error\` — компромисс: ошибка не дойдёт до глобального \`ErrorHandler\` и мониторинга, а в тестах её легко не заметить.
+- **\`once\` нельзя снять по оригинальному обработчику** — в наборе лежит обёртка. Поэтому \`once\` тоже обязан возвращать функцию отписки.
+- **Анонимный обработчик не снять через \`off\`.** \`off('b', () => ...)\` передаёт новую функцию, которой нет в наборе; подписка останется. Используйте функцию отписки из \`on\`.
+- **\`emit\` синхронный.** Тяжёлый подписчик блокирует и остальных, и вызывающий код (обработчик на 200 мс задерживает \`emit\` на 200 мс). Асинхронность вводят руками: \`queueMicrotask\` или \`setTimeout\` внутри обработчика.
+- **Вложенный \`emit\` меняет порядок.** Если обработчик \`a\` эмитит \`b\`, обработчики \`b\` выполнятся раньше оставшихся обработчиков \`a\` — порядок «в глубину», который удивляет при отладке.
+- **Снимок против DOM-семантики.** В этой реализации отписанный во время рассылки обработчик текущее событие получит, в \`EventTarget\` — нет.
+- **Пустые наборы остаются в \`Map\`.** После отписки всех обработчиков ключ события и пустой \`Set\` живут дальше. Для фиксированного списка событий это неважно; для динамических имён (\`'row:123:changed'\`) стоит удалять пустые наборы в \`off\`.
+- **События без данных.** Для \`'user:logout': void\` всё равно приходится писать \`emit('user:logout', undefined)\`; улучшается типом-кортежем аргументов, но это усложняет сигнатуру.
+- **Шина событий как «магия».** По коду не видно, кто на что реагирует; при десятках событий отладка превращается в поиск по строкам. Для состояния лучше подходят сервисы с сигналами или стор, эмиттер — для действительно разовых уведомлений.
+
+**Плюсы:** слабая связанность модулей, простая реализация, \`O(1)\` подписка и отписка, проверка имён и payload на этапе компиляции, функция отписки удобно встраивается в \`DestroyRef.onDestroy\`.
+**Минусы:** легко получить утечку без отписки, неочевидный поток данных и сложная отладка, синхронный \`emit\` блокирует, нет операторов, завершения и канала ошибок, как у RxJS \`Subject\`.
+
+## Как это спрашивают на собеседовании
+
+**Главный вывод:** EventEmitter — это Observer/PubSub на \`Map<событие, Set<обработчик>>\`: \`on\` добавляет и возвращает функцию отписки, \`off\` удаляет, \`once\` подписывает самоснимающуюся обёртку, \`emit\` обходит **копию** набора с \`try/catch\`. Типобезопасность дают дженерик-карта событий, \`keyof\` и \`Events[K]\`. Главный риск — утечки из-за забытой отписки.
+
+Типичные формулировки: «Реализуйте EventEmitter с on/off/once/emit», «Как сделать его типобезопасным?», «Чем EventEmitter отличается от RxJS Subject?», «Где в Angular используется этот паттерн?».
+
+Как вести себя во время кодинга: уточните, что возвращает \`on\` и что делать с ошибками и мутациями во время \`emit\`; начните с \`Map\` и \`Set\` и объясните выбор; напишите \`on\` с функцией отписки, затем \`once\` через обёртку; в \`emit\` сначала сделайте копию и проговорите, какой баг она предотвращает; в конце добавьте дженерики и покажите на примере, как опечатка в имени события ловится компилятором.
+
+Что могут спросить следом:
+
+- *Чем это отличается от RxJS \`Subject\`?* — \`Subject\` — поток с операторами, \`complete\` и каналом \`error\`; эмиттер — просто рассылка по именам.
+- *Почему \`@Output()\` в Angular — Subject, а \`output()\` — нет?* — Исторически \`EventEmitter\` наследует \`Subject\`; новый \`output()\` возвращает лёгкий \`OutputEmitterRef\` без RxJS, подписки на него Angular снимает сам.
+- *Как сделать \`emit\` асинхронным?* — Откладывать вызовы через \`queueMicrotask\` или \`setTimeout\`, понимая, что порядок и стек ошибок изменятся.
+- *Как найти утечку подписок?* — Считать подписчиков на событие (как предупреждение \`MaxListenersExceededWarning\` в Node.js) и смотреть снимки памяти в DevTools.
+- *Почему \`Set\`, а не массив?* — Уникальность и удаление за \`O(1)\`; минус — нельзя подписать один обработчик дважды.
+
+### Ответ на 1 минуту
+
+> EventEmitter — это реализация Observer, он же PubSub: издатель эмитит именованные события, подписчики реагируют, друг о друге не зная, отсюда слабая связанность. Внутри у меня \`Map\` «событие → \`Set\` обработчиков»: \`on\` добавляет и возвращает функцию отписки, \`off\` удаляет, \`once\` подписывает обёртку, которая сначала снимает себя, а \`emit\` синхронно обходит копию набора, оборачивая каждый вызов в \`try/catch\`. Копия нужна, потому что подписчик может отписаться или подписать кого-то прямо во время рассылки. Типобезопасность даёт дженерик-карта «событие → payload» с \`keyof\` и \`Events[K]\`: опечатка в имени — ошибка компиляции. \`on\` и \`off\` за \`O(1)\`, \`emit\` — \`O(k)\`. Главный риск — утечки из-за забытой отписки, поэтому функцию из \`on\` я вешаю на \`DestroyRef.onDestroy\`. В Angular этот паттерн — \`output()\` и сервисы-шины на \`Subject\`.`,
       en: `## In short
 
 An EventEmitter is a **notice board**. One part of the system pins up a notice ("order paid"), others react to it, and neither side knows anything about the other. That's the **Observer/PubSub** pattern, and its whole point is **loose coupling**.
@@ -7812,52 +11425,361 @@ class EventEmitter<Events extends Record<string, any>> {
       en: 'Implement an LRU cache with O(1) get and put. Where is it used on the frontend?',
     },
     answer: {
-      ru: `## Коротко
+      ru: `## В чём суть
 
-LRU-кэш (Least Recently Used) — это кэш **с потолком по размеру**, который при переполнении выбрасывает элемент, к которому дольше всего не обращались. И \`get\`, и \`put\` обязаны быть \`O(1)\`.
+Нужно написать класс \`LRUCache\` с методами \`get(key)\` и \`put(key, value)\`: кэш хранит не больше \`capacity\` элементов, а при переполнении выбрасывает тот, к которому **дольше всего не обращались** (Least Recently Used). Ключевое требование — и \`get\`, и \`put\` за \`O(1)\`, то есть без перебора всех элементов. Задача проверяет знание структур данных (хеш-таблица, двусвязный список), умение использовать порядок вставки \`Map\` в JavaScript и понимание, зачем кэшу граница.
 
-Аналогия: книжная полка на десять книг. Взял книгу почитать — ставишь обратно к себе поближе, с краю. Принёс новую, а места нет — выбрасываешь ту, что оказалась на дальнем конце: её дольше всех не трогали.
+Аналогия: книжная полка на десять книг. Взяли книгу почитать — ставите её обратно с ближнего края. Принесли новую, а места нет — убираете книгу с дальнего края: её дольше всех не трогали. Обратите внимание: важно не когда книгу купили, а когда её последний раз брали в руки.
 
-## Как это работает по шагам
+**Какую проблему решает.** Кэш без границы в долгоживущем SPA — это утечка памяти с гарантией: пользователь листает сотни карточек, открывает десятки отчётов, и всё это навсегда остаётся в памяти вкладки. Нужна граница, а вместе с ней — правило, что выбрасывать. LRU выбрасывает то, что, скорее всего, больше не понадобится: если к записи давно не обращались, шанс, что обратятся снова, ниже, чем у недавно использованных.
 
-1. Классика из учебника — **хеш-таблица плюс двусвязный список**. Map даёт \`ключ → узел\` за \`O(1)\`, список хранит порядок использования: голова — самый свежий, хвост — кандидат на вылет.
-2. **\`get\`:** нашли узел через map, **вырезали из списка и переставили в голову**. Вырезание \`O(1)\` именно потому, что список двусвязный — у узла есть ссылки на обоих соседей, искать их не нужно.
-3. **\`put\`:** ключ уже есть — обновили значение и в голову. Ключа нет, а размер на пределе — **удалили хвост** и его ключ из map, потом вставили новый узел в голову.
-4. **Трюк в JS:** \`Map\` сам **сохраняет порядок вставки**, поэтому список не нужен. На \`get\` делаем \`delete\` и сразу \`set\` — ключ переезжает в конец и становится самым свежим.
-5. При переполнении удаляем \`map.keys().next().value\` — это первый ключ итератора, то есть самый старый. Получается компактнее двусвязного списка и так же \`O(1)\` (амортизированно).
-6. **Сложность:** \`get\`/\`put\` — \`O(1)\`, память — \`O(capacity)\`, то есть **ограниченная по определению**. Это и есть главное отличие от обычного кэша.
+## Словарик терминов
 
-## Где это нужно во фронтенде
+- **Кэш (cache)** — быстрое хранилище уже полученных данных, чтобы не получать их заново.
+- **Вытеснение (eviction)** — удаление записи из заполненного кэша, чтобы освободить место для новой.
+- **LRU (Least Recently Used)** — политика вытеснения: удаляется запись, к которой дольше всего не было обращений.
+- **\`capacity\` (ёмкость)** — максимальное число записей в кэше.
+- **Попадание / промах (hit / miss)** — запись нашлась в кэше / не нашлась.
+- **Хеш-таблица (hash map)** — структура, которая по ключу находит значение в среднем за \`O(1)\`; в JS это \`Map\`.
+- **Двусвязный список (doubly linked list)** — цепочка узлов, где каждый узел знает и следующего, и предыдущего соседа; поэтому узел можно вырезать за \`O(1)\`.
+- **Фиктивный узел (sentinel)** — пустой узел-заглушка в начале и конце списка, чтобы не проверять «а вдруг соседа нет».
+- **Порядок вставки \`Map\`** — \`Map\` перебирает ключи в том порядке, в каком они были добавлены впервые.
+- **Итератор (\`map.keys()\`)** — объект, который выдаёт ключи по одному через \`next()\`; первый вызов \`next()\` даёт самый старый ключ.
+- **Амортизированное \`O(1)\`** — отдельная операция иногда может быть дороже, но в среднем на длинной серии каждая стоит константу.
+- **FIFO (First In, First Out)** — вытеснение по времени добавления, без учёта обращений.
+- **LFU (Least Frequently Used)** — вытеснение самого **редко** используемого (по числу обращений), а не самого давнего.
+- **TTL (time to live)** — срок жизни записи, после которого она считается устаревшей независимо от обращений.
 
-- Кэш ответов API и загруженных изображений с потолком по памяти.
-- **Мемоизация с границей** — вместо неограниченного кэша, который гарантированно течёт.
-- Кэш вычисленных значений в дашбордах, кэш данных роутов и подгруженных чанков.
+## Как это работает под капотом
 
-## Пример
+### Уточняющие вопросы перед кодом
+
+- Что возвращать при промахе: \`undefined\`, \`-1\` (как в задаче LeetCode 146) или бросать ошибку?
+- Считается ли \`put\` существующего ключа «обращением» — делает ли он ключ самым свежим? Обычно да.
+- Можно ли использовать порядок вставки \`Map\` или нужно реализовать двусвязный список вручную? Многие интервьюеры просят показать оба варианта.
+- Какая \`capacity\` допустима: что делать с 0 и отрицательными значениями?
+- Нужен ли TTL (срок жизни записей) и колбэк при вытеснении, чтобы освобождать ресурсы?
+
+### Идея алгоритма простыми словами
+
+1. Нам нужны две вещи одновременно: быстро найти запись по ключу и быстро знать, какая запись самая старая по обращениям.
+2. Поиск по ключу за \`O(1)\` даёт хеш-таблица. Порядок обращений хранит упорядоченная структура: в начале — самые старые, в конце — самые свежие.
+3. При \`get\` находим запись и **переносим её в конец** — она стала самой свежей.
+4. При \`put\` существующего ключа обновляем значение и тоже переносим в конец.
+5. При \`put\` нового ключа в полный кэш сначала удаляем запись из **начала** (самую старую), потом добавляем новую в конец.
+6. В JavaScript \`Map\` совмещает обе роли: это хеш-таблица, которая помнит порядок вставки. «Перенести в конец» — это \`delete\` + \`set\`, «самая старая» — первый ключ итератора.
+
+### Шаг 1. \`Map\` без перестановки — получился FIFO
 
 \`\`\`ts
-const cache = new LRUCache<string, User>(2);
-cache.put('a', userA);
-cache.put('b', userB);
-cache.get('a');        // 'a' стал свежим => самый старый теперь 'b'
-cache.put('c', userC); // вытеснится 'b', а не 'a'
+class FifoCache<K, V> {
+  private map = new Map<K, V>();
+  constructor(private capacity: number) {}
+  get(key: K) { return this.map.get(key); }       // ❌ обращение не меняет порядок
+  put(key: K, value: V) {
+    if (!this.map.has(key) && this.map.size >= this.capacity) {
+      this.map.delete(this.map.keys().next().value as K);
+    }
+    this.map.set(key, value);
+  }
+}
+
+const c = new FifoCache<string, string>(2);
+c.put('a', 'A'); c.put('b', 'B');
+c.get('a');            // обратились к 'a'
+c.put('c', 'C');
+// ключи: ['b', 'c'] — вытеснен 'a', хотя его только что использовали
 \`\`\`
 
-Почему так: вытеснение идёт **по последнему обращению**, а не по времени добавления. \`a\` добавили раньше, но трогали позже — значит, он ценнее.
+Ограничение размера есть, но вытесняется самый **давно добавленный**, а не самый давно использованный. Популярная запись, которую читают постоянно, вылетит просто потому, что её добавили первой.
 
-## Что сказать на собеседовании
+### Шаг 2. Финальная версия: \`delete\` + \`set\` переносят ключ в конец
 
-> LRU-кэш хранит не больше \`capacity\` элементов и при переполнении вытесняет тот, к которому дольше всего не обращались, причём и \`get\`, и \`put\` должны быть O(1). Классика — двусвязный список плюс хеш-таблица: map даёт доступ к узлу за O(1), список хранит порядок использования, голова — самый свежий, хвост — кандидат на вытеснение, а перемещение узла и удаление хвоста стоят O(1). В JS проще: \`Map\` сохраняет порядок вставки, поэтому на \`get\` делаем \`delete\` и \`set\`, чтобы ключ уехал в конец, а на переполнении удаляем первый ключ итератора — амортизированно O(1). Память O(capacity). На фронте это кэш ответов API и картинок, мемоизация с границей, кэш роутов и чанков. Важный нюанс: LRU вытесняет по использованию, но не по протуханию, поэтому за свежесть отвечает отдельный TTL.
+Это код из сниппета под ответом:
 
-## Ловушки
+\`\`\`ts
+class LRUCache<K, V> {
+  private map = new Map<K, V>();                  // порядок ключей: от старого к свежему
+  constructor(private capacity: number) {}
+
+  get(key: K): V | undefined {
+    if (!this.map.has(key)) return undefined;     // промах
+    const value = this.map.get(key)!;
+    this.map.delete(key);     // remove...
+    this.map.set(key, value); // ...and re-insert => most recently used
+    return value;
+  }
+
+  put(key: K, value: V): void {
+    if (this.map.has(key)) this.map.delete(key);  // обновление: убрать, чтобы вставить в конец
+    else if (this.map.size >= this.capacity) {
+      const oldest = this.map.keys().next().value as K; // least recently used
+      this.map.delete(oldest);
+    }
+    this.map.set(key, value);
+  }
+}
+
+const cache = new LRUCache<string, string>(2);
+cache.put('a', 'A');
+cache.put('b', 'B');
+cache.get('a');        // 'A'; порядок ['b', 'a'] — самым старым стал 'b'
+cache.put('c', 'C');   // вытеснен 'b'; порядок ['a', 'c']
+cache.get('b');        // undefined
+\`\`\`
+
+Вытеснение идёт по последнему обращению, а не по времени добавления: \`a\` добавили раньше, но трогали позже — значит, он ценнее. При обновлении существующего ключа (\`put('a', ...)\`) вытеснения нет: размер не растёт, ключ просто переезжает в конец.
+
+### Классика из учебника: хеш-таблица + двусвязный список
+
+На собеседовании могут сказать «без трюков с \`Map\`» — тогда нужен вариант, который работает в любом языке:
+
+\`\`\`ts
+interface Node<K, V> { key: K; value: V; prev: Node<K, V> | null; next: Node<K, V> | null; }
+
+class LinkedLRU<K, V> {
+  private map = new Map<K, Node<K, V>>();   // ключ → узел списка (порядок Map не используем)
+  private head: Node<K, V>;                 // фиктивный узел: после него — самый свежий
+  private tail: Node<K, V>;                 // фиктивный узел: перед ним — самый старый
+
+  constructor(private capacity: number) {
+    this.head = { key: null as any, value: null as any, prev: null, next: null };
+    this.tail = { key: null as any, value: null as any, prev: null, next: null };
+    this.head.next = this.tail;
+    this.tail.prev = this.head;
+  }
+
+  private unlink(node: Node<K, V>) {        // вырезать узел: O(1), соседи известны
+    node.prev!.next = node.next;
+    node.next!.prev = node.prev;
+  }
+
+  private addToFront(node: Node<K, V>) {    // вставить сразу после head
+    node.prev = this.head;
+    node.next = this.head.next;
+    this.head.next!.prev = node;
+    this.head.next = node;
+  }
+
+  get(key: K): V | undefined {
+    const node = this.map.get(key);
+    if (!node) return undefined;
+    this.unlink(node);
+    this.addToFront(node);                  // стал самым свежим
+    return node.value;
+  }
+
+  put(key: K, value: V): void {
+    const existing = this.map.get(key);
+    if (existing) {
+      existing.value = value;
+      this.unlink(existing);
+      this.addToFront(existing);
+      return;
+    }
+    if (this.map.size >= this.capacity) {
+      const lru = this.tail.prev!;          // самый старый — прямо перед tail
+      this.unlink(lru);
+      this.map.delete(lru.key);             // поэтому узел хранит и свой ключ
+    }
+    const node: Node<K, V> = { key, value, prev: null, next: null };
+    this.map.set(key, node);
+    this.addToFront(node);
+  }
+}
+\`\`\`
+
+Почему список именно **двусвязный**: чтобы вырезать узел, нужно поправить ссылку у предыдущего соседа. В односвязном списке предыдущего соседа пришлось бы искать проходом от головы — это \`O(n)\`. Здесь у узла есть \`prev\`, поэтому вырезание — четыре присваивания. Фиктивные \`head\` и \`tail\` избавляют от проверок «список пуст» и «узел крайний». Узел хранит свой \`key\`, чтобы при вытеснении хвоста удалить его и из хеш-таблицы. Обе реализации проверены на 200 случайных сериях по 500 операций — результаты \`get\` совпали во всех.
+
+### Трассировка
+
+Последовательность из LeetCode 146 при \`capacity = 2\` (порядок — от самого старого к самому свежему):
+
+\`\`\`text
+put(1, 1)   [1]
+put(2, 2)   [1, 2]
+get(1)  → 1 [2, 1]        1 стал самым свежим
+put(3, 3)   размер 2 >= 2 → вытесняем первый ключ 2 → [1, 3]
+get(2)  → undefined       2 уже вытеснен
+put(4, 4)   вытесняем первый ключ 1 → [3, 4]
+get(1)  → undefined
+get(3)  → 3 [4, 3]
+get(4)  → 4 [3, 4]
+\`\`\`
+
+Итог \`get\`: \`1, undefined, undefined, 3, 4\` — так печатают обе реализации.
+
+### Сложность
+
+\`get\` — один \`has\`, один \`get\`, один \`delete\`, один \`set\`: каждая операция \`Map\` в среднем \`O(1)\`, значит, и весь \`get\` — \`O(1)\`. \`put\` — то же плюс, возможно, \`keys().next()\` и ещё один \`delete\`, тоже \`O(1)\`. Спецификация ECMAScript формально требует от \`Map\` лишь доступа «быстрее линейного», но движки реализуют её хеш-таблицей, поэтому на практике это константа (амортизированно: таблица иногда перестраивается). Память — \`O(capacity)\`: кэш **по определению** не может вырасти больше заданной ёмкости, и это главное отличие от обычного кэша.
+
+### Тест-кейсы
+
+Все результаты проверены прогоном финальной версии:
+
+- \`capacity = 2\`: \`put a\`, \`put b\`, \`get a\`, \`put c\` → вытеснен \`b\`, ключи \`['a', 'c']\`.
+- Последовательность LeetCode 146 → \`get\` возвращают \`1, undefined, undefined, 3, 4\`.
+- Обновление: \`put a=1\`, \`put b=2\`, \`put a=10\` → порядок \`['b', 'a']\`, вытеснения нет; затем \`put c\` вытесняет \`b\`, \`get a\` → \`10\`.
+- \`get\` отсутствующего ключа → \`undefined\`, порядок не меняется.
+- \`capacity = 0\` → кэш всё равно хранит один элемент: \`map.size >= 0\` всегда истинно, но удаление «первого ключа» пустого \`Map\` ничего не удаляет, и новый ключ добавляется. Это крайний случай, который стоит отсечь в конструкторе.
+- Значение \`undefined\`: \`put('x', undefined)\`, \`get('x')\` → \`undefined\` — неотличимо от промаха.
+
+### Порядок вставки \`Map\` и итератор \`keys()\`
+
+\`\`\`ts
+const m = new Map([['a', 1], ['b', 2]]);
+m.set('a', 10);
+[...m.keys()];            // ['a', 'b'] — set существующего ключа НЕ меняет позицию
+m.delete('a'); m.set('a', 10);
+[...m.keys()];            // ['b', 'a'] — а delete + set переносит в конец
+m.keys().next().value;    // 'b' — самый старый
+\`\`\`
+
+Позиция ключа задаётся **первой** вставкой. Поэтому одного \`set\` для «освежения» мало — без \`delete\` LRU молча превращается в FIFO. \`keys()\` возвращает итератор, и \`next()\` отдаёт первый ключ, не создавая массив из всех ключей, — именно поэтому вытеснение остаётся \`O(1)\`.
+
+### Почему в сниппете \`as K\`
+
+\`\`\`ts
+const oldest = this.map.keys().next().value;
+this.map.delete(oldest);
+// error TS2345: Argument of type 'K | undefined' is not assignable to parameter of type 'K'.
+\`\`\`
+
+Итератор может быть пуст, поэтому TypeScript в строгом режиме типизирует \`.value\` как \`K | undefined\`. В нашем месте \`Map\` гарантированно не пуст (размер не меньше \`capacity\`), и приведение \`as K\` это фиксирует. Аккуратнее — проверить явно: \`if (oldest !== undefined) this.map.delete(oldest)\`; это заодно спасает от сюрпризов при \`capacity = 0\`.
+
+### LRU + TTL: размер и свежесть
+
+LRU отвечает на вопрос «что выбросить, когда места нет», но не на вопрос «не устарели ли данные». Свежесть добавляют сроком жизни:
+
+\`\`\`ts
+class TtlLRU<K, V> {
+  private map = new Map<K, { value: V; expiresAt: number }>();
+  constructor(private capacity: number, private ttlMs: number) {}
+
+  get(key: K): V | undefined {
+    const entry = this.map.get(key);
+    if (!entry) return undefined;
+    if (Date.now() > entry.expiresAt) {        // протухло — как будто и не было
+      this.map.delete(key);
+      return undefined;
+    }
+    this.map.delete(key);
+    this.map.set(key, entry);                  // свежесть по обращению
+    return entry.value;
+  }
+
+  put(key: K, value: V): void {
+    this.map.delete(key);
+    if (this.map.size >= this.capacity) this.map.delete(this.map.keys().next().value!);
+    this.map.set(key, { value, expiresAt: Date.now() + this.ttlMs });
+  }
+}
+
+const users = new TtlLRU<string, string>(100, 60_000);
+users.put('user:42', 'Ann');
+// через 30 с: users.get('user:42') → 'Ann'
+// через 61 с: users.get('user:42') → undefined
+\`\`\`
+
+### Колбэк вытеснения: освобождаем ресурсы
+
+Иногда выброшенное значение нужно не просто забыть, а освободить: отозвать \`blob:\`-URL превью картинки, закрыть соединение, уничтожить компонент. Для этого в \`put\` добавляют колбэк:
+
+\`\`\`ts
+class LRUCache<K, V> {
+  private map = new Map<K, V>();
+  constructor(private capacity: number, private onEvict?: (key: K, value: V) => void) {}
+  // get — как в сниппете
+  put(key: K, value: V): void {
+    if (this.map.has(key)) this.map.delete(key);
+    else if (this.map.size >= this.capacity) {
+      const oldest = this.map.keys().next().value as K;
+      const evicted = this.map.get(oldest)!;
+      this.map.delete(oldest);
+      this.onEvict?.(oldest, evicted);          // дать владельцу освободить ресурс
+    }
+    this.map.set(key, value);
+  }
+}
+
+const previews = new LRUCache<string, string>(50, (_, url) => URL.revokeObjectURL(url));
+\`\`\`
+
+В Angular так делают в своей \`RouteReuseStrategy\`, которая держит отсоединённые экраны: при вытеснении вызывают \`destroyDetachedRouteHandle(handle)\` из \`@angular/router\`, иначе компонент так и не будет уничтожен.
+
+### Как выбрать политику вытеснения
+
+- **LRU** — когда недавнее использование хорошо предсказывает будущее: карточки, которые пользователь только что смотрел, страницы грида, к которым он возвращается.
+- **FIFO** — когда записи одноразовые и порядок важнее популярности; проще, но выбрасывает и горячие данные.
+- **LFU** — когда есть стабильно популярные записи (справочники, курсы валют), которые не должны вылететь из-за разовой волны новых запросов; сложнее реализовать за \`O(1)\`.
+- **TTL** — когда важна актуальность данных; обычно комбинируют с LRU: размер ограничивает LRU, свежесть — TTL.
+
+### Где это применяется на практике
+
+- **Кэш HTTP-ответов** в функциональном интерсепторе — с потолком по числу записей:
+
+\`\`\`ts
+@Injectable({ providedIn: 'root' })
+export class HttpLruCache {
+  readonly responses = new LRUCache<string, HttpResponse<unknown>>(100);
+}
+
+export const lruCacheInterceptor: HttpInterceptorFn = (req, next) => {
+  if (req.method !== 'GET') return next(req);
+  const cache = inject(HttpLruCache).responses;
+  const hit = cache.get(req.urlWithParams);
+  if (hit) return of(hit.clone());                      // ответ из кэша без запроса
+  return next(req).pipe(
+    tap(event => { if (event instanceof HttpResponse) cache.put(req.urlWithParams, event); }),
+  );
+};
+// provideHttpClient(withInterceptors([lruCacheInterceptor]))
+\`\`\`
+
+- **Мемоизация с границей**: вместо неограниченного кэша, который гарантированно течёт, — LRU на 500 последних аргументов.
+- **Страницы большого грида** при серверной пагинации: держим 10–20 последних загруженных страниц, чтобы прокрутка назад не делала запрос.
+- **Превью изображений** (\`blob:\`-URL) и миниатюры в галерее — с отзывом URL при вытеснении.
+- **Кэш вычислений дашборда**: агрегаты по фильтрам, которые пользователь переключает туда-обратно.
+- **Отсоединённые экраны в \`RouteReuseStrategy\`**: сохраняем состояние 5 последних вкладок-роутов, остальные уничтожаем.
+
+## Важные нюансы и подводные камни
 
 - **LRU — это не про свежесть.** Он вытесняет по обращениям, а не по возрасту данных. Нужна актуальность — добавляйте TTL поверх, это отдельный механизм.
-- **\`set\` без \`delete\` не двигает ключ.** В \`Map\` порядок задаётся **первой** вставкой, поэтому обновление существующего ключа обязано идти через \`delete\` + \`set\`, иначе LRU молча превратится в FIFO.
+- **\`set\` без \`delete\` не двигает ключ.** В \`Map\` порядок задаётся первой вставкой, поэтому обновление и «освежение» обязаны идти через \`delete\` + \`set\`, иначе LRU молча превратится в FIFO.
 - **Без границы кэш = утечка.** Именно это LRU и лечит детерминированно, в отличие от «почистим когда-нибудь».
-- **\`map.keys().next().value\`** типизируется как \`K | undefined\` — нужна проверка или приведение, иначе TS не пропустит.
-- **\`capacity\` меньше единицы** — вырожденный случай, проверяйте в конструкторе.
-- **Кэш держит объекты живыми**, GC их не заберёт. \`WeakMap\` тут не замена: он не даёт ни порядка, ни размера.
-- **Спросят следом:** чем LRU отличается от LFU (там вытесняется самый редко используемый, а не самый давний) и что делать с конкурентным доступом из Web Worker — нужна синхронизация.`,
+- **\`map.keys().next().value\` типизируется как \`K | undefined\`** — нужна проверка или приведение, иначе строгий TypeScript не пропустит.
+- **\`capacity\` меньше единицы** — вырожденный случай: сниппет при \`capacity = 0\` всё равно хранит один элемент. Проверяйте в конструкторе и бросайте ошибку.
+- **Кэш держит объекты живыми**, сборщик мусора их не заберёт. \`WeakMap\` тут не замена: он не даёт ни порядка, ни размера, ни перебора ключей.
+- **\`undefined\` как значение** неотличим от промаха; если это важно, возвращайте \`{ hit: boolean, value }\` или запрещайте \`undefined\`.
+- **Ключи-объекты сравниваются по ссылке.** Два одинаковых по содержимому фильтра \`{ page: 1 }\` — разные ключи. Для таких случаев строят строковый ключ.
+- **Конкурентные промахи.** Главный поток JavaScript однопоточный, поэтому сами \`get\` и \`put\` не могут «перемешаться». Реальная гонка другая: три компонента одновременно запросили один ключ, все три получили промах и отправили три запроса. Лечится кэшированием **промиса**: \`get\` → нет → кладём в кэш промис запроса, остальные получают его же (проверено: три вызова — один запрос); при ошибке промис из кэша удаляют.
+- **Web Worker не видит ваш кэш.** У воркера своя память, объекты главного потока ему недоступны, поэтому «синхронизировать доступ» не нужно — нужно решить, где кэш живёт. Общий кэш между потоками и вкладками делают через \`postMessage\`, IndexedDB или Cache API.
+- **Кэш на уровне модуля при SSR.** Переменная \`const cache = new LRUCache(...)\` вне класса живёт столько же, сколько процесс Node.js, и общая для запросов всех пользователей — данные одного пользователя могут уйти другому. Держите кэш в сервисе из DI.
+- **Вытеснение без освобождения ресурса.** Выброшенный \`blob:\`-URL продолжает держать файл в памяти, а отсоединённый компонент роута — подписки. Нужен колбэк \`onEvict\`.
+- **Загруженные lazy-чанки так не кэшируются.** Модуль, загруженный через динамический \`import()\`, остаётся в памяти до перезагрузки страницы; выгрузить его LRU-кэшем нельзя. LRU уместен для данных и экранов, а не для кода.
+
+**Плюсы:** память ограничена по определению, \`get\` и \`put\` за \`O(1)\`, на \`Map\` реализация занимает 20 строк, политика хорошо предсказывает реальное поведение пользователей.
+**Минусы:** не знает о свежести данных (нужен TTL), не учитывает частоту обращений (разовая волна запросов вымывает популярные записи), держит объекты живыми, требует колбэка для освобождения ресурсов.
+
+## Как это спрашивают на собеседовании
+
+**Главный вывод:** LRU-кэш — это хеш-таблица плюс порядок обращений: при каждом \`get\` и \`put\` запись переносится в «свежий» конец, а при переполнении удаляется запись из «старого» конца. В JS \`Map\` совмещает обе роли: \`delete\` + \`set\` переносят ключ в конец, \`keys().next().value\` даёт самый старый. Классика без \`Map\` — двусвязный список с фиктивными узлами. LRU ограничивает память, но не гарантирует свежесть — для неё нужен TTL.
+
+Типичные формулировки: «Реализуйте LRU-кэш с \`O(1)\` get и put», «Почему список двусвязный?», «Как это сделать на \`Map\`?», «Где во фронтенде нужен кэш с вытеснением?».
+
+Как вести себя во время кодинга: уточните поведение при промахе и считается ли \`put\` обращением; сначала проговорите идею «хеш-таблица для поиска + порядок для вытеснения»; напишите версию на \`Map\` и объясните, почему \`delete\` перед \`set\`; если попросят — перепишите на двусвязном списке с фиктивными узлами; прогоните последовательность из 6–8 операций и назовите сложность по времени и памяти.
+
+Что могут спросить следом:
+
+- *Чем LRU отличается от LFU?* — LRU вытесняет самый давний по обращению, LFU — самый редкий по числу обращений.
+- *Почему двусвязный, а не односвязный список?* — Чтобы вырезать узел за \`O(1)\`: нужен указатель на предыдущего соседа.
+- *Как добавить срок жизни?* — Хранить \`expiresAt\` рядом со значением и считать протухшую запись промахом в \`get\`.
+- *Что делать с одновременными запросами одного ключа?* — Кэшировать промис или Observable, а при ошибке удалять запись.
+- *Почему не \`WeakMap\`?* — У него нет ни порядка, ни размера, ни перебора: вытеснять нечем.
+
+### Ответ на 1 минуту
+
+> LRU-кэш хранит не больше \`capacity\` элементов и при переполнении вытесняет тот, к которому дольше всего не обращались, причём \`get\` и \`put\` должны быть \`O(1)\`. Классика — хеш-таблица плюс двусвязный список: таблица находит узел по ключу, список хранит порядок обращений, а двусвязность позволяет вырезать и переставлять узел за \`O(1)\`. В JS проще: \`Map\` помнит порядок вставки, поэтому на \`get\` делаю \`delete\` и \`set\`, чтобы ключ уехал в конец, а при переполнении удаляю \`keys().next().value\` — самый старый. Важно: \`set\` существующего ключа позицию не меняет, без \`delete\` получится FIFO. Память \`O(capacity)\`. На фронте это кэш HTTP-ответов, страниц грида, превью и мемоизация с границей. Нюансы: LRU не про свежесть, для неё нужен TTL, а одновременные промахи по одному ключу лечу кэшированием промиса.`,
       en: `## In short
 
 An LRU (Least Recently Used) cache is a cache **with a size ceiling** that, on overflow, throws out the item nobody has touched for the longest time. Both \`get\` and \`put\` must be \`O(1)\`.
@@ -7938,51 +11860,286 @@ class LRUCache<K, V> {
       en: 'Implement a promise pool (concurrency limiter). Why is it needed?',
     },
     answer: {
-      ru: `## Коротко
+      ru: `## В чём суть
 
-\`Promise.all(tasks)\` запускает **все** задачи разом. Promise pool — это ограничитель: одновременно выполняется не больше \`limit\` задач, остальные ждут своей очереди.
+Нужно написать \`promisePool(tasks, limit)\` — функцию, которая выполняет массив асинхронных задач так, чтобы **одновременно** работало не больше \`limit\` штук, а остальные ждали своей очереди. Результат — массив ответов в том же порядке, что и задачи. \`Promise.all(tasks)\` запускает всё разом; пул — это ограничитель конкурентности. Задача проверяет понимание того, когда промис начинает выполняться, как устроены \`async\`/\`await\` и event loop, и умение выбрать стратегию обработки ошибок.
 
-Аналогия: автомойка на три бокса. Машин сто, но моются ровно три. Освободился бокс — заезжает следующая. Общая пропускная способность та же, зато никто не сносит ворота и не глохнет во дворе.
+Аналогия: автомойка на три бокса. Машин сто, а моются одновременно ровно три. Освободился бокс — заезжает следующая из очереди. Общая работа та же, но никто не сносит ворота, и автомойка не глохнет от толпы во дворе. Пачками («ждём, пока помоются все три, и только потом запускаем следующую тройку») было бы медленнее: быстрые боксы простаивали бы, пока моется самая грязная машина.
 
-## Как это работает по шагам
+**Какую проблему решает.** Нужно загрузить 500 файлов, сделать 1 000 запросов за деталями строк или сгенерировать 200 превью. \`Promise.all\` на всём массиве отправит всё одновременно: сервер или API-шлюз начнёт отвечать **429 Too Many Requests** (превышен лимит частоты), ответы и файлы займут память одновременно, а пользователь не сможет работать с остальным приложением, пока сеть забита. Пул даёт предсказуемую нагрузку: не больше N задач в полёте, без простоя между ними.
 
-1. Почему нельзя просто \`Promise.all\` на тысяче запросов: сервер начинает отвечать **429** (rate limit), браузер всё равно упирается в лимит одновременных соединений к домену, а память и дескрипторы кончаются.
-2. Заводим массив результатов **нужной длины сразу** и общий указатель \`nextIndex\`.
-3. Запускаем ровно \`limit\` «воркеров» — обычных async-функций. Каждый в цикле: забирает себе текущий индекс, тут же увеличивает указатель, ждёт свою задачу.
-4. Освободился — сам берёт следующий индекс. Отдельная очередь и таймеры не нужны: указатель общий, а JS однопоточный, поэтому \`nextIndex++\` не разъезжается между воркерами.
-5. Результат кладём **по индексу**, а не \`push\` — тогда порядок результатов совпадает с порядком задач, независимо от того, кто финишировал первым.
-6. Ждём \`Promise.all(workers)\` — воркеров всего \`limit\` штук, это дёшево. Цикл внутри каждого сам разгребёт все \`n\` задач.
-7. **Сложность:** время \`O(n)\` задач, но пропускная способность ограничена \`limit\`; память \`O(n)\` под результаты.
+## Словарик терминов
 
-## Где это нужно во фронтенде
+- **Конкурентность (concurrency)** — сколько задач находится «в процессе» одновременно. В JS это не потоки: задачи ждут сеть или таймер, а код выполняется по очереди в одном потоке.
+- **Ограничитель конкурентности (concurrency limiter), пул (pool)** — механизм, который держит в работе не больше \`limit\` задач.
+- **Промис (Promise)** — объект-обещание результата асинхронной операции; состояния: ожидание, выполнен (fulfilled), отклонён (rejected).
+- **Фабрика задачи (task factory)** — функция \`() => Promise\`, которая **запускает** работу только при вызове. Пулу нужны именно фабрики.
+- **Воркер (worker)** — здесь: обычная \`async\`-функция с циклом «взять следующую задачу → дождаться → взять ещё». Не путать с Web Worker.
+- **\`async\` / \`await\`** — синтаксис: \`await\` приостанавливает функцию до выполнения промиса, не блокируя остальной код.
+- **Event loop (цикл событий)** — механизм, по которому однопоточный JS по очереди выполняет синхронный код, колбэки таймеров и продолжения промисов.
+- **\`Promise.all\`** — ждёт все промисы и отдаёт массив результатов; отклоняется при **первой** ошибке.
+- **\`Promise.allSettled\`** — ждёт все промисы и отдаёт массив исходов \`{ status, value | reason }\`, никогда не отклоняется.
+- **Fail-fast** — стратегия «первая ошибка — сразу сообщаем о провале всего».
+- **429 Too Many Requests** — HTTP-статус «вы шлёте запросы слишком часто», ответ на превышение rate limit.
+- **Rate limit** — ограничение сервера на число запросов в единицу времени.
+- **\`AbortController\` / \`AbortSignal\`** — встроенный механизм отмены: \`controller.abort()\` переводит \`signal\` в отменённое состояние, а \`fetch\` и другие API его слушают.
+- **Backpressure (обратное давление)** — ситуация, когда источник задач производит их быстрее, чем потребитель успевает обработать, и нужно притормозить источник.
 
-- Массовая загрузка файлов и изображений батчами.
-- Префетч множества ресурсов без штурма сети.
-- Параллельная обработка с контролем нагрузки на API.
+## Как это работает под капотом
 
-## Пример
+### Уточняющие вопросы перед кодом
+
+- Что приходит на вход: функции-фабрики или уже созданные промисы? Должны быть фабрики — иначе ограничивать нечего.
+- Нужен ли порядок результатов как у входа или как у завершения?
+- Что делать при ошибке: остановиться сразу (как \`Promise.all\`) или собрать все исходы (как \`allSettled\`)?
+- Нужна ли отмена всего пула?
+- Что делать с \`limit <= 0\` и пустым массивом задач?
+- Задачи известны заранее или поступают потоком (пагинация, загрузка по мере выбора файлов)?
+
+### Идея алгоритма простыми словами
+
+1. Заводим массив результатов сразу нужной длины и общий указатель \`nextIndex\` — номер следующей невзятой задачи.
+2. Запускаем ровно \`limit\` «воркеров» — обычных \`async\`-функций. Каждый в цикле забирает текущий индекс, тут же увеличивает указатель и ждёт свою задачу.
+3. Освободился — сам берёт следующий индекс. Отдельная очередь и таймеры не нужны: указатель общий, а JS однопоточный, поэтому \`nextIndex++\` не может «разъехаться» между воркерами — между чтением и увеличением никто не вклинится.
+4. Результат кладём **по индексу**, а не через \`push\`, поэтому порядок результатов совпадает с порядком задач, кто бы ни финишировал первым.
+5. Ждём \`Promise.all(workers)\` — воркеров всего \`limit\` штук; когда все циклы закончились, все задачи выполнены.
+
+### Шаг 0. Почему не \`Promise.all\` и почему фабрики
 
 \`\`\`ts
-// задачи — ФУНКЦИИ, а не готовые промисы
-const tasks = urls.map((u) => () => fetch(u).then((r) => r.json()));
-await promisePool(tasks, 5); // одновременно не больше пяти запросов
+// задачи A..E длительностью 300, 100, 250, 100 и 30 мс
+const started = tasks.map(t => t());     // каждый вызов СРАЗУ запускает работу
+await Promise.all(started);
+// одновременно работало 5 задач; всё закончилось за 300 мс
 \`\`\`
 
-Почему так: промис стартует **в момент создания**. Передадите массив готовых промисов — все сто запросов уже ушли в сеть, и ограничивать будет нечего. Пул умеет тормозить только фабрики.
+Промис начинает выполняться **в момент создания** — \`fetch(url)\` уже отправил запрос, когда вернул промис. Если передать в пул массив готовых промисов (\`urls.map(u => fetch(u))\`), все запросы уже ушли в сеть, и пул может только подождать их. Поэтому на вход идут фабрики: \`urls.map(u => () => fetch(u))\` — функция, которая отправит запрос, только когда её вызовут.
 
-## Что сказать на собеседовании
+### Шаг 1. Наивная версия: пачками
 
-> \`Promise.all\` запускает все промисы сразу, и на тысяче запросов это перегружает сервер до 429 и упирается в браузерный лимит соединений, поэтому нужен ограничитель конкурентности. Реализация простая: массив результатов нужной длины плюс общий указатель, запускаем ровно \`limit\` воркеров, каждый в цикле забирает следующий индекс, инкрементит указатель и ждёт свою задачу. Результаты пишем по индексу, поэтому порядок совпадает с порядком задач, а не завершения. Время O(n) задач при пропускной способности \`limit\`, память O(n). Ключевая деталь: на вход идут функции-фабрики, а не готовые промисы, иначе всё уже стартовало и ограничивать нечего. Дальше стратегия ошибок: fail-fast как \`Promise.all\` или сбор всех исходов как \`allSettled\` — второе чаще нужнее. В проде я бы взял \`p-limit\` или \`p-map\`.
+\`\`\`ts
+async function inBatches<T>(tasks: Array<() => Promise<T>>, size: number): Promise<T[]> {
+  const results: T[] = [];
+  for (let i = 0; i < tasks.length; i += size) {
+    const batch = tasks.slice(i, i + size).map(t => t());
+    results.push(...(await Promise.all(batch)));     // ждём самую медленную в пачке
+  }
+  return results;
+}
+// limit 2, задачи 300/100/250/100/30 мс → пачки [A,B] 300 мс, [C,D] 250 мс, [E] 30 мс = 580 мс
+\`\`\`
 
-## Ловушки
+Ограничение соблюдается, но каждая пачка ждёт свою самую медленную задачу: после того как \`B\` закончилась на 100-й миллисекунде, второй «бокс» простаивает 200 мс, пока моется \`A\`. Порядок результатов правильный, но время — 580 мс.
+
+### Шаг 2. Финальная версия: воркеры с общим указателем
+
+Это код из сниппета под ответом:
+
+\`\`\`ts
+async function promisePool<T>(
+  tasks: Array<() => Promise<T>>,
+  limit: number,
+): Promise<T[]> {
+  const results: T[] = new Array(tasks.length);   // место под каждый результат заранее
+  let nextIndex = 0;                              // следующая невзятая задача
+
+  async function worker(): Promise<void> {
+    while (nextIndex < tasks.length) {
+      const current = nextIndex++;      // claim a task index
+      results[current] = await tasks[current]();  // по индексу — порядок сохранится
+    }
+  }
+
+  const workers = Array.from(
+    { length: Math.min(limit, tasks.length) },    // лишние воркеры не нужны
+    () => worker(),
+  );
+  await Promise.all(workers);
+  return results;
+}
+// те же задачи, limit 2 → 400 мс, результаты ['A', 'B', 'C', 'D', 'E']
+\`\`\`
+
+Свободный воркер сразу берёт следующую задачу, поэтому «боксы» не простаивают: 400 мс вместо 580 у пачек. Важно, что \`const current = nextIndex++\` — синхронная строка: воркер забирает индекс до первого \`await\`, и другой воркер физически не может взять тот же индекс.
+
+### Трассировка
+
+Задачи \`A\`–\`E\` длительностью 300, 100, 250, 100 и 30 мс, \`limit = 2\` (вывод прогона на детерминированных часах):
+
+\`\`\`text
+t=0    воркер 1 берёт индекс 0 → start A   (активных: 1)
+t=0    воркер 2 берёт индекс 1 → start B   (активных: 2)
+t=100  done B → results[1]='B'; воркер 2 берёт индекс 2 → start C   (активных: 2)
+t=300  done A → results[0]='A'; воркер 1 берёт индекс 3 → start D   (активных: 2)
+t=350  done C → results[2]='C'; воркер 2 берёт индекс 4 → start E   (активных: 2)
+t=380  done E → results[4]='E'; nextIndex=5 → воркер 2 выходит из цикла
+t=400  done D → results[3]='D'; воркер 1 выходит из цикла
+t=400  Promise.all(workers) выполнен → ['A', 'B', 'C', 'D', 'E']
+\`\`\`
+
+Задачи завершились в порядке \`B, A, C, E, D\`, а результаты стоят в порядке входа. Одновременно работало максимум две задачи.
+
+### Сложность
+
+Каждая задача берётся ровно один раз, и на её «выдачу» уходит \`O(1)\` — увеличить счётчик и записать результат. Значит, накладные расходы пула — \`O(n)\` по числу задач. Общее время работы определяется не алгоритмом, а длительностью задач: примерно «сумма длительностей, делённая на \`limit\`», если задачи похожи. Память — \`O(n)\` под массив результатов плюс \`O(limit)\` под воркеров.
+
+### Тест-кейсы
+
+Все результаты проверены прогоном финальной версии:
+
+- Задачи 300/100/250/100/30 мс, \`limit = 2\` → 400 мс, результаты по порядку входа, одновременно не больше 2.
+- \`limit\` больше числа задач → воркеров ровно столько, сколько задач (\`Math.min\`), все стартуют сразу.
+- Пустой массив задач → сразу \`[]\`.
+- \`limit = 1\` → задачи идут строго последовательно.
+- Задача \`B\` отклоняется → \`promisePool\` отклоняется на 100-й мс с ошибкой \`B\`, **но** второй воркер продолжает выполнять \`C\`, \`D\`, \`E\` до 680-й мс — уже по одной, потому что воркер с \`B\` погиб.
+- \`limit = 0\` → ноль воркеров, \`Promise.all([])\` выполняется сразу, и возвращается массив из 5 пустых ячеек; ни одна задача не запущена. Это баг сниппета, который стоит отсечь проверкой.
+- Передали готовые промисы вместо фабрик → TypeScript не пропустит, а в JS вызов промиса как функции упадёт с \`TypeError\`; все запросы к этому моменту уже отправлены.
+
+### \`Promise.all\` и \`Promise.allSettled\`
+
+\`\`\`ts
+await Promise.all([Promise.resolve(1), Promise.reject(new Error('x')), Promise.resolve(3)]);
+// отклонён с Error('x') — результаты 1 и 3 потеряны
+
+await Promise.allSettled([Promise.resolve(1), Promise.reject(new Error('x')), Promise.resolve(3)]);
+// [{ status: 'fulfilled', value: 1 }, { status: 'rejected', reason: Error('x') }, { status: 'fulfilled', value: 3 }]
+\`\`\`
+
+\`Promise.all\` — fail-fast: первая ошибка отклоняет итоговый промис, но **не останавливает** остальные операции — они продолжают работать в фоне. \`allSettled\` ждёт всех и отдаёт каждый исход. В сниппете \`Promise.all(workers)\` наследует поведение fail-fast.
+
+### Пул со сбором всех исходов
+
+Для массовой загрузки файлов обычно нужно «загрузить всё, что получится, и показать, что не загрузилось»:
+
+\`\`\`ts
+async function promisePoolSettled<T>(
+  tasks: Array<() => Promise<T>>,
+  limit: number,
+): Promise<PromiseSettledResult<T>[]> {
+  const results: PromiseSettledResult<T>[] = new Array(tasks.length);
+  let nextIndex = 0;
+
+  async function worker(): Promise<void> {
+    while (nextIndex < tasks.length) {
+      const current = nextIndex++;
+      try {
+        results[current] = { status: 'fulfilled', value: await tasks[current]() };
+      } catch (reason) {
+        results[current] = { status: 'rejected', reason };   // ошибка не убивает воркер
+      }
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, tasks.length)) }, worker));
+  return results;
+}
+// B падает → через 400 мс: ['A', '✗ B failed', 'C', 'D', 'E'], конкурентность всё время 2
+\`\`\`
+
+\`try/catch\` внутри цикла сохраняет воркер живым, поэтому после ошибки пул продолжает работать на полной мощности. \`Math.max(1, …)\` заодно чинит случай \`limit = 0\`.
+
+### Отмена через \`AbortController\`
+
+\`\`\`ts
+async function promisePoolAbortable<T>(
+  tasks: Array<(signal: AbortSignal) => Promise<T>>,
+  limit: number,
+  signal: AbortSignal,
+): Promise<T[]> {
+  const results: T[] = new Array(tasks.length);
+  let nextIndex = 0;
+  async function worker(): Promise<void> {
+    while (nextIndex < tasks.length) {
+      signal.throwIfAborted();                          // отменили — новые задачи не берём
+      const current = nextIndex++;
+      results[current] = await tasks[current](signal); // сигнал — внутрь задачи (например, в fetch)
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, tasks.length) }, worker));
+  return results;
+}
+
+const controller = new AbortController();
+const files = await promisePoolAbortable(
+  urls.map(url => (signal: AbortSignal) => fetch(url, { signal }).then(r => r.blob())),
+  3,
+  controller.signal,
+);
+// controller.abort() → новые задачи не стартуют, текущие fetch прерываются, пул отклоняется с AbortError
+\`\`\`
+
+Две части отмены: перестать **выдавать** новые задачи (проверка в цикле) и прервать **уже запущенные** (передать \`signal\` внутрь). В проверке с отменой на 150-й мс задачи, которые сигнал игнорировали, доработали до конца, — без передачи \`signal\` в \`fetch\` запрос не прервётся.
+
+### RxJS: \`mergeMap\` с параметром конкурентности
+
+\`\`\`ts
+from(jobs).pipe(
+  mergeMap(job => this.http.post('/api/process', job), 2),   // не больше 2 запросов одновременно
+).subscribe(result => console.log(result));
+// на задачах 300/100/250/100/30 мс: значения приходят в порядке B, A, C, E, D — по завершении
+\`\`\`
+
+Второй аргумент \`mergeMap\` — тот же пул. Расписание запусков совпадает с нашим, но результаты приходят **в порядке завершения**; если нужен порядок входа, тащите индекс в результат или используйте \`concatMap\` (это \`limit = 1\`). Плюс RxJS-подхода — отмена бесплатно: отписка (\`takeUntilDestroyed\`) отменяет и очередь, и текущие HTTP-запросы.
+
+### Готовые библиотеки: \`p-limit\` и \`p-map\`
+
+\`\`\`ts
+import pMap from 'p-map';
+const names = await pMap(jobs, job => process(job), { concurrency: 2 });
+// результаты в порядке входа, ~400 мс на тех же задачах
+
+import pLimit from 'p-limit';
+const limit = pLimit(3);
+await Promise.all(urls.map(url => limit(() => fetch(url))));   // каждый вызов обёрнут в «очередь на 3 места»
+\`\`\`
+
+\`p-map\` — пул «по массиву» с опциями \`concurrency\` и \`stopOnError\` (при \`false\` все ошибки собираются в \`AggregateError\`). \`p-limit\` — ограничитель «по вызовам»: удобен, когда задачи появляются в разных местах кода. В продакшене берут их; руками пишут ради понимания или чтобы не тянуть зависимость.
+
+### Где это применяется на практике
+
+- **Массовая загрузка файлов** с прогрессом по каждому файлу: 3–4 одновременных загрузки, остальные «в очереди», ошибки собираются в список «не загрузилось».
+- **Догрузка деталей для строк грида**: 1 000 строк, у каждой нужен отдельный запрос за статусом — пул на 5 запросов вместо штурма API.
+- **Префетч** изображений и данных для следующих экранов без забивания сети, нужной текущему экрану.
+- **Пакетные операции** в админке: «применить изменение к 300 записям» — по одному запросу на запись с ограничением, чтобы не упереться в rate limit.
+- **Тяжёлые вычисления в Web Workers**: пул из \`navigator.hardwareConcurrency\` воркеров обрабатывает очередь задач.
+- **Скрипты миграции и e2e-подготовка данных** в Node.js: создать 10 000 сущностей через API, не положив тестовый стенд.
+
+## Важные нюансы и подводные камни
 
 - **Передали промисы вместо фабрик** — они уже запущены, пул бесполезен. Самая частая ошибка на собеседовании.
-- **Стратегия ошибок не выбрана.** В базовой версии первая ошибка отклоняет весь \`Promise.all(workers)\`, а остальные воркеры продолжают крутиться вхолостую. Чаще нужен сбор всех исходов, как в \`allSettled\`.
+- **Стратегия ошибок не выбрана.** В базовой версии первая ошибка отклоняет весь \`Promise.all(workers)\`, а остальные воркеры продолжают крутиться: задачи запускаются и делают побочные эффекты, хотя вызывающий уже получил ошибку. Чаще нужен сбор всех исходов, как в \`allSettled\`.
+- **Упавший воркер не возвращается.** После ошибки в базовой версии конкурентность падает на единицу: в проверке после падения \`B\` оставшиеся \`C\`, \`D\`, \`E\` шли строго по одной.
 - **\`push\` вместо записи по индексу** — порядок результатов станет порядком завершения, и сопоставить их с входом уже не получится.
-- **Отмена.** Пул не отменяет уже запущенные задачи; для этого нужен \`AbortController\`.
-- **Backpressure.** Если источник задач бесконечный (стрим, пагинация), очередь надо ограничивать, иначе память вырастет на весь массив.
+- **\`limit <= 0\`** — ноль воркеров, мгновенный «успех» и массив пустых ячеек без единой выполненной задачи. Проверяйте \`limit\` или берите \`Math.max(1, …)\`.
+- **Отмена.** Пул сам не отменяет уже запущенные задачи; для этого нужен \`AbortController\` с передачей \`signal\` внутрь задач.
+- **Backpressure.** Если источник задач бесконечный (стрим, пагинация), нельзя сначала собрать весь массив фабрик — память вырастет на весь объём. Нужна очередь с ограниченным размером, которая перестаёт принимать новые задачи, пока не освободятся места.
 - **\`limit\` больше числа задач** — лишние воркеры создавать незачем, отсюда \`Math.min\`.
-- **Спросят следом:** зачем изобретать, если есть \`p-limit\` и \`p-map\` — в проде брать их, а руками писать имеет смысл ради понимания и отсутствия зависимости.`,
+- **Браузер и так ставит запросы в очередь.** По HTTP/1.1 браузеры держат около 6 соединений на хост (у Chrome — 6), остальные запросы ждут внутри браузера. По HTTP/2 запросы мультиплексируются в одном соединении, а лимит одновременных потоков задаёт сервер (часто около 100) — узким местом становится уже сам сервер. Пул нужен ради сервера, rate limit, памяти и приоритета текущих запросов, а не ради обхода лимита соединений.
+- **Синхронный \`throw\` в фабрике** ведёт себя как отклонение: \`await\` внутри \`async\`-воркера превращает его в отклонённый промис воркера.
+- **Нет повторов.** При 429 или 503 полезно повторить задачу с задержкой (exponential backoff), а не сразу записать в ошибки; базовый пул этого не умеет.
+
+**Плюсы:** предсказуемая нагрузка на сервер и сеть, нет простоя между задачами (в отличие от пачек), порядок результатов совпадает с входом, реализация на 15 строк без зависимостей.
+**Минусы:** базовая версия — fail-fast с «живыми» воркерами после ошибки, нет отмены, повторов и прогресса из коробки, не подходит для бесконечного потока задач без доработки, легко ошибиться, передав промисы вместо фабрик.
+
+## Как это спрашивают на собеседовании
+
+**Главный вывод:** пул — это \`limit\` воркеров, которые в цикле забирают следующую задачу по общему указателю и пишут результат по индексу. Работает только с фабриками \`() => Promise\`, потому что промис стартует при создании. Главные решения — стратегия ошибок (fail-fast или \`allSettled\`) и отмена через \`AbortController\`.
+
+Типичные формулировки: «Реализуйте promise pool / ограничитель конкурентности», «Как выполнить 1 000 запросов, но не больше 5 одновременно?», «Чем это лучше \`Promise.all\` и выполнения пачками?».
+
+Как вести себя во время кодинга: сначала проговорите, что на вход нужны фабрики, и уточните порядок результатов и стратегию ошибок; можно начать с пачек и сразу показать, где они теряют время; затем напишите воркеров с общим указателем и объясните, почему \`nextIndex++\` безопасен в однопоточном JS; прогоните трассировку на 4–5 задачах разной длительности; в конце назовите поведение при ошибке, \`limit = 0\` и отмену.
+
+Что могут спросить следом:
+
+- *Зачем изобретать, если есть \`p-limit\` и \`p-map\`?* — В проде брать их; руками — ради понимания и чтобы не тянуть зависимость.
+- *Как сохранить работу при ошибке одной задачи?* — \`try/catch\` внутри цикла воркера и результаты в формате \`allSettled\`.
+- *Как сделать то же в RxJS?* — \`mergeMap(fn, limit)\`; результаты придут в порядке завершения, отмена — отпиской.
+- *Почему не пачками?* — Пачка ждёт свою самую медленную задачу, и свободные «слоты» простаивают.
+- *Как добавить повторы при 429?* — Обернуть фабрику в функцию с повторами и растущей задержкой, учитывая заголовок \`Retry-After\`, если сервер его прислал.
+
+### Ответ на 1 минуту
+
+> \`Promise.all\` запускает все задачи сразу, и на тысяче запросов это упирается в rate limit сервера с ответами 429, забивает сеть и память, поэтому нужен ограничитель конкурентности. Реализация: массив результатов нужной длины и общий указатель, запускаю ровно \`limit\` воркеров, каждый в цикле забирает следующий индекс, увеличивает указатель и ждёт свою задачу; результат пишу по индексу, поэтому порядок совпадает со входом. \`nextIndex++\` безопасен, потому что JS однопоточный. В отличие от пачек, свободный воркер сразу берёт следующую задачу и не ждёт самую медленную. Ключевая деталь — на вход идут фабрики, а не промисы, иначе всё уже стартовало. Дальше выбираю стратегию ошибок: fail-fast или сбор исходов как в \`allSettled\`, и добавляю отмену через \`AbortController\`. В проде беру \`p-limit\` или \`p-map\`, в RxJS — \`mergeMap\` с параметром конкурентности.`,
       en: `## In short
 
 \`Promise.all(tasks)\` fires **every** task at once. A promise pool is the limiter: at most \`limit\` tasks run concurrently and the rest wait their turn.
@@ -8062,58 +12219,418 @@ async function promisePool<T>(
       en: 'Implement retry with exponential backoff and jitter. When is retry dangerous?',
     },
     answer: {
-      ru: `## Коротко
+      ru: `## В чём суть
 
-\`retry\` повторяет асинхронную операцию при сбое — но не сразу и не бесконечно. **Экспоненциальный backoff** удлиняет паузу с каждой попыткой (\`base * 2^attempt\`), а **jitter** добавляет к паузе случайность.
+Нужно написать функцию \`retry(fn, options)\`, которая вызывает асинхронную операцию и при сбое повторяет её — но не сразу и не бесконечно. Пауза между попытками растёт по экспоненте (300 мс, 600, 1200…), упирается в потолок, а **jitter** добавляет к ней случайность. Вторая половина вопроса важнее первой: интервьюер проверяет, понимаете ли вы, **когда повторять нельзя вообще**.
 
-Аналогия: дозвон в занятую поддержку. Ты перезваниваешь через минуту, потом через две, потом через четыре — это backoff, ты даёшь линии разгрузиться. А jitter — это чтобы тысяча таких же звонящих не набирала номер ровно в одну и ту же секунду и не клала линию заново.
+Аналогия: вы дозваниваетесь в занятую поддержку. Перезваниваете через минуту, потом через две, потом через четыре — это backoff, вы даёте линии разгрузиться. А jitter нужен, чтобы тысяча таких же звонящих не набирала номер ровно в одну и ту же секунду и не клала линию заново. И есть звонки, которые повторять опасно: если вы диктовали оператору перевод денег и связь оборвалась, повторный звонок с той же просьбой может отправить деньги второй раз.
 
-## Как это работает по шагам
+**Какую проблему решает.** Сеть ненадёжна: мобильный интернет моргает, балансировщик перезапускает под, сервис на секунду отвечает \`503\`. Если на каждый такой сбой показывать пользователю ошибку, приложение кажется хрупким. Если повторять мгновенно и без счёта, клиенты сами добивают перегруженный сервер. Правильный retry сглаживает временные сбои и при этом не превращается в DDoS собственного бэкенда.
 
-1. Пробуем вызвать \`fn()\`. Успех — сразу возвращаем результат, дальше ничего не происходит.
-2. Ошибка — первым делом спрашиваем \`shouldRetry(err)\`: эта ошибка вообще **лечится повтором**? Если нет — пробрасываем сразу, без пауз.
-3. Проверяем счётчик попыток. Исчерпан — пробрасываем последнюю ошибку наружу.
-4. Считаем задержку: \`baseDelay * factor ** attempt\` — 300, 600, 1200, 2400 мс. Обрезаем потолком \`maxDelay\`, иначе на десятой попытке будем ждать часами.
-5. Добавляем **jitter**: в варианте full jitter реальная пауза — случайное число от нуля до расчётной. Клиенты «размазываются» по времени.
-6. Ждём, увеличиваем счётчик, идём на новый круг.
-7. **Зачем backoff:** перегруженному сервису нужно время подняться. Мгновенный повтор — это добивание лежачего.
-8. **Зачем jitter:** без него все клиенты, упавшие в одну секунду, синхронно ретраят в одну секунду и снова валят сервис — это **thundering herd**, эффект стада, и он идёт волнами.
-9. **Сложность:** до \`O(maxRetries)\` попыток, память \`O(1)\`.
+## Словарик терминов
 
-## Когда retry ОПАСЕН
+- **Retry (повтор)** — повторный вызов операции после ошибки в надежде, что сбой был временным.
+- **Exponential backoff (экспоненциальная задержка)** — пауза перед повтором растёт в геометрической прогрессии: \`baseDelay * factor ** attempt\`, то есть 300, 600, 1200, 2400 мс при базе 300 и множителе 2.
+- **Потолок задержки (\`maxDelay\`, cap)** — максимальная пауза; без неё экспонента быстро улетает в минуты.
+- **Jitter (дрожание)** — случайная добавка к паузе. В варианте **full jitter** реальная пауза — случайное число от 0 до расчётной.
+- **Thundering herd (эффект стада)** — тысячи клиентов, упавших одновременно, одновременно же и ретраят, создавая волны нагрузки.
+- **Retry storm (шторм повторов)** — при системном сбое массовые повторы умножают нагрузку и не дают сервису подняться.
+- **Идемпотентность (idempotency)** — свойство операции давать тот же результат при повторе: дважды выполненный \`PUT /user/1 {name: 'A'}\` оставляет то же состояние, а дважды выполненный \`POST /payment\` списывает деньги дважды.
+- **Idempotency-Key** — уникальный ключ операции в заголовке запроса; сервер по нему узнаёт повтор и не выполняет операцию второй раз.
+- **Circuit breaker (автоматический выключатель)** — обёртка, которая после серии ошибок на время перестаёт вызывать сервис и сразу отвечает отказом.
+- **\`AbortController\` / \`AbortSignal\`** — стандартный браузерный механизм отмены: контроллер «дёргает рубильник», сигнал сообщает об этом всем подписанным операциям.
+- **HTTP 408 / 429 / 5xx** — коды «таймаут запроса», «слишком много запросов» и «ошибка сервера»; именно их обычно имеет смысл повторять.
+- **\`Retry-After\`** — заголовок ответа (часто вместе с 429 или 503), в котором сервер сам говорит, через сколько можно повторить.
+- **Фабрика (factory)** — функция, которая при каждом вызове создаёт новую операцию: \`() => fetch(url)\`, а не уже созданный промис.
+- **O-нотация (Big-O)** — способ сказать, как растёт стоимость алгоритма с ростом входа: \`O(1)\` — не растёт, \`O(n)\` — растёт пропорционально.
 
-- **Не идемпотентные операции.** Повтор \`POST /payment\` может **списать деньги дважды**: запрос дошёл, а ответ потерялся. Безопасно ретраить только идемпотентное — GET, PUT, либо POST с idempotency-key.
-- **Ошибки 4xx, кроме 429 и 408.** \`400\`, \`401\`, \`403\`, \`404\` от повтора не исправятся: это не «не повезло», это «вы неправы». Ретраить стоит сетевые сбои, 5xx, 429 и 408.
-- **Retry storm.** При системном сбое массовые ретраи усиливают перегрузку и мешают сервису встать. Нужен **circuit breaker**: после череды ошибок он вообще отключает попытки на время.
-- **Нет верхней границы** — получается бесконечный цикл, который сам себя не остановит.
+## Как это работает под капотом
 
-## Пример
+### Что уточнить у интервьюера до кода
 
-\`\`\`ts
-await retry(() => fetch('/api/report').then((r) => r.json()), {
-  retries: 3,
-  shouldRetry: (e) => isNetworkError(e) || is5xx(e) || is429(e),
-});
+- Что считается «попыткой»: \`retries: 3\` — это 3 вызова всего или 1 вызов плюс 3 повтора? (В эталонном коде — второе, то есть до 4 вызовов.)
+- Какие ошибки повторять: все подряд или только сетевые, 5xx, 408 и 429?
+- Нужна ли отмена и ограничение по общему времени, а не только по числу попыток?
+- Операция идемпотентная? Если это \`POST\` без ключа идемпотентности, правильный ответ — «не ретраить».
+- Нужен ли учёт \`Retry-After\` от сервера?
 
-// а это ретраить нельзя без idempotency-key:
-// await retry(() => post('/api/payment', body));
+### Идея алгоритма простыми словами
+
+1. Вызываем \`fn()\`. Если промис выполнился успешно — сразу возвращаем результат, больше ничего не происходит.
+2. Если упал — сначала спрашиваем \`shouldRetry(err)\`: эта ошибка вообще **лечится повтором**? Если нет, пробрасываем её сразу, без пауз.
+3. Проверяем счётчик: если повторы исчерпаны, пробрасываем последнюю ошибку наружу.
+4. Считаем паузу \`baseDelay * factor ** attempt\` и обрезаем её \`maxDelay\`, поэтому даже на двадцатой попытке ожидание не превысит потолок.
+5. Умножаем паузу на \`Math.random()\` — это full jitter, поэтому клиенты, упавшие в одну и ту же миллисекунду, повторят в разные моменты.
+6. Ждём, увеличиваем счётчик и идём на новый круг.
+
+Зачем backoff: перегруженному сервису нужно время подняться, мгновенный повтор — это добивание лежачего. Зачем jitter: без него все клиенты, упавшие в одну секунду, синхронно повторят в одну и ту же секунду и уронят сервис снова.
+
+### Версия 1. Наивный повтор без паузы
+
+\`\`\`js
+async function retryNaive(fn, retries = 3) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (attempt >= retries) throw err;
+    }
+  }
+}
+
+// fn падает 2 раза, потом отвечает 'ok'
+await retryNaive(fn); // 'ok'
+// call #1 at ~0 ms
+// call #2 at ~0 ms
+// call #3 at ~0 ms
 \`\`\`
 
-Почему так: \`shouldRetry\` — не украшение, а предохранитель. Без него ретраятся и \`401\`, и \`404\`, то есть мы просто утраиваем бесполезную нагрузку.
+Работает, но все три вызова происходят в одну и ту же миллисекунду. Если сервер лёг от перегрузки, мы просто утроили ему нагрузку в самый неудачный момент.
 
-## Что сказать на собеседовании
+### Версия 2. Фиксированная пауза
 
-> \`retry\` повторяет операцию при сбое ограниченное число раз, с экспоненциальным backoff: пауза растёт как база на два в степени попытки и обрезается потолком. Backoff даёт перегруженному сервису время восстановиться, а jitter — случайная добавка к паузе — лечит thundering herd: без него клиенты, упавшие в одну секунду, ретраят синхронно и кладут сервис повторно. Сложность — до O(maxRetries) попыток, память O(1). Но ретрай опасен: не идемпотентные операции — повтор \`POST /payment\` может списать деньги дважды, поэтому ретраим только GET, PUT или POST с idempotency-key; 4xx кроме 429 и 408 повтором не лечатся; retry storm при системном сбое, от него спасает circuit breaker. Ограничивать надо не только число попыток, но и общее время через \`AbortController\`. В RxJS есть \`retry\` с count и delay.
+\`\`\`js
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-## Ловушки
+async function retryFixed(fn, retries = 3, delay = 300) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (attempt >= retries) throw err;
+      await sleep(delay);
+    }
+  }
+}
+// call #1 at ~0 ms
+// call #2 at ~300 ms
+// call #3 at ~600 ms
+\`\`\`
 
-- **Ретрай не идемпотентного запроса.** Классика провала: платёж, отправка письма, создание заказа. Ответ потерялся ≠ операция не выполнилась.
-- **Ретрай любых ошибок подряд.** \`401\` и \`404\` повтор не исправит, зато нагрузка утроится. Всегда разделяйте retryable и non-retryable.
-- **Backoff без потолка.** \`2 ** 10\` — это уже минуты ожидания; нужен \`maxDelay\`.
-- **Backoff без jitter.** Стадо клиентов ретраит синхронными волнами и не даёт сервису подняться.
-- **Ограничен только счётчик, но не время.** Три попытки по 30 секунд — это полторы минуты, пока пользователь смотрит на спиннер. Ограничивайте общее время через \`AbortController\` или таймаут.
-- **Ретрай поверх ретрая.** Клиент, gateway и сервис ретраят каждый по три раза — на бэкенде это двадцать семь запросов. Решайте, на каком слое ретрай живёт.
-- **Спросят следом:** что такое circuit breaker и как он сочетается с retry (открывается после череды ошибок и режет попытки на уровне сервиса), и как это делается в RxJS — \`retry({ count, delay })\` или \`retryWhen\` с \`timer\` и jitter.`,
+Уже лучше: сервер получает передышку. Но 300 мс может не хватить на перезапуск, а частота повторов не снижается, сколько бы сервис ни лежал.
+
+### Версия 3. Экспонента с потолком
+
+\`\`\`js
+async function retryExpo(fn, { retries = 3, baseDelay = 300, factor = 2, maxDelay = 5000 } = {}) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (attempt >= retries) throw err;
+      const delay = Math.min(baseDelay * factor ** attempt, maxDelay);
+      await sleep(delay);
+    }
+  }
+}
+// fn падает всегда:
+// call #1 at ~0 ms
+// call #2 at ~300 ms
+// call #3 at ~900 ms   (300 + 600)
+// call #4 at ~2100 ms  (300 + 600 + 1200)
+// → throw 'fail 4'
+\`\`\`
+
+Каждая следующая пауза вдвое длиннее, и чем дольше лежит сервис, тем реже мы его беспокоим. Потолок обязателен: без него на попытке с индексом 10 пауза была бы \`300 * 2 ** 10 = 307 200\` мс — больше пяти минут.
+
+### Версия 4. Jitter и \`shouldRetry\` — финальный код
+
+Это и есть эталонное решение (оно же в \`codeSnippet\` под ответом):
+
+\`\`\`ts
+// Time: up to O(maxRetries), Space: O(1)
+async function retry<T>(
+  fn: () => Promise<T>,
+  { retries = 3, baseDelay = 300, factor = 2, maxDelay = 5000,
+    shouldRetry = () => true }: {
+    retries?: number; baseDelay?: number; factor?: number;
+    maxDelay?: number; shouldRetry?: (err: unknown) => boolean;
+  } = {},
+): Promise<T> {
+  let attempt = 0;
+  while (true) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (attempt >= retries || !shouldRetry(err)) throw err;
+      const expo = Math.min(baseDelay * factor ** attempt, maxDelay);
+      const jitter = Math.random() * expo;           // full jitter
+      await new Promise(res => setTimeout(res, jitter));
+      attempt++;
+    }
+  }
+}
+\`\`\`
+
+Две добавки по сравнению с версией 3. \`shouldRetry\` — предохранитель: ошибки вроде \`404\` пробрасываются мгновенно. \`Math.random() * expo\` размазывает повторы разных клиентов по интервалу от 0 до \`expo\`.
+
+Обратите внимание на \`return await fn()\` внутри \`try\`. Без \`await\` отклонённый промис ушёл бы наружу мимо \`catch\`, и повтора не случилось бы вовсе.
+
+### Трассировка на конкретном входе
+
+Вход: \`fn\` падает два раза, на третий возвращает \`'ok'\`; опции по умолчанию; для воспроизводимости \`Math.random\` подменён на \`() => 0.5\`.
+
+\`\`\`text
+attempt = 0: call #1 → Error('fail 1')
+  0 >= 3? нет; shouldRetry → true
+  expo   = min(300 * 2^0, 5000) = 300
+  jitter = 0.5 * 300            = 150 → ждём 150 мс; attempt = 1
+attempt = 1: call #2 → Error('fail 2')
+  expo   = min(300 * 2^1, 5000) = 600
+  jitter = 0.5 * 600            = 300 → ждём 300 мс; attempt = 2
+attempt = 2: call #3 → 'ok' → return 'ok'
+Итого: 3 вызова, 450 мс ожидания
+\`\`\`
+
+Если \`fn\` падает всегда, паузы будут 150, 300, 600 мс, а на четвёртом вызове \`attempt\` равен 3, условие \`attempt >= retries\` срабатывает, и наружу уходит ошибка последнего вызова \`'fail 4'\`.
+
+Без jitter (то есть с верхней границей случайности) паузы при \`retries: 7\` выглядят так: 300, 600, 1200, 2400, 4800, 5000, 5000 — с шестой паузы включается потолок.
+
+### Сложность простыми словами
+
+- **Время:** \`O(retries)\` вызовов \`fn\` — в худшем случае \`retries + 1\`. Плюс суммарное ожидание, которое без потолка росло бы экспоненциально, а с потолком — не больше \`retries * maxDelay\`.
+- **Память:** \`O(1)\` — храним только счётчик и текущую паузу, сколько бы попыток ни было. Цикл \`while\` вместо рекурсии не наращивает стек вызовов.
+
+### Тест-кейсы
+
+\`\`\`js
+// flaky(n) создаёт fn, которая падает n раз с Error('fail <номер вызова>'), потом отвечает 'ok'
+function flaky(failTimes, mkErr = (n) => new Error('fail ' + n)) {
+  let calls = 0;
+  return async () => { if (++calls <= failTimes) throw mkErr(calls); return 'ok'; };
+}
+const err404 = Object.assign(new Error('404'), { status: 404 });
+
+Math.random = () => 0.5; // детерминированные паузы
+await retry(flaky(0));                        // 'ok', 1 вызов, пауз нет
+await retry(flaky(2));                        // 'ok', 3 вызова, паузы [150, 300]
+await retry(flaky(Infinity));                 // throw 'fail 4', 4 вызова, паузы [150, 300, 600]
+await retry(flaky(Infinity), { retries: 0 }); // throw 'fail 1', 1 вызов, пауз нет
+await retry(flaky(Infinity, () => err404), {
+  shouldRetry: (e) => e.status >= 500,
+});                                           // throw '404', 1 вызов, пауз нет
+
+Math.random = () => 0;
+await retry(flaky(2));                        // 'ok', 3 вызова, паузы [0, 0] — full jitter может дать ноль
+\`\`\`
+
+### \`setTimeout\` и промис-обёртка \`sleep\`
+
+\`setTimeout(callback, ms)\` ставит колбэк в очередь таймеров и возвращает управление сразу. Чтобы «подождать» внутри \`async\`-функции, его заворачивают в промис: \`new Promise(res => setTimeout(res, ms))\` выполнится через \`ms\` миллисекунд, а \`await\` приостановит функцию до этого момента, не блокируя поток.
+
+\`\`\`js
+const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
+console.log('a'); await sleep(300); console.log('b');
+// a
+// (через ~300 мс) b
+\`\`\`
+
+Дробные значения вроде \`150.37\` допустимы. Таймер — это минимальная, а не точная задержка: если главный поток занят, колбэк выполнится позже.
+
+### \`Math.random\` и разновидности jitter
+
+\`Math.random()\` возвращает число от 0 включительно до 1 не включительно. Умножение на \`expo\` даёт случайную паузу в \`[0, expo)\`, в среднем \`expo / 2\`.
+
+- **Full jitter** — \`random(0, expo)\`; так сделано в эталоне. Лучше всех разносит клиентов, но может дать почти нулевую паузу.
+- **Equal jitter** — \`expo / 2 + random(0, expo / 2)\`; гарантирует минимум в половину расчётной паузы.
+- **Decorrelated jitter** — следующая пауза случайна между базой и утроенной предыдущей, с потолком: \`min(cap, random(base, prev * 3))\`.
+
+Все три варианта описаны в известной статье AWS Architecture Blog «Exponential Backoff And Jitter»; на собеседовании достаточно назвать full jitter и объяснить, зачем он.
+
+### \`AbortController\`: ограничение по общему времени
+
+Ограничить только число попыток мало: три попытки по 30 секунд таймаута — это полторы минуты спиннера. Сигнал отмены позволяет прервать и текущий запрос, и паузу между попытками. \`AbortSignal.timeout(ms)\` создаёт сигнал, который сработает сам через \`ms\` миллисекунд.
+
+\`\`\`ts
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(signal.reason);
+    const id = setTimeout(() => { signal?.removeEventListener('abort', onAbort); resolve(); }, ms);
+    function onAbort() { clearTimeout(id); reject(signal!.reason); }
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+async function retryAbortable<T>(
+  fn: (signal?: AbortSignal) => Promise<T>,
+  { retries = 3, baseDelay = 300, factor = 2, maxDelay = 5000,
+    shouldRetry = (_err: unknown) => true, signal }: {
+    retries?: number; baseDelay?: number; factor?: number; maxDelay?: number;
+    shouldRetry?: (err: unknown) => boolean; signal?: AbortSignal;
+  } = {},
+): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    signal?.throwIfAborted();                 // отменили — не начинаем новую попытку
+    try {
+      return await fn(signal);                // сигнал уходит и в сам fetch
+    } catch (err) {
+      if (attempt >= retries || !shouldRetry(err) || signal?.aborted) throw err;
+      const expo = Math.min(baseDelay * factor ** attempt, maxDelay);
+      await sleep(Math.random() * expo, signal);
+    }
+  }
+}
+
+// fn падает всегда, паузы без jitter: 300, 600, 1200…
+await retryAbortable(alwaysFails, { retries: 10, signal: AbortSignal.timeout(1000) });
+// call #1 at ~0 ms, call #2 at ~300 ms, call #3 at ~900 ms
+// на ~1000 мс пауза прерывается → TimeoutError
+\`\`\`
+
+Отмена вручную (\`controller.abort()\`, например при уходе со страницы) отклоняет промис ошибкой с именем \`AbortError\`.
+
+### Idempotency-Key: как безопасно повторять \`POST\`
+
+Идемпотентны по стандарту HTTP методы \`GET\`, \`HEAD\`, \`OPTIONS\`, \`PUT\` и \`DELETE\`: повтор не меняет итоговое состояние. \`POST\` и \`PATCH\` — нет. Опасный сценарий: запрос оплаты дошёл, сервер списал деньги, а ответ потерялся по дороге. Клиент видит сетевую ошибку и повторяет — второе списание.
+
+Решение — клиент генерирует уникальный ключ **один раз на логическую операцию** и отправляет его в каждом повторе:
+
+\`\`\`ts
+const key = crypto.randomUUID();           // один ключ на одну оплату, не на попытку
+await retry(() => fetch('/api/payment', {
+  method: 'POST',
+  headers: { 'Idempotency-Key': key, 'Content-Type': 'application/json' },
+  body: JSON.stringify(payment),
+}));
+// сервер видит тот же key → возвращает сохранённый результат, не списывая повторно
+\`\`\`
+
+Работает это только если сервер поддерживает такой заголовок; без поддержки на бэкенде ключ ничего не даёт.
+
+### Circuit breaker: защита от шторма повторов
+
+Retry решает проблему одного запроса, а circuit breaker — проблему системы. У него три состояния: **closed** (запросы идут), **open** (после N ошибок подряд запросы сразу отклоняются, сеть не трогаем) и **half-open** (после паузы пропускаем пробный запрос: успех — снова closed, ошибка — снова open).
+
+\`\`\`js
+function circuitBreaker(fn, { threshold = 3, cooldown = 10_000, now = Date.now } = {}) {
+  let failures = 0;
+  let openedAt = 0;
+  return async (...args) => {
+    if (failures >= threshold && now() - openedAt < cooldown) {
+      throw new Error('circuit open');       // быстрый отказ
+    }
+    try {
+      const result = await fn(...args);      // closed или half-open
+      failures = 0;
+      return result;
+    } catch (err) {
+      failures++;
+      if (failures >= threshold) openedAt = now();
+      throw err;
+    }
+  };
+}
+// сервер лежит, 5 вызовов подряд:
+// call 1: 503, call 2: 503, call 3: 503
+// call 4: circuit open, call 5: circuit open   ← сервер получил только 3 запроса
+// через 10 с сервер поднялся: пробный вызов → 'ok', цепь снова замкнута
+\`\`\`
+
+Обычно их комбинируют: retry снаружи, breaker внутри. Когда breaker открыт, \`shouldRetry\` должен считать ошибку «circuit open» неретраемой.
+
+### То же в RxJS: \`retry({ count, delay })\`
+
+В Angular HTTP-запросы — это Observable, и для них есть готовый оператор. \`retry\` переподписывается на источник после ошибки; \`count\` — сколько раз повторять, \`delay\` — функция, которая получает ошибку и номер повтора (\`retryCount\` начинается с 1) и возвращает поток-триггер. Эмиссия триггера означает «повторяй», ошибка в нём — «сдавайся».
+
+\`\`\`ts
+import { defer, of, throwError, timer, retry } from 'rxjs';
+
+req$.pipe(
+  retry({
+    count: 3,
+    delay: (err, retryCount) => {
+      if (!isRetryable(err)) return throwError(() => err);    // 404 → сразу ошибка
+      const expo = Math.min(300 * 2 ** (retryCount - 1), 5000);
+      return timer(Math.random() * expo);                     // backoff + jitter
+    },
+  }),
+).subscribe(console.log);
+// Math.random = () => 0.5, сервер отвечает 503 дважды:
+// request #1 at ~0 ms
+// request #2 at ~150 ms
+// request #3 at ~450 ms
+// data
+\`\`\`
+
+\`timer(ms)\` — поток, который выдаёт одно значение через \`ms\` миллисекунд. Старый оператор \`retryWhen\` в RxJS 7 помечен устаревшим: документация предлагает вместо него опцию \`delay\` у \`retry\`.
+
+### Angular: функциональный интерсептор с повторами
+
+\`\`\`ts
+import { HttpErrorResponse, HttpInterceptorFn } from '@angular/common/http';
+import { retry, throwError, timer } from 'rxjs';
+
+const RETRYABLE = new Set([0, 408, 429, 500, 502, 503, 504]); // 0 — сеть недоступна
+const IDEMPOTENT = new Set(['GET', 'HEAD', 'OPTIONS', 'PUT', 'DELETE']);
+
+export const retryInterceptor: HttpInterceptorFn = (req, next) => {
+  const canRetry = IDEMPOTENT.has(req.method) || req.headers.has('Idempotency-Key');
+  if (!canRetry) return next(req);
+
+  return next(req).pipe(
+    retry({
+      count: 3,
+      delay: (err: unknown, retryCount: number) => {
+        if (!(err instanceof HttpErrorResponse) || !RETRYABLE.has(err.status)) {
+          return throwError(() => err);
+        }
+        return timer(Math.random() * Math.min(300 * 2 ** (retryCount - 1), 5000));
+      },
+    }),
+  );
+};
+// подключение: provideHttpClient(withInterceptors([retryInterceptor]))
+\`\`\`
+
+\`HttpErrorResponse.status === 0\` в Angular означает, что ответа от сервера не было вовсе: сеть, CORS, обрыв соединения.
+
+### Где это применяется на практике
+
+- **HTTP-слой enterprise-приложения**: один интерсептор с повторами для \`GET\`-запросов справочников, грида и дашбордов, чтобы моргание сети не показывало пользователю ошибку.
+- **Загрузка больших файлов по частям**: упавший чанк повторяется с backoff, а не вся загрузка заново.
+- **Переподключение WebSocket или SSE** после обрыва: экспоненциальная пауза с jitter, чтобы после рестарта сервера тысячи вкладок не подключились в одну секунду.
+- **Обработка 429 от внешних API** (карты, платёжные шлюзы): ждём \`Retry-After\` или backoff.
+- **Платежи и создание заказов**: retry только с \`Idempotency-Key\`, иначе — честная ошибка и кнопка «Повторить» для пользователя.
+
+## Важные нюансы и подводные камни
+
+- **Повтор неидемпотентного запроса.** Классика провала: оплата, отправка письма, создание заказа. «Ответ потерялся» не значит «операция не выполнилась». Повторяйте только \`GET\`, \`PUT\`, \`DELETE\` или \`POST\` с ключом идемпотентности.
+- **Повтор любых ошибок подряд.** \`400\`, \`401\`, \`403\`, \`404\` повтором не лечатся: это не «не повезло», а «вы неправы». Нагрузка утроится, результат тот же. Повторяют сетевые сбои, 5xx, 408 и 429.
+- **\`fetch\` не падает на 5xx.** Промис \`fetch\` отклоняется только при сетевой ошибке (\`TypeError\`), а ответ \`503\` приходит как успешный с \`res.ok === false\`. Поэтому \`retry(() => fetch(url).then(r => r.json()))\` вообще не повторит запрос при ошибке сервера — нужно самим бросить ошибку: \`if (!res.ok) throw new HttpError(res.status)\`.
+- **Передали промис вместо фабрики.** \`retry(() => p)\`, где \`p\` создан заранее, возвращает один и тот же уже отклонённый промис: операция выполнилась один раз, а \`retry\` честно отсидел все паузы и выдал ту же ошибку. Функция должна **создавать** новый запрос при каждом вызове.
+- **\`return fn()\` без \`await\` внутри \`try\`.** Отклонённый промис уйдёт наружу мимо \`catch\`, повторов не будет.
+- **Backoff без потолка.** На попытке с индексом 10 пауза уже 307 200 мс, больше пяти минут; к пятнадцатой — почти три часа. Нужен \`maxDelay\`.
+- **Backoff без jitter.** Стадо клиентов повторяет синхронными волнами и не даёт сервису подняться.
+- **Ограничено число попыток, но не время.** Три попытки по 30 секунд — полторы минуты спиннера. Ограничивайте общее время через \`AbortSignal.timeout\` или \`AbortController\`.
+- **Ретрай поверх ретрая.** Если клиент, gateway и сервис делают каждый до 3 попыток, нижний сервис получит до \`3 * 3 * 3 = 27\` запросов на одно действие пользователя; при \`retries: 3\` на каждом слое (до 4 вызовов) — до 64. Решите, на каком слое живёт повтор.
+- **Теряются промежуточные ошибки.** Эталон пробрасывает только последнюю. Если для диагностики нужны все, их собирают в массив и бросают \`AggregateError\`.
+- **Игнорируется \`Retry-After\`.** Если сервер сказал «повтори через 30 секунд», своя экспонента с паузой 300 мс — это неуважение к лимитам и быстрый бан по 429.
+- **Retry storm при системном сбое.** Массовые повторы умножают нагрузку именно тогда, когда сервису хуже всего. От этого спасает circuit breaker.
+
+**Плюсы:** приложение переживает временные сбои сети и сервера без участия пользователя; backoff и jitter бережно относятся к бэкенду; логика вынесена в одну переиспользуемую функцию или интерсептор.
+**Минусы:** при неправильной настройке усиливает аварии и дублирует неидемпотентные операции; увеличивает время до показа ошибки; скрывает реальные проблемы, если повторы не логируются.
+
+## Как это спрашивают на собеседовании
+
+**Главный вывод:** retry — это повтор с экспоненциальной паузой, потолком и jitter, но главное — фильтр: повторяем только временные ошибки и только идемпотентные операции, ограничиваем и попытки, и общее время.
+
+Типичные формулировки: «Напишите retry с exponential backoff», «Зачем нужен jitter?», «Можно ли ретраить POST-запрос?», «Как сделать повтор HTTP-запросов в Angular?».
+
+Что могут спросить следом:
+
+- *Что такое circuit breaker и как он сочетается с retry?* — После серии ошибок он на время перестаёт пускать запросы к сервису; retry снаружи, breaker внутри, а «circuit open» не ретраится.
+- *Как это сделать в RxJS?* — \`retry({ count, delay: (err, n) => timer(...) })\`; \`retryWhen\` устарел.
+- *Почему \`retries: 3\` даёт 4 вызова?* — Первый вызов плюс три повтора; это стоит проговорить при уточнении задачи.
+- *Как учесть \`Retry-After\`?* — Если заголовок есть, брать паузу из него вместо экспоненты.
+- *Где нельзя ретраить на клиенте?* — Платежи и создание сущностей без \`Idempotency-Key\`, ошибки 4xx кроме 408 и 429.
+
+### Как вести себя во время кодинга
+
+Сначала проговорите уточнения: семантика \`retries\`, какие ошибки повторять, нужна ли отмена. Затем напишите версию с фиксированной паузой и скажите вслух «сейчас добавлю экспоненту и потолок», потом jitter и \`shouldRetry\`. Закончите кодом и сразу переходите ко второй части вопроса — опасностям. Интервьюеры ценят, когда кандидат сам говорит «а этот \`POST\` я бы без ключа идемпотентности не повторял».
+
+### Ответ на 1 минуту
+
+> Я пишу \`retry\` как цикл: вызываю фабрику \`fn\`, при успехе возвращаю результат, при ошибке сначала спрашиваю \`shouldRetry\` — лечится ли эта ошибка повтором, потом проверяю счётчик. Если можно повторять, считаю паузу \`baseDelay * factor ** attempt\`, обрезаю её потолком \`maxDelay\` и умножаю на \`Math.random()\` — это full jitter. Backoff даёт сервису время подняться, а jitter разносит клиентов во времени, иначе все, кто упал в одну секунду, повторят синхронно и снова уронят сервер. Время — до \`retries + 1\` вызовов, память O(1). Опасен retry в трёх случаях: неидемпотентные операции вроде оплаты — повторяю их только с \`Idempotency-Key\`; ошибки 4xx, кроме 408 и 429, повтор не исправит; и шторм повторов при большой аварии, от которого спасает circuit breaker. Ещё ограничиваю общее время через \`AbortSignal\`, а в Angular делаю то же интерсептором с \`retry({ count, delay })\` из RxJS.`,
       en: `## In short
 
 \`retry\` repeats an async operation after a failure — but not immediately and not forever. **Exponential backoff** stretches the pause with each attempt (\`base * 2^attempt\`), and **jitter** sprinkles randomness on top of that pause.
@@ -8200,48 +12717,316 @@ async function retry<T>(
       en: 'Implement flatten of a nested array to a given depth (and iteratively for deep arrays).',
     },
     answer: {
-      ru: `## Коротко
+      ru: `## В чём суть
 
-Задача — превратить \`[1, [2, [3, [4]]]]\` в плоский список. Параметр \`depth\` говорит, **на сколько уровней вскрывать**, ровно как нативный \`Array.prototype.flat(depth)\`.
+Нужно написать \`flatten(arr, depth)\`, которая превращает \`[1, [2, [3, [4]]]]\` в плоский список, вскрывая ровно \`depth\` уровней вложенности — так же, как нативный \`Array.prototype.flat(depth)\`. Вторая часть задачи — итеративная версия, которая не падает на очень глубоких массивах. Проверяют три вещи: умеете ли вы рекурсию, понимаете ли, где у неё предел (стек вызовов), и умеете ли заменить её явным стеком.
 
-Аналогия: коробки внутри коробок. \`depth = 1\` — вскрыл только внешние коробки и выложил содержимое на стол; что внутри вложенных коробок — так и осталось в коробках. \`Infinity\` — вскрываем, пока есть что вскрывать.
+Аналогия: коробки внутри коробок. \`depth = 1\` — вскрыли только внешние коробки и выложили содержимое на стол; то, что лежит во вложенных коробках, так и осталось в коробках. \`depth = Infinity\` — вскрываем, пока есть что вскрывать. Рекурсивная версия — это когда вы, открыв коробку, «ныряете» в неё и запоминаете в голове, где остановились снаружи; у головы есть предел. Итеративная — когда вы складываете неоткрытые коробки в стопку на полу и берёте сверху по одной: стопка может быть сколь угодно высокой.
 
-## Как это работает по шагам
+**Какую проблему решает.** Вложенные данные встречаются постоянно: дерево меню и категорий, ответ API с группами внутри групп, строки грида с дочерними строками, ошибки валидации формы по вложенным \`FormGroup\`. Чтобы отрисовать такой список плоско, посчитать элементы или найти нужный, его разворачивают. Если делать это наивно, получаем либо падение на глубоких данных, либо квадратичное время на больших.
 
-1. **Рекурсивный вариант.** Идём по элементам массива. Элемент — не массив? Кладём в результат как есть.
-2. Элемент — массив **и \`depth > 0\`**? Вызываем себя же для него с \`depth - 1\` и подмешиваем результат. Уменьшение глубины — единственное, что мешает разворачивать бесконечно.
-3. \`depth\` дошла до нуля — вложенный массив кладётся **целиком, как значение**. Это не баг, это и есть смысл параметра.
-4. **Сложность:** время \`O(n)\`, где n — общее число элементов вместе с вложенными; память \`O(n)\` под результат плюс \`O(d)\` на стек вызовов, где d — глубина вложенности.
-5. **Проблема глубоких структур.** Каждый уровень вложенности — это кадр в call stack. На тысячах уровней получаем **stack overflow**, и обычный try/catch тут не спасёт.
-6. **Итеративный вариант** обходит это: заводим собственный массив-стек. В цикле \`pop\` последний элемент; массив — \`push\` его содержимое обратно в стек; не массив — в результат.
-7. Стек живёт в куче, а не в call stack, поэтому глубина ограничена только памятью. В конце \`reverse()\` — из-за \`pop\` элементы собрались в обратном порядке.
-8. **Почему \`push\` + \`reverse\`, а не \`unshift\`:** \`unshift\` сдвигает весь массив, это \`O(n)\` на каждый элемент, итого \`O(n²)\`. \`push\` — \`O(1)\`, а один \`reverse\` в конце — \`O(n)\`.
+## Словарик терминов
 
-## Пример
+- **Flatten (уплощение)** — превращение вложенного массива в одноуровневый.
+- **Глубина (\`depth\`)** — сколько уровней вложенности вскрывать. \`1\` — только первый, \`Infinity\` — все.
+- **Рекурсия** — функция вызывает сама себя для вложенной части задачи; нужен базовый случай, на котором вызовы прекращаются.
+- **Стек вызовов (call stack)** — внутренняя память движка, где лежит по «кадру» на каждый незавершённый вызов функции. Размер ограничен.
+- **Переполнение стека (stack overflow)** — кадров стало больше, чем помещается; в JS это ошибка \`RangeError: Maximum call stack size exceeded\`.
+- **Явный стек (explicit stack)** — обычный массив, в который мы сами кладём (\`push\`) и из которого достаём (\`pop\`) ещё не обработанные элементы. Он живёт в куче, а не в стеке вызовов.
+- **Куча (heap)** — общая память для объектов и массивов; она намного больше стека вызовов.
+- **Spread (\`...\`)** — синтаксис «разложить массив на отдельные аргументы»: \`push(...[1, 2])\` равно \`push(1, 2)\`.
+- **Разреженный массив (sparse array)** — массив с «дырками», например \`[1, , 3]\`: индекс 1 вообще не существует.
+- **O-нотация (Big-O)** — как растёт стоимость с ростом входа: \`O(n)\` — пропорционально числу элементов, \`O(n²)\` — пропорционально квадрату.
 
-\`\`\`ts
-flatten([1, [2, [3, [4]]]]);           // [1, 2, [3, [4]]]  — depth = 1 по умолчанию
-flatten([1, [2, [3, [4]]]], Infinity); // [1, 2, 3, 4]
+## Как это работает под капотом
 
-// в проде обычно достаточно нативного:
-[1, [2, [3, [4]]]].flat(Infinity);     // [1, 2, 3, 4]
+### Что уточнить у интервьюера до кода
+
+- Какая глубина по умолчанию? (Как у \`flat\` — 1, а не бесконечность.)
+- Что делать с не-массивами, похожими на массив: строками, \`arguments\`, \`NodeList\`? (Обычно — оставлять как есть, как делает \`flat\`.)
+- Нужно ли сохранять порядок и что делать с «дырками» в разреженных массивах?
+- Насколько глубокими и большими могут быть данные — сотни уровней или сотни тысяч?
+- Можно ли просто использовать \`arr.flat(depth)\`? Если да — так и скажите, а потом напишите руками.
+
+### Идея алгоритма простыми словами
+
+1. Идём по элементам массива слева направо.
+2. Элемент — не массив? Кладём его в результат как есть.
+3. Элемент — массив **и** глубина ещё больше нуля? Разворачиваем его тем же способом, но с глубиной на единицу меньше, и подмешиваем результат на это место. Именно уменьшение глубины останавливает бесконечное разворачивание.
+4. Глубина дошла до нуля — вложенный массив кладётся **целиком, как значение**. Это не баг, а смысл параметра.
+5. Для произвольной глубины рекурсию заменяем циклом с собственным массивом-стеком: снимаем элемент сверху, массив — раскладываем обратно в стек, не массив — в результат. Стек растёт в куче, поэтому глубина ограничена только памятью.
+
+### Версия 1. Самая короткая: \`reduce\` + \`concat\`, без глубины
+
+\`\`\`js
+function flattenAll(arr) {
+  return arr.reduce(
+    (acc, item) => acc.concat(Array.isArray(item) ? flattenAll(item) : item),
+    [],
+  );
+}
+
+flattenAll([1, [2, [3, [4]]], 5]); // [1, 2, 3, 4, 5]
 \`\`\`
 
-Почему так: при \`depth = 1\` вскрывается только первый уровень, остальное остаётся вложенным массивом. Ручная реализация нужна для собеседования или старого окружения — в реальном коде берите \`flat\`.
+Красиво и в одну строку, но с двумя проблемами. Глубину не задать. И \`concat\` на каждом шаге создаёт **новый** массив, копируя весь накопленный \`acc\`: на плоском массиве из 20 000 чисел в нашем прогоне это заняло около секунды против 1 мс у версий ниже — классическое \`O(n²)\`.
 
-## Что сказать на собеседовании
+### Версия 2. Рекурсия с глубиной — эталонный \`flatten\`
 
-> Рекурсивный \`flatten\` идёт по элементам: если элемент массив и оставшаяся глубина больше нуля, разворачиваем его рекурсивно с \`depth - 1\`, иначе кладём как есть. Время O(n) по общему числу элементов, память O(n) под результат плюс O(d) на стек рекурсии. Проблема именно в этом O(d): каждый уровень вложенности — кадр стека, и на тысячах уровней ловим stack overflow. Поэтому для произвольной глубины делаю итеративный вариант с собственным стеком-массивом: снимаем элемент, массив — заталкиваем содержимое обратно в стек, иначе в результат, в конце \`reverse\`. Стек лежит в куче, call stack не растёт. Важная деталь: собирать через \`push\` и один \`reverse\`, а не через \`unshift\`, потому что \`unshift\` это O(n) на элемент и суммарно O(n²). В проде я бы взял нативный \`flat\`.
+\`\`\`ts
+// Recursive: Time O(n), Space O(n) + O(d) call stack
+function flatten<T>(arr: any[], depth = 1): T[] {
+  const result: T[] = [];
+  for (const item of arr) {
+    if (Array.isArray(item) && depth > 0) {
+      result.push(...flatten<T>(item, depth - 1));
+    } else {
+      result.push(item);
+    }
+  }
+  return result;
+}
 
-## Ловушки
+flatten([1, [2, [3, [4]]]]);           // [1, 2, [3, [4]]]  — depth = 1 по умолчанию
+flatten([1, [2, [3, [4]]]], 2);        // [1, 2, 3, [4]]
+flatten([1, [2, [3, [4]]]], Infinity); // [1, 2, 3, 4]
+flatten([1, [2, [3, [4]]]], 0);        // [1, [2, [3, [4]]]] — неглубокая копия
+\`\`\`
 
-- **Рекурсия падает на глубоких массивах.** Переполнение стека — главный ответ, которого ждут; итеративный вариант с явным стеком его снимает.
-- **\`unshift\` в цикле** превращает \`O(n)\` в \`O(n²)\`. \`push\` + \`reverse\` — правильный вариант.
-- **\`reduce\` + \`concat\`** выглядит элегантно, но \`concat\` каждый раз создаёт новый промежуточный массив — в худшем случае снова \`O(n²)\`.
-- **Забыть \`reverse\`** в итеративной версии — порядок элементов молча перевернётся.
-- **\`push(...next)\`** на очень большом вложенном массиве может упереться в лимит числа аргументов функции; на гигантских данных безопаснее цикл.
+\`Infinity - 1\` остаётся \`Infinity\`, поэтому «бесконечная» глубина работает без отдельной ветки.
+
+Честная оценка времени здесь тоньше, чем \`O(n)\` в комментарии. Каждый вложенный вызов возвращает свой массив, и \`push(...)\` **копирует** его в массив уровнем выше. Элемент на глубине \`k\` копируется \`k\` раз. Для типичных данных глубиной 2–5 уровней это те же \`O(n)\`, а для «цепочки» \`[1000, [999, [ … ]]]\` из 1001 элемента мы насчитали 501 501 копирование — это уже \`O(n * d)\`, вплоть до \`O(n²)\`.
+
+### Версия 3. Рекурсия с общим аккумулятором — честное \`O(n)\`
+
+\`\`\`js
+function flattenInto(arr, depth = 1, result = []) {
+  for (const item of arr) {
+    if (Array.isArray(item) && depth > 0) flattenInto(item, depth - 1, result);
+    else result.push(item);
+  }
+  return result;
+}
+
+flattenInto([1, [2, [3, [4]]], 5], 2); // [1, 2, 3, [4], 5]
+\`\`\`
+
+Вместо «верни свой кусок, я его скопирую» все уровни пишут в **один** массив \`result\`. Каждый элемент кладётся ровно один раз, промежуточных массивов нет, а заодно исчезает spread с его лимитом на число аргументов.
+
+### Версия 4. Итеративная с явным стеком — эталонный \`flattenDeep\`
+
+\`\`\`ts
+// Iterative deep flatten — no call-stack overflow. Time O(n), Space O(n)
+function flattenDeep<T>(arr: any[]): T[] {
+  const stack = [...arr];
+  const result: T[] = [];
+  while (stack.length) {
+    const next = stack.pop();
+    if (Array.isArray(next)) stack.push(...next);
+    else result.push(next);
+  }
+  return result.reverse(); // restore original order (push+reverse beats unshift)
+}
+
+flattenDeep([1, [2, [3, [4]]]]); // [1, 2, 3, 4]
+\`\`\`
+
+Здесь вообще нет вложенных вызовов функции: вся «память о том, что ещё не разобрано» лежит в массиве \`stack\`. \`pop\` берёт элементы **с конца**, поэтому результат собирается задом наперёд, и в конце один \`reverse()\` возвращает исходный порядок.
+
+### Версия 5. Итеративная с глубиной и без spread
+
+Эталонный \`flattenDeep\` умеет только «до конца». Если нужна и глубина, и устойчивость к глубоким данным, в стек кладут пары «элемент + сколько уровней ещё можно вскрыть»:
+
+\`\`\`js
+function flattenIterative(arr, depth = 1) {
+  const stack = Array.from(arr, (item) => [item, depth]);
+  const result = [];
+  while (stack.length) {
+    const [item, d] = stack.pop();
+    if (Array.isArray(item) && d > 0) {
+      for (const child of item) stack.push([child, d - 1]);
+    } else {
+      result.push(item);
+    }
+  }
+  return result.reverse();
+}
+
+// цепочка [d, [d-1, [ … [0] … ]]] — строим циклом, чтобы самим не упереться в стек
+const chainOfDepth = (d) => { let a = [0]; for (let i = 1; i <= d; i++) a = [i, a]; return a; };
+
+flattenIterative([1, [2, [3, [4]]], 5]);           // [1, 2, [3, [4]], 5]
+flattenIterative([1, [2, [3, [4]]], 5], 2);        // [1, 2, 3, [4], 5]
+flattenIterative(chainOfDepth(1_000_000), Infinity).length; // 1000001 — без падения
+\`\`\`
+
+Цикл \`for…of\` вместо \`push(...item)\` снимает лимит на число аргументов: вложенный массив из миллиона элементов обрабатывается спокойно.
+
+### Трассировка рекурсивной версии
+
+Вход: \`flatten([1, [2, [3, [4]]]], 2)\`.
+
+\`\`\`text
+flatten([1, [2,[3,[4]]]], depth=2)
+  item 1            → не массив → result = [1]
+  item [2,[3,[4]]]  → массив, 2 > 0 → flatten([2,[3,[4]]], depth=1)
+      item 2        → result = [2]
+      item [3,[4]]  → массив, 1 > 0 → flatten([3,[4]], depth=0)
+          item 3    → result = [3]
+          item [4]  → массив, но 0 > 0 ложно → кладём целиком → [3, [4]]
+      push(...[3,[4]]) → [2, 3, [4]]
+  push(...[2,3,[4]])   → [1, 2, 3, [4]]
+Ответ: [1, 2, 3, [4]]
+\`\`\`
+
+Видно, как работает глубина: на третьем уровне счётчик стал нулём, и \`[4]\` остался коробкой. Видно и копирование: \`3\` сначала попал в самый внутренний \`result\`, потом был скопирован на уровень выше, потом ещё раз.
+
+### Трассировка итеративной версии
+
+Вход: \`flattenDeep([1, [2, [3]], 4])\` — так видно, как работает стек.
+
+\`\`\`text
+start      stack [1,[2,[3]],4]   result []
+pop 4      stack [1,[2,[3]]]     result [4]
+pop [2,[3]] → push 2, [3]
+           stack [1,2,[3]]       result [4]
+pop [3]    → push 3
+           stack [1,2,3]         result [4]
+pop 3      stack [1,2]           result [4,3]
+pop 2      stack [1]             result [4,3,2]
+pop 1      stack []              result [4,3,2,1]
+reverse()  → [1,2,3,4]
+\`\`\`
+
+Обратите внимание: «раскрытый» массив кладёт свои элементы в стек в исходном порядке, а \`pop\` снимает последний — поэтому обработка идёт справа налево, и \`reverse\` в конце обязателен.
+
+### Сложность простыми словами
+
+- **Версии 3, 4 и 5:** время \`O(n)\`, где \`n\` — общее число элементов вместе с вложенными массивами: каждый элемент кладётся и снимается со стека один раз. Память \`O(n)\` под результат и стек.
+- **Версия 2 (эталонный \`flatten\`):** память \`O(n)\` под результат плюс \`O(d)\` кадров стека вызовов, где \`d\` — глубина. Время \`O(n)\` при небольшой глубине, но из-за копирования через spread в худшем случае \`O(n * d)\`.
+- **Версия 1 (\`reduce\` + \`concat\`):** \`O(n²)\` из-за копирования аккумулятора на каждом шаге.
+- **Почему \`push\` + \`reverse\`, а не \`unshift\`:** \`unshift\` сдвигает все уже лежащие элементы — это \`O(n)\` на каждую вставку и \`O(n²)\` в сумме. \`push\` — \`O(1)\`, а один \`reverse\` в конце — \`O(n)\`.
+
+### Тест-кейсы
+
+\`\`\`js
+flatten([1, [2, [3, [4]]]]);              // [1, 2, [3, [4]]]
+flatten([1, [2, [3, [4]]]], Infinity);    // [1, 2, 3, 4]
+flatten([1, [2, [3, [4]]]], 0);           // [1, [2, [3, [4]]]] — копия, не тот же массив
+flatten([1, [2, [3, [4]]]], -1);          // [1, [2, [3, [4]]]] — как и flat(-1)
+flatten([]);                              // []
+flatten([[], [[]]], Infinity);            // []
+flatten(['ab', ['cd']]);                  // ['ab', 'cd'] — строки не разбираются на буквы
+flatten([{ a: [1] }], Infinity);          // [{ a: [1] }] — объекты не трогаем
+flattenDeep([1, [2, [3]], 4]);            // [1, 2, 3, 4]
+flatten([1, , 3]);                        // [1, undefined, 3]
+[1, , 3].flat();                          // [1, 3] — нативный flat выбрасывает дырки
+\`\`\`
+
+### \`Array.isArray\`: как отличить массив
+
+\`Array.isArray(x)\` возвращает \`true\` только для настоящих массивов. Это надёжнее, чем \`x instanceof Array\` (тот ломается для массивов из другого \`iframe\`) и чем проверка \`x.length\` (она пропустит строки и объекты-«псевдомассивы»).
+
+\`\`\`js
+Array.isArray([]);               // true
+Array.isArray('ab');             // false
+Array.isArray({ length: 0 });    // false
+Array.isArray(new Uint8Array(2)); // false — типизированный массив тоже не разворачивается
+\`\`\`
+
+### Spread в \`push\` и лимит на число аргументов
+
+\`result.push(...inner)\` передаёт каждый элемент \`inner\` как отдельный аргумент функции. Аргументы временно лежат на стеке вызовов, поэтому их число ограничено. В нашем прогоне на Node 20 \`[].push(...array)\` с 100 000 элементов прошёл, а со 150 000 упал с \`RangeError: Maximum call stack size exceeded\`. Конкретный порог зависит от движка и размера стека.
+
+\`\`\`js
+flattenDeep([new Array(1_000_000).fill(1)]); // RangeError — из-за stack.push(...next)
+flattenIterative([new Array(1_000_000).fill(1)], Infinity).length; // 1000000
+\`\`\`
+
+То есть эталонный \`flattenDeep\` спасает от **глубины**, но не от **ширины**: один огромный вложенный массив роняет его так же, как глубокая рекурсия. Цикл \`for…of\` с \`push(child)\` этой проблемы не имеет.
+
+### Стек вызовов и \`RangeError\`
+
+Каждый рекурсивный вызов оставляет кадр в стеке вызовов до тех пор, пока не вернёт результат. Для массива глубиной \`d\` одновременно живут \`d\` кадров. В нашем прогоне на Node 20 рекурсивный \`flatten\` падал примерно после 4 000 уровней вложенности, а итеративные версии спокойно разобрали цепочку глубиной в миллион.
+
+\`\`\`js
+const deep = chainOfDepth(10_000);   // [10000, [9999, [ … [0] … ]]]
+flatten(deep, Infinity);             // RangeError: Maximum call stack size exceeded
+flattenDeep(deep).length;            // 10001
+deep.flat(Infinity);                 // RangeError — нативный flat тоже рекурсивен
+\`\`\`
+
+Последняя строка — неожиданный факт: нативный \`flat(Infinity)\` в V8 тоже упал на 10 000 уровней (в нашем прогоне предел был около 5 500). \`try/catch\` вокруг рекурсии помогает лишь поймать ошибку, но не сделать работу.
+
+### \`pop\`, \`push\`, \`reverse\`, \`unshift\`: почему стек — это конец массива
+
+\`push\` и \`pop\` работают с концом массива и не сдвигают остальные элементы — \`O(1)\`. \`unshift\` и \`shift\` работают с началом и вынуждены сдвигать всё остальное — \`O(n)\`. Поэтому стек в JS всегда делают на конце массива, а порядок восстанавливают одним \`reverse()\` (\`O(n)\` один раз).
+
+\`\`\`js
+const s = [1, 2];
+s.push(3);   // [1, 2, 3]
+s.pop();     // 3, s = [1, 2]
+[3, 2, 1].reverse(); // [1, 2, 3] — меняет исходный массив и возвращает его
+\`\`\`
+
+### Нативные \`flat\` и \`flatMap\`
+
+\`arr.flat(depth = 1)\` — встроенный flatten (ES2019). \`arr.flatMap(fn)\` — это \`map\`, а затем \`flat(1)\` за один проход; глубже одного уровня он не разворачивает.
+
+\`\`\`js
+[1, [2, [3, [4]]]].flat();            // [1, 2, [3, [4]]]
+[1, [2, [3, [4]]]].flat(Infinity);    // [1, 2, 3, 4]
+[1, 2, 3].flatMap((x) => [x, x * 10]); // [1, 10, 2, 20, 3, 30]
+[[1], [[2]]].flatMap((x) => x);       // [1, [2]]
+\`\`\`
+
+В рабочем коде берите \`flat\` — ручная реализация нужна для собеседования, для очень глубоких данных или для нестандартной логики (например, развернуть только определённые узлы).
+
+### Где это применяется на практике
+
+- **Деревья меню, категорий, оргструктуры**: развернуть дерево в плоский список для поиска, автокомплита или виртуального скролла.
+- **Гриды с группировкой и дочерними строками**: плоский список видимых строк строится из вложенных групп, глубина — это уровень раскрытия.
+- **Ошибки вложенных форм**: собрать все сообщения валидации из \`FormGroup\` внутри \`FormArray\` внутри \`FormGroup\` в один список.
+- **Агрегация ответов API**: \`pages.flatMap((p) => p.items)\` после постраничной загрузки.
+- **Обход JSON-деревьев неизвестной глубины** (импорт файлов, конфиги): итеративный обход с явным стеком, чтобы враждебный или кривой файл не уронил вкладку переполнением стека.
+
+## Важные нюансы и подводные камни
+
+- **Рекурсия падает на глубоких массивах.** Переполнение стека — главный ответ, которого ждут; итеративная версия с явным стеком его снимает. И нативный \`flat(Infinity)\` тоже не бесконечен.
+- **Итеративная версия со spread падает на широких массивах.** \`stack.push(...next)\` на вложенном массиве из сотен тысяч элементов упирается в лимит аргументов. Используйте цикл.
+- **\`unshift\` в цикле** превращает \`O(n)\` в \`O(n²)\`. Правильно — \`push\` и один \`reverse\`.
+- **Забыть \`reverse\`** в итеративной версии — порядок элементов молча перевернётся, и тест на \`[1, [2], 3]\` вернёт \`[3, 2, 1]\`.
+- **\`reduce\` + \`concat\`** выглядит элегантно, но \`concat\` каждый раз создаёт новый массив и копирует накопленное — \`O(n²)\`.
+- **Рекурсия с \`push(...flatten(...))\` копирует элементы на каждом уровне.** Для глубоких данных это \`O(n * d)\`; аккумулятор, передаваемый вниз, даёт честное \`O(n)\`.
 - **\`depth\` по умолчанию равен 1**, а не бесконечности — как и у нативного \`flat\`. На этом ловят регулярно.
-- **Спросят следом:** чем \`flat\` отличается от \`flatMap\` (второй разворачивает ровно один уровень и делает это за один проход с \`map\`) и что \`flat\` попутно **выбрасывает дырки** в разреженных массивах.`,
+- **Дырки разреженных массивов.** Нативный \`flat\` их выбрасывает: \`[1, , 3].flat()\` даёт \`[1, 3]\`. Эталонные \`flatten\` и \`flattenDeep\` превращают дырку в \`undefined\`, потому что \`for…of\` и \`[...arr]\` читают её как \`undefined\`. Если нужна точная совместимость, пропускайте отсутствующие индексы через \`i in arr\`.
+- **Псевдомассивы не разворачиваются.** \`arguments\`, \`NodeList\`, типизированные массивы и строки — не \`Array.isArray\`, они остаются как есть. Так же ведёт себя и \`flat\`.
+- **Мутация входа.** Обе эталонные версии не трогают исходный массив: рекурсивная только читает, итеративная работает с копией \`[...arr]\`. Если делать \`arr.pop()\` прямо на входе, вы испортите данные вызывающего кода.
+
+**Плюсы:** рекурсивная версия коротка и очевидна, поддерживает глубину; итеративная не зависит от размера стека вызовов и работает за честное \`O(n)\`.
+**Минусы:** рекурсия ограничена глубиной стека и копирует элементы через spread; итеративная длиннее, требует \`reverse\` и аккуратности со spread; обе расходятся с нативным \`flat\` в обработке дырок.
+
+## Как это спрашивают на собеседовании
+
+**Главный вывод:** рекурсивный \`flatten\` разворачивает вложенный массив, пока глубина больше нуля, но упирается в стек вызовов; для произвольной глубины рекурсию заменяют явным стеком в куче с \`pop\`, \`push\` и одним \`reverse\` в конце.
+
+Типичные формулировки: «Реализуйте \`Array.prototype.flat\`», «Напишите \`flattenDeep\` без рекурсии», «Что будет с вашей рекурсией на массиве глубиной 100 000?».
+
+Что могут спросить следом:
+
+- *Чем \`flat\` отличается от \`flatMap\`?* — \`flatMap\` делает \`map\` и разворачивает ровно один уровень за один проход.
+- *Почему не \`unshift\`?* — Он сдвигает весь массив: \`O(n)\` на вставку и \`O(n²)\` в сумме.
+- *Какая сложность у вашей рекурсии?* — \`O(n)\` при небольшой глубине; из-за копирования через spread — до \`O(n * d)\`; с общим аккумулятором — честное \`O(n)\`.
+- *Как добавить глубину в итеративную версию?* — Хранить в стеке пары «элемент + оставшаяся глубина».
+- *Что \`flat\` делает с дырками?* — Выбрасывает их; ручная версия на \`for…of\` превращает их в \`undefined\`.
+
+### Как вести себя во время кодинга
+
+Начните с уточнений про глубину по умолчанию и размер данных, потом скажите: «В проде я бы взял \`flat\`, а сейчас напишу руками». Сначала рекурсивную версию — она пишется за минуту. Затем сами поднимите тему: «на глубине в несколько тысяч уровней это упадёт со stack overflow» — и перепишите на явный стек. Прогоните вслух маленький пример вроде \`[1, [2, [3]], 4]\` через стек: это сразу показывает, зачем нужен \`reverse\`.
+
+### Ответ на 1 минуту
+
+> Рекурсивный \`flatten\` идёт по элементам: если элемент — массив и оставшаяся глубина больше нуля, разворачиваю его тем же способом с \`depth - 1\`, иначе кладу как есть; на нулевой глубине вложенный массив остаётся целым, а \`Infinity - 1\` даёт снова \`Infinity\`. Память — результат плюс по кадру стека на каждый уровень, и в этом проблема: на нескольких тысячах уровней получаем \`RangeError\`, даже нативный \`flat(Infinity)\` падает. Поэтому для произвольной глубины пишу итеративно: собственный массив-стек, снимаю элемент \`pop\`, массив раскладываю обратно в стек, остальное в результат, а в конце один \`reverse\`, потому что \`unshift\` дал бы O(n²). Из нюансов: \`push(...big)\` упирается в лимит аргументов, поэтому лучше цикл; spread в рекурсии копирует элементы на каждом уровне; ручная версия не выбрасывает дырки, как \`flat\`. В проде использую \`flat\`.`,
       en: `## In short
 
 The task is turning \`[1, [2, [3, [4]]]]\` into a flat list. The \`depth\` parameter says **how many levels to open up**, exactly like native \`Array.prototype.flat(depth)\`.
@@ -8320,58 +13105,350 @@ function flattenDeep<T>(arr: any[]): T[] {
       en: 'Implement groupBy with a configurable key function. Explain the typing.',
     },
     answer: {
-      ru: `## Коротко
+      ru: `## В чём суть
 
-\`groupBy\` раскладывает массив на группы по ключу, который вычисляется **из самого элемента**. На выходе — объект или \`Map\` вида \`ключ → массив элементов\`.
+Нужно написать \`groupBy(items, keyFn)\`, которая раскладывает массив на группы по ключу, вычисленному **из самого элемента** функцией \`keyFn\`. На выходе — объект или \`Map\` вида «ключ → массив элементов». Сам алгоритм простой — один проход по массиву; интервьюер на самом деле проверяет **типизацию** (дженерики, \`PropertyKey\`, \`Record\`) и понимание разницы между объектом и \`Map\` как контейнером.
 
-Аналогия: почтальон с пачкой писем и ячейками в подъезде. Ключ — номер квартиры на конверте. Ячейки нет — завёл новую; есть — просто дописал письмо в неё. Один проход по пачке, каждое письмо трогаем ровно один раз.
+Аналогия: почтальон с пачкой писем и стеной почтовых ячеек в подъезде. Ключ — номер квартиры на конверте. Ячейки ещё нет — завёл новую; есть — просто положил письмо в неё. Один проход по пачке, каждое письмо трогаем ровно один раз. А \`keyFn\` — это инструкция почтальону «по чему сортировать»: сегодня по номеру квартиры, завтра по фамилии.
 
-## Как это работает по шагам
+**Какую проблему решает.** В интерфейсах постоянно нужно группировать: заказы по статусу для канбан-доски, сотрудников по отделам, транзакции по дате для выписки, строки грида по выбранной колонке. Без общей функции каждый раз пишется свой цикл, часто неэффективный (фильтр на каждую группу) или с багами на «странных» ключах вроде \`'constructor'\`. Хорошо типизированный \`groupBy\` один раз решает задачу и подсказывает в IDE, какие группы существуют.
 
-1. Один проход \`reduce\` (или обычный \`for..of\`) по массиву — больше ничего не нужно.
-2. Для каждого элемента вызываем \`keyFn(item)\` и получаем ключ. Функция ключа снаружи — это и есть вся настраиваемость: группировать можно по чему угодно, хоть по \`user.role\`, хоть по первой букве имени.
-3. Кладём элемент в соответствующий бакет, создавая массив при **первом появлении** ключа. Идиома \`(acc[key] ??= []).push(item)\` делает ровно это одной строкой.
-4. **Сложность:** время \`O(n)\`, память \`O(n)\` — каждый элемент попадает ровно в одну группу.
-5. **Порядок внутри группы сохраняется** — элементы лежат в том же порядке, что и во входном массиве. Для UI это важно: список не «прыгает» после группировки.
-6. \`groupBy\` обязан быть **чистым**: входной массив не мутируем, отсюда \`readonly T[]\` в сигнатуре.
+## Словарик терминов
 
-## Типизация и выбор контейнера
+- **Группировка (grouping)** — разбиение коллекции на подмножества с одинаковым ключом.
+- **Функция ключа (\`keyFn\`, key selector)** — функция, которая по элементу возвращает ключ группы: \`(u) => u.role\`.
+- **Бакет (bucket)** — массив-«ячейка», куда складываются элементы одной группы.
+- **Дженерик (generic, \`<T, K>\`)** — параметр типа: функция работает с любым типом элементов \`T\` и ключей \`K\`, а TypeScript подставляет конкретные типы при вызове.
+- **\`PropertyKey\`** — встроенный тип TypeScript \`string | number | symbol\`: всё, что может быть ключом свойства объекта.
+- **\`Record<K, V>\`** — тип «объект, у которого для **каждого** ключа из \`K\` есть значение типа \`V\`».
+- **\`Partial<X>\`** — тот же тип, но все свойства необязательные (могут быть \`undefined\`).
+- **\`readonly T[]\`** — массив только для чтения: у него нет \`push\`, \`splice\` и других мутирующих методов.
+- **\`Map\`** — встроенная коллекция «ключ → значение», где ключом может быть что угодно, включая объекты, и ключи не приводятся к строке.
+- **\`??=\` (nullish assignment)** — «присвой, если сейчас \`null\` или \`undefined\`»: \`a ??= []\` равно \`a ?? (a = [])\`.
+- **Прототип (prototype)** — объект, у которого обычный \`{}\` «наследует» свойства вроде \`toString\` и \`constructor\`.
+- **O-нотация (Big-O)** — как растёт стоимость с ростом входа: \`O(n)\` — пропорционально числу элементов.
+
+## Как это работает под капотом
+
+### Что уточнить у интервьюера до кода
+
+- Какой контейнер вернуть: обычный объект или \`Map\`? Какие бывают ключи — только строки и числа или объекты тоже?
+- Нужен ли порядок групп и порядок элементов внутри группы?
+- Что делать с \`null\` и \`undefined\` в качестве ключа?
+- Насколько строгая нужна типизация: должен ли тип честно говорить, что группы может не быть?
+- Можно ли использовать нативный \`Object.groupBy\` или нужна поддержка старых окружений?
+
+### Идея алгоритма простыми словами
+
+1. Создаём пустой контейнер для групп.
+2. Идём по массиву один раз, слева направо.
+3. Для каждого элемента вызываем \`keyFn(item)\` и получаем ключ. Поскольку функция приходит снаружи, группировать можно по чему угодно — по роли, по первой букве имени, по году.
+4. Если бакета для этого ключа ещё нет, создаём пустой массив, поэтому первый элемент группы не теряется.
+5. Кладём элемент в бакет через \`push\` — порядок внутри группы автоматически совпадает с порядком входа.
+6. Возвращаем контейнер; входной массив при этом не меняется.
+
+### Версия 1. Наивная: фильтр на каждую группу
+
+\`\`\`js
+function groupByNaive(items, keyFn) {
+  const keys = [...new Set(items.map(keyFn))];          // все уникальные ключи
+  const result = {};
+  for (const k of keys) result[k] = items.filter((i) => keyFn(i) === k);
+  return result;
+}
+
+groupByNaive(users, (u) => u.role);
+// { admin: [Ann, Cid], user: [Bob], guest: [Dan] }
+// keyFn вызвана 16 раз на 4 элементах
+\`\`\`
+
+Результат правильный, но массив пробегается заново для каждой группы: \`O(n * k)\`, где \`k\` — число групп. На 10 000 строк и 500 групп это пять миллионов вызовов \`keyFn\` вместо десяти тысяч.
+
+### Версия 2. Один проход с обычным циклом
+
+\`\`\`js
+function groupByLoop(items, keyFn) {
+  const result = {};
+  for (const item of items) {
+    const key = keyFn(item);
+    if (!result[key]) result[key] = [];
+    result[key].push(item);
+  }
+  return result;
+}
+// keyFn вызвана 4 раза на 4 элементах
+\`\`\`
+
+Теперь каждый элемент трогаем один раз — \`O(n)\`. Это уже рабочее решение, которое не стыдно показать.
+
+### Версия 3. Эталон: \`reduce\`, \`??=\` и дженерики
 
 \`\`\`ts
+// Time: O(n), Space: O(n)
 function groupBy<T, K extends PropertyKey>(
-  items: readonly T[], keyFn: (item: T) => K
-): Record<K, T[]>
+  items: readonly T[],
+  keyFn: (item: T) => K,
+): Record<K, T[]> {
+  return items.reduce((acc, item) => {
+    const key = keyFn(item);
+    (acc[key] ??= []).push(item);
+    return acc;
+  }, {} as Record<K, T[]>);
+}
+
+const byRole = groupBy(users, (u) => u.role);
+// тип: Record<'admin' | 'user' | 'guest', User[]>
+// { admin: [Ann, Cid], user: [Bob], guest: [Dan] }
 \`\`\`
 
-- \`K extends PropertyKey\` ограничивает ключ типом \`string | number | symbol\` — только такое объект и умеет держать.
-- \`Record<K, T[]>\` точно описывает форму результата, и TS подскажет имена групп, если \`K\` — union литералов.
-- **Объект** удобен, но ключи приводятся к строке: \`1\` и \`'1'\` схлопнутся в одну группу, а объект в роли ключа превратится в \`[object Object]\`.
-- **\`Map\`** сохраняет тип ключа и не конфликтует с прототипом — \`__proto__\` и \`constructor\` в нём обычные ключи. Для нетривиальных ключей берите \`Map<K, T[]>\`, там ограничение \`PropertyKey\` не нужно вовсе.
+\`(acc[key] ??= []).push(item)\` делает две вещи за одну строку: если бакета нет — создаёт пустой массив и возвращает его, если есть — возвращает существующий; затем в него кладётся элемент. \`{} as Record<K, T[]>\` — стартовое значение аккумулятора, и \`as\` здесь честно признаёт, что пустой объект пока не соответствует типу.
 
-## Пример
+### Версия 4. \`Map\` — для нестроковых ключей
 
 \`\`\`ts
-const byRole = groupBy(users, (u) => u.role);        // Record<Role, User[]>
-const byDept = groupByMap(users, (u) => u.department); // ключ — объект, тип сохранён
+// Map version — preserves key type, avoids prototype collisions
+function groupByMap<T, K>(items: readonly T[], keyFn: (item: T) => K): Map<K, T[]> {
+  const map = new Map<K, T[]>();
+  for (const item of items) {
+    const key = keyFn(item);
+    const bucket = map.get(key);
+    if (bucket) bucket.push(item);
+    else map.set(key, [item]);
+  }
+  return map;
+}
 
-// в современных рантаймах то же самое есть из коробки:
-Object.groupBy(users, (u) => u.role);
+groupByMap([1, '1', 2], (x) => x);
+// Map(3) { 1 => [1], '1' => ['1'], 2 => [2] }  — число и строка не склеились
 \`\`\`
 
-Почему так: \`Object.groupBy\` и \`Map.groupBy\` уже нативные — если рантайм позволяет, ручная реализация не нужна.
+У \`Map\` нет прототипных ключей и нет приведения к строке, поэтому ограничение \`K extends PropertyKey\` здесь не нужно — ключом может быть даже объект.
 
-## Что сказать на собеседовании
+### Трассировка на конкретном входе
 
-> \`groupBy\` разбивает массив на группы по ключу, вычисляемому из элемента функцией \`keyFn\`, и возвращает объект или \`Map\` вида ключ — массив элементов. Реализация — один проход \`reduce\`: считаем ключ, при первом появлении заводим массив и пушим элемент, отсюда O(n) по времени и памяти. Порядок внутри группы совпадает с исходным, что важно для UI, а функция должна быть чистой. По типизации: \`K extends PropertyKey\` ограничивает ключ типами \`string\`, \`number\` и \`symbol\`, а \`Record<K, T[]>\` описывает форму результата — правда, формально обещает все ключи, честнее \`Partial\`. Объект приводит ключи к строке, из-за чего \`1\` и \`'1'\` схлопываются, и конфликтует с именами вроде \`__proto__\`; \`Map\` сохраняет тип ключа. В рантаймах есть нативные \`Object.groupBy\` и \`Map.groupBy\`.
+Вход: \`groupBy(['apple', 'avocado', 'banana', 'cherry', 'blueberry'], (s) => s[0])\`.
 
-## Ловушки
+\`\`\`text
+apple     key=a  новый бакет  acc={"a":["apple"]}
+avocado   key=a  уже есть     acc={"a":["apple","avocado"]}
+banana    key=b  новый бакет  acc={"a":[…],"b":["banana"]}
+cherry    key=c  новый бакет  acc={"a":[…],"b":["banana"],"c":["cherry"]}
+blueberry key=b  уже есть     acc={"a":["apple","avocado"],"b":["banana","blueberry"],"c":["cherry"]}
+Ответ: { a: ['apple', 'avocado'], b: ['banana', 'blueberry'], c: ['cherry'] }
+\`\`\`
 
-- **Ключи объекта — всегда строки.** \`1\` и \`'1'\` попадут в одну группу, а объект в качестве ключа даст \`[object Object]\` для всех элементов сразу.
-- **\`__proto__\` как значение ключа.** На обычном \`{}\` присваивание в этот ключ ведёт себя не как обычное свойство. Спасает \`Object.create(null)\` или \`Map\`.
-- **\`Record<K, T[]>\` слегка врёт:** TS считает, что есть все ключи из \`K\`, а реально там только встреченные. Строже — \`Partial<Record<K, T[]>>\`, иначе обращение к пустой группе даст \`undefined\` вопреки типу.
-- **Мутация входа.** \`groupBy\` должен быть чистым; \`readonly T[]\` в сигнатуре это фиксирует.
-- **Тяжёлая \`keyFn\`.** Она вызывается на каждый элемент — форматирование даты или \`JSON.stringify\` внутри неё легко превращают \`O(n)\` в заметную задержку.
-- **Спросят следом:** чем это отличается от нативного \`Object.groupBy\` (тот всегда возвращает объект с \`null\`-прототипом и приводит ключи к строке) и как сгруппировать по нескольким полям — составной строковый ключ с разделителем, но тогда следите за коллизиями.`,
+Пять элементов — пять вызовов \`keyFn\` и пять \`push\`. \`blueberry\` попал в уже существующую группу \`b\` после \`banana\`, то есть в порядке входа.
+
+### Сложность простыми словами
+
+- **Время \`O(n)\`:** один проход, на каждом элементе — один вызов \`keyFn\`, одно чтение и одна запись в объект или \`Map\` (в среднем за \`O(1)\`). Если \`keyFn\` тяжёлая (форматирует дату, вызывает \`JSON.stringify\`), стоимость умножается на её цену.
+- **Память \`O(n)\`:** каждый элемент попадает ровно в один бакет, плюс сами бакеты — их не больше, чем элементов. Элементы не копируются: в группах лежат ссылки на те же объекты.
+
+### Тест-кейсы
+
+\`\`\`js
+groupBy(users, (u) => u.role);
+// { admin: [Ann, Cid], user: [Bob], guest: [Dan] }
+
+groupBy([], (x) => x);                                   // {}
+groupBy([3, 1, 4, 1, 5, 9, 2, 6], (x) => (x % 2 ? 'odd' : 'even'));
+// { odd: [3, 1, 1, 5, 9], even: [4, 2, 6] } — порядок внутри группы как на входе
+
+groupBy([1, '1', 2], (x) => x);                          // { '1': [1, '1'], '2': [2] } — склеились!
+groupBy([{ id: 1 }, { id: 2 }], (x) => ({ dept: x.id })); // { '[object Object]': [{ id: 1 }, { id: 2 }] }
+groupBy([{ r: undefined }, { r: 'undefined' }], (x) => x.r); // { undefined: [ …оба… ] }
+groupBy([{ k: 'constructor' }], (x) => x.k);             // TypeError: acc[key].push is not a function
+
+groupByMap([NaN, NaN, 0, -0], (x) => x);                 // Map(2) { NaN => [NaN, NaN], 0 => [0, -0] }
+\`\`\`
+
+### Типизация по шагам: \`<T, K extends PropertyKey>\`
+
+\`T\` — тип элементов, \`K\` — тип ключа. TypeScript выводит оба из аргументов: \`T\` из массива, \`K\` из того, что возвращает \`keyFn\`. Если поле \`role\` имеет тип-объединение \`'admin' | 'user' | 'guest'\`, то и \`K\` станет этим объединением, а результат — \`Record<'admin' | 'user' | 'guest', User[]>\`. IDE подскажет имена групп, а опечатка станет ошибкой компиляции.
+
+\`\`\`ts
+const byRole = groupBy(users, (u) => u.role);
+byRole.admin;   // User[]
+byRole.manager; // ошибка: 'manager' не входит в Role
+
+const byName = groupBy(users, (u) => u.name);       // Record<string, User[]>
+const parity = groupBy([1, 2, 3], (x) => (x % 2 ? 'odd' : 'even')); // Record<'odd' | 'even', number[]>
+
+groupBy(users, (u) => u.dept); // ошибка: объект не является PropertyKey
+\`\`\`
+
+Ограничение \`K extends PropertyKey\` нужно, потому что ключом свойства объекта бывают только строка, число или символ. Последняя строка показывает его пользу: попытка сгруппировать объект по объекту ловится ещё до запуска.
+
+### \`Record\` против \`Partial<Record>\`: где тип немного врёт
+
+\`Record<K, T[]>\` обещает, что для **каждого** ключа из \`K\` есть массив. Но в реальных данных админов может не оказаться вовсе — тогда \`byRole.admin\` будет \`undefined\`, а TypeScript промолчит, и \`byRole.admin.length\` упадёт в рантайме.
+
+\`\`\`ts
+function groupByStrict<T, K extends PropertyKey>(
+  items: readonly T[], keyFn: (item: T) => K,
+): Partial<Record<K, T[]>> {
+  const acc: Partial<Record<K, T[]>> = {};
+  for (const item of items) (acc[keyFn(item)] ??= []).push(item);
+  return acc;
+}
+
+const strict = groupByStrict(users, (u) => u.role);
+strict.admin.length;              // ошибка: объект, возможно, undefined
+const count = strict.admin?.length ?? 0; // так правильно
+\`\`\`
+
+Ровно так типизирован и нативный \`Object.groupBy\` в TypeScript: он возвращает \`Partial<Record<K, T[]>>\`.
+
+### \`readonly T[]\`: обещание не мутировать вход
+
+\`readonly T[]\` в параметре значит «функция только читает массив». Внутри нельзя вызвать \`push\`, \`sort\`, \`splice\` — компилятор не пропустит. Снаружи можно передать как обычный, так и readonly-массив.
+
+\`\`\`ts
+function mutate<T>(items: readonly T[]) {
+  items.push(items[0]); // ошибка: свойства 'push' нет у типа 'readonly T[]'
+}
+\`\`\`
+
+Для группировки это важно: если \`groupBy\` случайно отсортирует или изменит входной массив, сломается всё, что на него ссылается, например сигнал со списком строк.
+
+### \`reduce\` и оператор \`??=\`
+
+\`reduce(callback, initial)\` проходит массив, передавая из шага в шаг «аккумулятор» — накопленный результат. \`??=\` присваивает только если слева \`null\` или \`undefined\`, и возвращает итоговое значение.
+
+\`\`\`js
+[1, 2, 3].reduce((sum, x) => sum + x, 0); // 6
+
+const box = {};
+(box.a ??= []).push(1);   // box = { a: [1] }
+(box.a ??= []).push(2);   // box = { a: [1, 2] } — второй раз массив не пересоздан
+\`\`\`
+
+Здесь \`||=\` сработал бы так же, потому что массив, даже пустой, всегда «истинный». Разница появится в варианте \`countBy\`, где значение группы — число: \`0 || 1\` перезапишет ноль, а \`??\` — нет. Обычный цикл \`for…of\` ничем не хуже \`reduce\` и многим кажется понятнее.
+
+### Объект против \`Map\` как контейнер
+
+\`\`\`js
+groupBy([1, '1', 2], (x) => x);      // { '1': [1, '1'], '2': [2] } — ключи объекта всегда строки
+groupByMap([1, '1', 2], (x) => x);   // Map { 1 => [1], '1' => ['1'], 2 => [2] }
+
+Object.keys(groupBy([{ y: 2024 }, { y: 2023 }, { y: 2025 }], (x) => x.y));
+// ['2023', '2024', '2025'] — «числовые» ключи объект сортирует по возрастанию!
+\`\`\`
+
+- **Объект** удобен: его можно отдать в JSON, читать через точку. Но ключи приводятся к строке, «числоподобные» ключи идут по возрастанию, а не в порядке появления, и ключи вроде \`constructor\` конфликтуют с прототипом.
+- **\`Map\`** хранит ключи любого типа без приведения, сохраняет порядок вставки и не имеет прототипных ключей. Ключи-объекты сравниваются **по ссылке**: два разных объекта \`{ id: 's' }\` дадут две разные группы.
+
+\`\`\`js
+const sales = { id: 's' };
+groupByMap(
+  [{ n: 'A', dept: sales }, { n: 'C', dept: sales }, { n: 'D', dept: { id: 's' } }],
+  (e) => e.dept,
+);
+// Map(2) { {id:'s'} => [A, C], {id:'s'} => [D] } — D в отдельной группе
+\`\`\`
+
+### Прототипные ключи: \`__proto__\`, \`constructor\`, \`toString\`
+
+У обычного \`{}\` уже «есть» унаследованные свойства. Если ключ группы совпал с одним из них, \`acc[key]\` вернёт не \`undefined\`, а функцию или \`Object.prototype\` — \`??=\` ничего не создаст, и \`push\` упадёт:
+
+\`\`\`js
+groupBy([{ k: 'constructor' }], (x) => x.k); // TypeError: acc[key].push is not a function
+groupBy([{ k: '__proto__' }], (x) => x.k);   // TypeError: acc[key].push is not a function
+
+// Лечение 1: аккумулятор без прототипа
+const groupBySafe = (items, keyFn) => items.reduce((acc, item) => {
+  (acc[keyFn(item)] ??= []).push(item);
+  return acc;
+}, Object.create(null));
+Object.keys(groupBySafe([{ k: '__proto__' }, { k: 'constructor' }], (x) => x.k));
+// ['__proto__', 'constructor'] — обе группы на месте
+
+// Лечение 2: Map
+groupByMap([{ k: '__proto__' }], (x) => x.k); // Map(1) { '__proto__' => [ … ] }
+\`\`\`
+
+Это реальный риск, когда ключ приходит из пользовательских данных — например, группировка тегов, которые вводит пользователь.
+
+### Нативные \`Object.groupBy\` и \`Map.groupBy\`
+
+Стандарт ES2024 добавил готовые функции. \`Object.groupBy(items, fn)\` возвращает объект **без прототипа** (поэтому проблема \`constructor\` у него отсутствует), но ключи всё так же приводит к строке. \`Map.groupBy(items, fn)\` возвращает \`Map\`. Обе принимают любой iterable, а колбэк получает ещё и индекс элемента.
+
+\`\`\`ts
+const byRole = Object.groupBy(users, (u) => u.role); // Partial<Record<Role, User[]>>
+const byDept = Map.groupBy(users, (u) => u.dept);    // Map<Dept, User[]>
+\`\`\`
+
+Поддержка появилась в браузерах в 2023–2024 годах; в Node — с версии 21 (в Node 20, на котором мы проверяли примеры, их ещё нет). В TypeScript нужен \`lib\` не ниже \`es2024\`. Если целевые браузеры проекта старше — пишите свою функцию или подключайте полифил.
+
+### Angular: группировка в \`computed\`
+
+\`\`\`ts
+@Component({
+  selector: 'app-users-by-role',
+  template: \`
+    @for (group of groups(); track group.key) {
+      <h3>{{ group.key }} ({{ group.items.length }})</h3>
+      @for (user of group.items; track user.id) {
+        <p>{{ user.name }}</p>
+      }
+    }
+  \`,
+})
+export class UsersByRoleComponent {
+  readonly users = input.required<User[]>();
+
+  readonly groups = computed(() =>
+    [...groupByMap(this.users(), (u) => u.role)].map(([key, items]) => ({ key, items })),
+  );
+}
+\`\`\`
+
+\`computed\` пересчитывает группы только при изменении входного сигнала, а не на каждую проверку изменений. Превращение \`Map\` в массив \`{ key, items }\` нужно, чтобы \`@for\` мог по нему пройти. Альтернатива — пайп \`keyvalue\`, но он по умолчанию **сортирует** ключи; чтобы сохранить исходный порядок, ему передают \`null\` вместо функции сравнения.
+
+### Где это применяется на практике
+
+- **Канбан-доски и списки задач**: заказы или тикеты по статусу, каждая колонка — группа.
+- **Гриды с группировкой**: строки по выбранной колонке, с итогами по группе; здесь важен порядок групп, поэтому чаще берут \`Map\`.
+- **Финансовые выписки и ленты**: транзакции по дню или месяцу с заголовками-датами.
+- **Справочники в формах**: \`<select>\` с \`optgroup\`, где опции сгруппированы по категории.
+- **Подготовка данных для графиков**: продажи по региону или продукту перед агрегацией сумм.
+
+## Важные нюансы и подводные камни
+
+- **Ключи объекта — всегда строки.** \`1\` и \`'1'\` попадут в одну группу, \`undefined\` и \`'undefined'\` тоже, а объект в роли ключа даст \`'[object Object]'\` для всех элементов сразу.
+- **Прототипные имена ломают объектный \`groupBy\`.** Ключ \`constructor\`, \`toString\` или \`__proto__\` на обычном \`{}\` приводит к \`TypeError: acc[key].push is not a function\`. Лечится \`Object.create(null)\` или \`Map\`.
+- **«Числовые» ключи меняют порядок групп.** Объект ставит ключи вида \`'2024'\` по возрастанию перед строковыми, а не в порядке появления. Если порядок групп важен, используйте \`Map\`.
+- **\`Record<K, T[]>\` слегка врёт.** TypeScript считает, что есть все ключи из \`K\`, а реально — только встреченные. Строже — \`Partial<Record<K, T[]>>\`, как у нативного \`Object.groupBy\`.
+- **\`Map\` сравнивает ключи-объекты по ссылке.** Два одинаковых по содержимому объекта дадут две группы. Группируйте по примитиву (\`dept.id\`), а не по объекту целиком.
+- **Составной ключ через разделитель может склеить группы.** \`\` \`\${a}|\${b}\` \`\` для пар \`('x|y', 'z')\` и \`('x', 'y|z')\` даст один и тот же ключ \`'x|y|z'\`. Надёжнее \`JSON.stringify([a, b])\` или вложенная группировка.
+- **Мутация входа.** \`groupBy\` должен быть чистым; \`readonly T[]\` в сигнатуре это фиксирует на уровне типов.
+- **Тяжёлая \`keyFn\`.** Она вызывается на каждый элемент: форматирование даты или \`JSON.stringify\` внутри легко превращают \`O(n)\` в заметную задержку. Считайте ключ один раз и не вызывайте \`groupBy\` в шаблоне.
+- **Группы держат ссылки, а не копии.** Изменив объект в группе, вы измените его и в исходном массиве.
+
+**Плюсы:** один проход \`O(n)\`; функция ключа делает решение универсальным; дженерики дают автодополнение групп и ловят ошибки на этапе компиляции; \`Map\`-версия корректна для любых ключей.
+**Минусы:** объектная версия страдает от приведения ключей к строке и прототипных имён; \`Record\` обещает больше, чем гарантирует; \`Map\` неудобнее сериализовать в JSON и выводить в шаблоне.
+
+## Как это спрашивают на собеседовании
+
+**Главный вывод:** \`groupBy\` — один проход с бакетами по ключу из \`keyFn\`, \`O(n)\`; в типах \`K extends PropertyKey\` ограничивает ключ тем, что умеет хранить объект, \`Record<K, T[]>\` описывает форму, а \`Partial\` делает её честной; для произвольных ключей — \`Map\`.
+
+Типичные формулировки: «Напишите \`groupBy\` на TypeScript», «Почему \`K extends PropertyKey\`?», «Чем вернуть результат — объектом или \`Map\`?», «Как сгруппировать по двум полям?».
+
+Что могут спросить следом:
+
+- *Чем ваш код отличается от \`Object.groupBy\`?* — Нативный возвращает объект без прототипа, принимает любой iterable, передаёт индекс в колбэк и типизирован как \`Partial<Record<K, T[]>>\`.
+- *Как группировать по нескольким полям?* — Составной ключ через \`JSON.stringify([a, b])\` или вложенный \`groupBy\` по второму полю внутри каждой группы.
+- *Почему не \`filter\` на каждую группу?* — Это \`O(n * k)\` вместо \`O(n)\`.
+- *Как сделать \`countBy\`?* — Тот же проход, но вместо \`push\` — \`acc[key] = (acc[key] ?? 0) + 1\`.
+- *Как не пересчитывать группы на каждый рендер?* — В Angular держать результат в \`computed\` от сигнала со списком.
+
+### Как вести себя во время кодинга
+
+Сначала спросите про тип ключей и про то, нужен ли объект или \`Map\`. Напишите сигнатуру с дженериками первой — это и есть вторая половина вопроса, и интервьюер увидит, что вы думаете о типах. Потом тело в три строки. Затем сами назовите проблемы объекта как контейнера (\`'1'\` против \`1\`, \`constructor\`, порядок «числовых» ключей) и покажите \`Map\`-версию.
+
+### Ответ на 1 минуту
+
+> \`groupBy\` раскладывает массив на группы по ключу, который считает переданная функция \`keyFn\`. Реализация — один проход: для каждого элемента считаю ключ, через \`acc[key] ??= []\` создаю бакет при первом появлении и кладу туда элемент, поэтому время и память O(n), а порядок внутри группы совпадает со входом. По типам: \`T\` — элемент, \`K extends PropertyKey\` ограничивает ключ строкой, числом или символом, потому что только такое умеет хранить объект, и TypeScript выводит \`K\` из \`keyFn\` — для поля с union-типом получаю автодополнение групп. \`Record<K, T[]>\` немного врёт, обещая все ключи, поэтому честнее \`Partial\`, как у нативного \`Object.groupBy\`. Объект приводит ключи к строке, склеивая \`1\` и \`'1'\`, падает на ключах вроде \`constructor\` и сортирует числовые ключи, поэтому для сложных ключей беру \`Map\`. В Angular держу группировку в \`computed\`.`,
       en: `## In short
 
 \`groupBy\` sorts an array into groups by a key computed **from the element itself**. The output is an object or a \`Map\` shaped \`key → array of elements\`.
@@ -8459,54 +13536,350 @@ function groupByMap<T, K>(items: readonly T[], keyFn: (item: T) => K): Map<K, T[
       en: 'Implement deep equality for objects, arrays, Map, Set, Date, and NaN.',
     },
     answer: {
-      ru: `## Коротко
+      ru: `## В чём суть
 
-Глубокое равенство — это сравнение **по содержимому, а не по ссылке**: два значения равны, если рекурсивно совпадает всё, что внутри. \`{a: 1} === {a: 1}\` даёт \`false\`, потому что это разные объекты, а \`deepEqual\` должен сказать \`true\`.
+Нужно написать \`deepEqual(a, b)\`, которая сравнивает два значения **по содержимому, а не по ссылке**: два значения равны, если рекурсивно совпадает всё, что у них внутри. \`{ a: 1 } === { a: 1 }\` даёт \`false\`, потому что это два разных объекта, а \`deepEqual\` должен сказать \`true\`. Интервьюер проверяет не столько рекурсию, сколько знание «углов» JavaScript: \`NaN\`, \`-0\`, \`Date\`, \`Map\`, \`Set\`, символьные ключи и циклические ссылки.
 
-Аналогия: две квартиры. Ссылочное равенство спрашивает «это одна и та же квартира?». Глубокое — «обстановка одинаковая?»: обходим комнату за комнатой и сверяем каждый предмет.
+Аналогия: две квартиры. Ссылочное равенство (\`===\`) спрашивает «это одна и та же квартира?». Глубокое — «обстановка одинаковая?»: обходим комнату за комнатой, открываем каждый шкаф и сверяем каждый предмет. Если в шкафу лежит коробка — открываем и её.
 
-## Как это работает по шагам
+**Какую проблему решает.** В приложениях постоянно нужно понять, «изменилось ли что-то на самом деле»: есть ли несохранённые правки в форме, отличаются ли новые фильтры от прежних, нужно ли заново грузить данные. Сравнение по ссылке тут бесполезно — новый объект с теми же полями всё равно «другой». Глубокое сравнение отвечает на вопрос по существу, но стоит дорого, поэтому важно понимать, где его применять, а где нет.
 
-1. Начинаем с \`Object.is(a, b)\` — он закрывает сразу три случая: одинаковая ссылка, равные примитивы и, главное, **\`NaN\`**. Обычное \`NaN === NaN\` даёт \`false\`, а \`Object.is(NaN, NaN)\` — \`true\`, чего мы и хотим.
-2. Если хоть одно из значений не объект или \`null\` — дальше сравнивать нечего, возвращаем \`false\`.
-3. Сверяем конструкторы. Разные конструкторы — разные сущности: массив не равен объекту, \`Date\` не равна строке.
-4. **\`Date\`** сравниваем по \`getTime()\`, **\`RegExp\`** — по \`toString()\`. Без этого две одинаковые даты будут «разными», ведь свойств у них нет.
-5. **\`Map\`:** сначала размеры, потом для каждой пары проверяем, что ключ есть у второго, и рекурсивно сравниваем значения. Порядок вставки не важен.
-6. **\`Set\`:** размеры плюс \`has\` для каждого элемента.
-7. **Массивы:** длины, потом поэлементная рекурсия.
-8. **Обычные объекты:** берём \`Reflect.ownKeys\` — он видит и символы, не только строки. Сравниваем количество ключей, затем для каждого проверяем наличие у второго через \`hasOwnProperty\` и рекурсивно сравниваем значения.
-9. **Сложность:** время \`O(n)\` по числу узлов дерева, память \`O(d)\` на стек рекурсии.
-10. **Циклы.** Объект, ссылающийся сам на себя, отправит рекурсию в бесконечность. Лечится \`WeakMap\` посещённых пар: перед спуском записали пару, встретили её снова — считаем равными. В базовой версии опущено ради ясности, в проде нужно.
+## Словарик терминов
 
-## Где применять, а где нет
+- **Ссылочное равенство (reference equality)** — \`a === b\` для объектов истинно, только если это один и тот же объект в памяти.
+- **Глубокое (структурное) равенство (deep equality)** — значения равны, если рекурсивно равны все их части.
+- **Поверхностное сравнение (shallow equality)** — сравнить только верхний уровень полей через \`===\`, не спускаясь глубже.
+- **\`Object.is(a, b)\`** — сравнение «тот же самый ли это значение»: как \`===\`, но \`Object.is(NaN, NaN)\` — \`true\`, а \`Object.is(0, -0)\` — \`false\`.
+- **\`NaN\` (Not a Number)** — «не число», результат вроде \`0 / 0\`; единственное значение в JS, не равное самому себе через \`===\`.
+- **\`-0\`** — отрицательный ноль, отдельное значение в IEEE 754; \`0 === -0\` — \`true\`, но \`1 / -0\` — \`-Infinity\`.
+- **\`Reflect.ownKeys(obj)\`** — все собственные ключи объекта: строковые и символьные, перечисляемые и нет.
+- **Символ (\`Symbol\`)** — уникальный примитив, который можно использовать как ключ свойства; \`Object.keys\` его не видит.
+- **Конструктор (\`constructor\`)** — функция, создавшая объект; по ней отличают массив от \`Date\`, \`Map\` от обычного объекта.
+- **SameValueZero** — правило сравнения ключей в \`Map\` и \`Set\`: как \`Object.is\`, но \`0\` и \`-0\` считаются одним ключом.
+- **Циклическая ссылка (cycle)** — объект, который прямо или через цепочку ссылается сам на себя: \`a.self = a\`.
+- **\`WeakMap\` / \`WeakSet\`** — коллекции, где ключами служат объекты, и они не мешают сборщику мусора удалить эти объекты.
+- **Иммутабельность (immutability)** — данные не меняют «на месте»; любое изменение создаёт новый объект, поэтому «изменилось ли» проверяется простым \`===\`.
 
-Глубокое сравнение стоит \`O(n)\` **на каждый вызов**. В горячем пути — в change detection, в \`OnPush\`, в мемоизации — это дорого: дешёвая поверхностная проверка почти всегда лучше, а по-настоящему правильный ответ — **иммутабельность плюс сравнение ссылок**: новый объект создаётся только при реальном изменении, и тогда \`===\` достаточно. Глубокое равенство уместно в тестовых ассертах, инвалидации кэша и дедупликации. Готовые реализации: lodash \`isEqual\`, \`fast-deep-equal\`.
+## Как это работает под капотом
 
-## Пример
+### Что уточнить у интервьюера до кода
 
-\`\`\`ts
-deepEqual({ a: [1, { b: 2 }] }, { a: [1, { b: 2 }] }); // true
-deepEqual(NaN, NaN);                                   // true — через Object.is
-deepEqual(new Date(0), new Date(0));                   // true — по getTime()
-deepEqual(0, -0);                                      // false — Object.is различает
+- Какие типы нужно поддержать: только объекты и массивы или ещё \`Date\`, \`RegExp\`, \`Map\`, \`Set\`?
+- Считать ли \`NaN\` равным \`NaN\`? А \`0\` и \`-0\`?
+- Важен ли прототип: равны ли \`{}\` и \`Object.create(null)\`, экземпляр класса и объектный литерал с теми же полями?
+- Нужно ли учитывать символьные и неперечисляемые ключи?
+- Возможны ли циклические ссылки? Это меняет реализацию.
+
+### Идея алгоритма простыми словами
+
+1. Сначала \`Object.is(a, b)\`: он одним махом закрывает одинаковые ссылки, равные примитивы и \`NaN\`, поэтому дальше идут только «разные» значения.
+2. Если хотя бы одно из значений не объект или \`null\` — сравнивать внутри нечего, ответ \`false\`.
+3. Сверяем конструкторы: разные конструкторы — разные сущности (массив не равен объекту, \`Date\` не равна \`Map\`).
+4. Особые типы, у которых содержимое не лежит в собственных свойствах: \`Date\` сравниваем по \`getTime()\`, \`RegExp\` — по \`toString()\`.
+5. \`Map\`: размеры, потом каждый ключ должен быть у второй карты, а значения равны рекурсивно. \`Set\`: размеры и \`has\` для каждого элемента. Порядок вставки не важен.
+6. Массивы: длины, потом поэлементная рекурсия.
+7. Обычные объекты: \`Reflect.ownKeys\` (видит и символы), количество ключей, затем для каждого ключа — есть ли он у второго объекта и равны ли значения рекурсивно.
+
+### Версия 1. Наивная: \`JSON.stringify\`
+
+\`\`\`js
+const naiveEqual = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
+naiveEqual({ a: [1, { b: 2 }] }, { a: [1, { b: 2 }] });          // true
+naiveEqual({ a: 1, b: 2 }, { b: 2, a: 1 });                       // false — порядок ключей!
+naiveEqual({ x: NaN }, { x: null });                              // true — NaN стал null
+naiveEqual({ a: undefined }, {});                                 // true — undefined выброшен
+naiveEqual({ d: new Date(0) }, { d: '1970-01-01T00:00:00.000Z' }); // true — дата стала строкой
+naiveEqual(new Map([[1, 2]]), new Map());                         // true — обе стали '{}'
+const c = { a: 1 }; c.self = c;
+naiveEqual(c, c);                       // TypeError: Converting circular structure to JSON
 \`\`\`
 
-Почему так: \`Object.is\` — это одновременно и решение проблемы \`NaN\`, и источник нюанса с \`+0\`/\`-0\`. Нужно ли вам считать нули равными — решение доменное, и его стоит проговорить вслух.
+Это быстрый ответ «на коленке», который сразу стоит раскритиковать: он врёт в обе стороны — считает разными равные объекты и равными разные.
 
-## Что сказать на собеседовании
+### Версия 2. Рекурсия для объектов и массивов
 
-> Глубокое равенство сравнивает значения по содержимому, а не по ссылке. Начинаю с \`Object.is\`: он закрывает одинаковые ссылки, примитивы и \`NaN\`, потому что обычное \`NaN === NaN\` даёт false. Дальше отсекаю не-объекты и \`null\`, сверяю конструкторы, обрабатываю \`Date\` через \`getTime\` и \`RegExp\` через \`toString\`. Для \`Map\` и \`Set\` сравниваю размер и содержимое без оглядки на порядок вставки, для массивов — длину и элементы рекурсивно, для объектов беру \`Reflect.ownKeys\`, чтобы не потерять символы. Сложность O(n) по узлам, O(d) памяти на стек. Отдельно нужен \`WeakMap\` посещённых пар, иначе циклические ссылки дают бесконечную рекурсию. И главное: в горячем пути change detection это слишком дорого — там правильнее иммутабельность и сравнение ссылок, а deepEqual оставить тестам и инвалидации кэша.
+\`\`\`js
+function deepEqualSimple(a, b) {
+  if (a === b) return true;
+  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false;
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
+  const keysA = Object.keys(a), keysB = Object.keys(b);
+  if (keysA.length !== keysB.length) return false;
+  return keysA.every((k) => Object.prototype.hasOwnProperty.call(b, k) && deepEqualSimple(a[k], b[k]));
+}
 
-## Ловушки
+deepEqualSimple({ a: 1, b: 2 }, { b: 2, a: 1 });               // true — порядок не важен
+deepEqualSimple(NaN, NaN);                                     // false — NaN !== NaN
+deepEqualSimple(new Date(0), new Date(1));                     // true — у Date нет своих ключей!
+deepEqualSimple(new Map([[1, 2]]), new Map([[1, 3]]));         // true — у Map тоже
+\`\`\`
+
+Структура уже правильная, но \`Date\`, \`Map\` и \`Set\` хранят данные во внутренних слотах, а не в собственных свойствах. Для \`Object.keys\` любые две даты — пустые объекты, поэтому «равны».
+
+### Версия 3. Эталон: все типы из условия
+
+\`\`\`ts
+// Time: O(n), Space: O(d) recursion
+function deepEqual(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true; // handles NaN, primitives, same ref
+  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) {
+    return false;
+  }
+  if (a.constructor !== b.constructor) return false;
+
+  if (a instanceof Date) return a.getTime() === (b as Date).getTime();
+  if (a instanceof RegExp) return a.toString() === (b as RegExp).toString();
+
+  if (a instanceof Map && b instanceof Map) {
+    if (a.size !== b.size) return false;
+    for (const [k, v] of a) if (!b.has(k) || !deepEqual(v, b.get(k))) return false;
+    return true;
+  }
+  if (a instanceof Set && b instanceof Set) {
+    if (a.size !== b.size) return false;
+    for (const v of a) if (!b.has(v)) return false;
+    return true;
+  }
+  if (Array.isArray(a)) {
+    if (a.length !== (b as unknown[]).length) return false;
+    return a.every((v, i) => deepEqual(v, (b as unknown[])[i]));
+  }
+  const keysA = Reflect.ownKeys(a), keysB = Reflect.ownKeys(b);
+  if (keysA.length !== keysB.length) return false;
+  return keysA.every(k =>
+    Object.prototype.hasOwnProperty.call(b, k) &&
+    deepEqual((a as any)[k], (b as any)[k]),
+  );
+}
+\`\`\`
+
+Порядок проверок важен: дешёвые отсечения (\`Object.is\`, тип, конструктор, размер) идут раньше дорогой рекурсии. Сравнение количества ключей перед обходом нужно, чтобы \`{ a: 1 }\` не оказался «равен» \`{ a: 1, b: 2 }\`: обход по ключам первого объекта лишний ключ второго не заметил бы.
+
+### Версия 4. Production: циклы и «невалидные» даты
+
+\`\`\`js
+function deepEqualSafe(a, b, seen = new WeakMap()) {
+  if (Object.is(a, b)) return true;
+  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false;
+  if (a.constructor !== b.constructor) return false;
+
+  // эту пару мы уже сравниваем выше по стеку — считаем равной, иначе зациклимся
+  let partners = seen.get(a);
+  if (partners?.has(b)) return true;
+  if (!partners) seen.set(a, (partners = new WeakSet()));
+  partners.add(b);
+
+  if (a instanceof Date) return Object.is(a.getTime(), b.getTime()); // Invalid Date == Invalid Date
+  if (a instanceof RegExp) return a.toString() === b.toString();
+  if (a instanceof Map) {
+    if (a.size !== b.size) return false;
+    for (const [k, v] of a) if (!b.has(k) || !deepEqualSafe(v, b.get(k), seen)) return false;
+    return true;
+  }
+  if (a instanceof Set) {
+    if (a.size !== b.size) return false;
+    for (const v of a) if (!b.has(v)) return false;
+    return true;
+  }
+  if (Array.isArray(a)) {
+    if (a.length !== b.length) return false;
+    return a.every((v, i) => deepEqualSafe(v, b[i], seen));
+  }
+  const keysA = Reflect.ownKeys(a), keysB = Reflect.ownKeys(b);
+  if (keysA.length !== keysB.length) return false;
+  return keysA.every((k) => Object.prototype.hasOwnProperty.call(b, k) && deepEqualSafe(a[k], b[k], seen));
+}
+
+const c1 = { a: 1 }; c1.self = c1;
+const c2 = { a: 1 }; c2.self = c2;
+const c3 = { a: 2 }; c3.self = c3;
+deepEqual(c1, c2);                          // RangeError: Maximum call stack size exceeded
+deepEqualSafe(c1, c2);                      // true
+deepEqualSafe(c1, c3);                      // false
+deepEqual(new Date('x'), new Date('x'));    // false — NaN === NaN
+deepEqualSafe(new Date('x'), new Date('x')); // true
+\`\`\`
+
+\`seen\` запоминает пары «объект из \`a\` → объекты из \`b\`, с которыми мы его уже сравниваем». Встретив пару второй раз, мы не спускаемся в неё снова: если где-то есть отличие, его найдёт исходная, ещё не завершённая ветка рекурсии.
+
+### Трассировка на конкретном входе
+
+Вход: два одинаковых объекта \`{ id: 1, tags: new Set(['x']), born: new Date(0), scores: [NaN, 2] }\`.
+
+\`\`\`text
+deepEqual({…}, {…})            объекты, конструктор Object → ownKeys: id, tags, born, scores
+  deepEqual(1, 1)              → true  (Object.is)
+  deepEqual(Set(x), Set(x))    размеры 1 = 1, b.has('x') → true
+  deepEqual(Date(0), Date(0))  getTime 0 === 0 → true
+  deepEqual([NaN,2], [NaN,2])  длины 2 = 2
+    deepEqual(NaN, NaN)        → true  (Object.is(NaN, NaN))
+    deepEqual(2, 2)            → true
+  → true
+→ true
+\`\`\`
+
+А если \`scores\` различаются (\`[1, 2]\` против \`[1, 3]\`), рекурсия доходит до \`deepEqual(2, 3)\`, получает \`false\`, и \`every\` сразу прекращает обход — оставшиеся ключи даже не проверяются.
+
+### Сложность простыми словами
+
+- **Время \`O(n)\`**, где \`n\` — число узлов (всех значений внутри обоих деревьев): каждый узел сравнивается один раз, а \`Map.has\`, \`Set.has\` и \`hasOwnProperty\` работают в среднем за \`O(1)\`. При первом же различии работа заканчивается раньше.
+- **Память \`O(d)\`** под стек рекурсии, где \`d\` — глубина вложенности, плюс временные массивы ключей на каждом уровне. Версия с \`seen\` дополнительно хранит до \`O(n)\` пар.
+- **Цена — на каждый вызов.** Если сравнивать большой объект на каждое событие, \`O(n)\` умножается на число событий.
+
+### Тест-кейсы
+
+\`\`\`js
+deepEqual({ a: [1, { b: 2 }] }, { a: [1, { b: 2 }] });        // true
+deepEqual({ a: 1, b: 2 }, { b: 2, a: 1 });                     // true — порядок ключей не важен
+deepEqual(NaN, NaN);                                           // true — через Object.is
+deepEqual(0, -0);                                              // false — Object.is различает
+deepEqual(new Date(0), new Date(0));                           // true — по getTime()
+deepEqual(/a/g, /a/i);                                         // false — разные флаги
+deepEqual(new Map([['a', 1], ['b', 2]]), new Map([['b', 2], ['a', 1]])); // true
+deepEqual(new Set([1, 2, 3]), new Set([3, 2, 1]));             // true
+deepEqual(new Set([{ a: 1 }]), new Set([{ a: 1 }]));           // false — has ищет по ссылке
+deepEqual([], {});                                             // false — разные конструкторы
+deepEqual({}, Object.create(null));                            // false — у второго нет constructor
+deepEqual({ a: undefined }, {});                               // false — разное число ключей
+deepEqual({ [Symbol.for('s')]: 1 }, { [Symbol.for('s')]: 1 }); // true — ownKeys видит символы
+deepEqual(new Uint8Array([1, 2]), new Uint8Array([1, 3]));     // false — индексы видны в ownKeys
+deepEqual(() => 1, () => 1);                                   // false — функции по ссылке
+\`\`\`
+
+### \`Object.is\` против \`===\`
+
+\`Object.is\` — это \`===\` с двумя исправлениями: \`NaN\` равен себе, а \`+0\` и \`-0\` различаются. Именно поэтому он стоит первой строкой: одна проверка закрывает одинаковые ссылки, равные примитивы и \`NaN\`.
+
+\`\`\`js
+NaN === NaN;            // false
+Object.is(NaN, NaN);    // true
+0 === -0;               // true
+Object.is(0, -0);       // false
+\`\`\`
+
+Нужно ли считать \`0\` и \`-0\` равными — решение доменное. Для денег и координат обычно да; тогда добавьте отдельную проверку \`typeof a === 'number' && a === b\`.
+
+### \`constructor\` и \`instanceof\`
+
+\`a.constructor\` — функция, создавшая объект: \`Array\`, \`Date\`, \`Map\`, \`Object\` или ваш класс. Сравнение конструкторов отсекает «массив против объекта» и «\`Date\` против \`Map\`» одной строкой. \`instanceof\` затем подсказывает, какую ветку сравнения выбрать.
+
+\`\`\`js
+[].constructor === Array;            // true
+({}).constructor === Object;         // true
+Object.create(null).constructor;     // undefined — прототипа нет
+class P {}; new P().constructor === P; // true
+\`\`\`
+
+Побочный эффект строгости: \`{}\` и \`Object.create(null)\` с одинаковыми полями — «разные». Это выбор, его стоит озвучить.
+
+### \`Reflect.ownKeys\` против \`Object.keys\`
+
+\`Object.keys\` возвращает только собственные **перечисляемые строковые** ключи. \`Reflect.ownKeys\` — все собственные ключи: строковые, символьные, перечисляемые и нет.
+
+\`\`\`js
+const s = Symbol('id');
+const obj = { a: 1, [s]: 2 };
+Object.defineProperty(obj, 'hidden', { value: 3, enumerable: false });
+
+Object.keys(obj);        // ['a']
+Reflect.ownKeys(obj);    // ['a', 'hidden', Symbol(id)]
+\`\`\`
+
+Без \`Reflect.ownKeys\` объекты, отличающиеся только символьным ключом, оказались бы равными.
+
+### \`Map.has\` и \`Set.has\`: SameValueZero и сравнение по ссылке
+
+\`has\` ищет ключ по правилу SameValueZero: \`NaN\` находит \`NaN\`, \`0\` и \`-0\` — один ключ, а объекты — **только по ссылке**. Поэтому \`Set\` и ключи \`Map\` эталон сравнивает «поверхностно».
+
+\`\`\`js
+new Set([NaN]).has(NaN);              // true
+new Set([{ a: 1 }]).has({ a: 1 });    // false — другой объект
+deepEqual(new Map([[{ id: 1 }, 'x']]), new Map([[{ id: 1 }, 'x']])); // false
+\`\`\`
+
+Честное глубокое сравнение множеств объектов требует для каждого элемента искать «глубоко равный» среди элементов второго множества — это \`O(n²)\`.
+
+### \`WeakMap\` и \`WeakSet\` для защиты от циклов
+
+\`WeakMap\` хранит пары «объект → значение» и не удерживает объект в памяти: когда на него больше никто не ссылается, сборщик мусора его удалит вместе с записью. Для \`seen\` это идеально — служебная память не утекает, даже если сравнение прервалось.
+
+\`\`\`js
+const seen = new WeakMap();
+const a = {}, b = {};
+seen.set(a, new WeakSet());
+seen.get(a).add(b);         // «a уже сравнивается с b»
+seen.get(a).has(b);         // true
+seen.get(a).has({});        // false — другой объект
+\`\`\`
+
+### Angular и RxJS: где подставить \`deepEqual\`
+
+По умолчанию сигналы Angular и привязки шаблона сравнивают значения через \`Object.is\`. Сигналу и \`computed\` можно передать свою функцию равенства \`equal\`, а оператору RxJS \`distinctUntilChanged\` — свой компаратор.
+
+\`\`\`ts
+const filters = signal({ status: 'open', tags: ['a'] }, { equal: deepEqual });
+const query = computed(() => buildQuery(filters()));
+
+filters.set({ status: 'open', tags: ['a'] }); // новый объект, но deepEqual → true
+// query не пересчитывается, зависимые эффекты не срабатывают
+
+of({ page: 1 }, { page: 1 }, { page: 2 })
+  .pipe(distinctUntilChanged(deepEqual))
+  .subscribe((v) => console.log(v));
+// { page: 1 }
+// { page: 2 }
+\`\`\`
+
+Без \`equal\` сигнал с новым, но одинаковым по содержимому объектом считался бы изменённым, и \`computed\` пересчитался бы. Без компаратора \`distinctUntilChanged()\` пропустил бы оба \`{ page: 1 }\`.
+
+### Где это применяется на практике
+
+- **Охрана несохранённых изменений**: \`canDeactivate\`-guard сравнивает текущее значение формы с исходным и спрашивает «уйти без сохранения?» только при реальной разнице.
+- **Фильтры грида и дашборда**: не перезапрашивать данные, если пользователь открыл панель фильтров и закрыл её без изменений.
+- **Тесты**: \`expect(actual).toEqual(expected)\` в Jest и Jasmine — это и есть глубокое равенство с похожими правилами.
+- **Кэш и дедупликация запросов**: одинаковые параметры — тот же результат из кэша.
+- **Готовые реализации в проде**: lodash \`isEqual\`, \`fast-deep-equal\` — проверены на краевых случаях лучше самописной функции.
+
+## Важные нюансы и подводные камни
 
 - **\`NaN\`.** \`NaN === NaN\` — \`false\`; без \`Object.is\` два одинаковых объекта с \`NaN\` внутри окажутся неравными.
 - **\`+0\` и \`-0\`.** \`Object.is(+0, -0)\` — \`false\`. Формально верно, но для денег или координат обычно не то, что нужно. Решение доменное.
-- **Циклические ссылки** без набора посещённых пар — переполнение стека. Первый вопрос, который задают следом.
-- **\`Set\` с объектами внутри.** \`b.has(v)\` ищет по ссылке, поэтому вложенные объекты в \`Set\` глубоко не сравниваются. Честное сравнение потребует перебора \`O(n²)\`.
-- **Символьные ключи.** \`Object.keys\` их не видит — отсюда \`Reflect.ownKeys\`.
-- **Разные прототипы.** \`{}\` и \`Object.create(null)\` с одинаковыми полями: проверка конструктора объявит их разными. Это выбор строгости, и его нужно озвучить.
-- **Очень глубокие деревья** переполнят стек рекурсии так же, как и в \`flatten\`.
-- **Спросят следом:** почему в \`OnPush\` не стоит гонять \`deepEqual\` на каждый цикл проверки (это \`O(n)\` на каждое обнаружение изменений) и чем поверхностное сравнение отличается от глубокого по цене и по риску ложных срабатываний.`,
+- **Циклические ссылки** без набора посещённых пар — \`RangeError: Maximum call stack size exceeded\`. Первый вопрос, который задают следом.
+- **Невалидные даты в эталоне неравны.** \`new Date('x').getTime()\` — \`NaN\`, а \`NaN === NaN\` ложно, поэтому две «Invalid Date» считаются разными. Сравнивайте через \`Object.is(a.getTime(), b.getTime())\`.
+- **\`Set\` с объектами внутри.** \`b.has(v)\` ищет по ссылке, поэтому вложенные объекты в \`Set\` глубоко не сравниваются. Честное сравнение потребует перебора \`O(n²)\`. То же с объектами-ключами \`Map\`.
+- **Символьные ключи.** \`Object.keys\` их не видит — отсюда \`Reflect.ownKeys\`. Он же видит неперечисляемые свойства, так что объект со скрытым полем не равен объекту без него.
+- **Разные прототипы.** \`{}\` и \`Object.create(null)\` с одинаковыми полями проверка конструктора объявит разными. Это выбор строгости, его нужно озвучить.
+- **Приватные поля классов невидимы.** \`#cents\` не попадает в \`Reflect.ownKeys\`, поэтому \`new Money(100)\` и \`new Money(500)\` эталон считает равными. Для таких классов нужен свой метод \`equals\`.
+- **Обёртки примитивов.** \`new Number(1)\` и \`new Number(2)\` не имеют собственных ключей — эталон вернёт \`true\`. Редкий случай, лечится сравнением \`valueOf()\`.
+- **Дырки в массивах.** \`every\` пропускает отсутствующие индексы, поэтому \`[, 1]\` и \`[undefined, 1]\` эталон считает равными, а лишние свойства массива (\`arr.extra = 'x'\`) вообще не сравниваются.
+- **Очень глубокие деревья** переполнят стек рекурсии: в нашем прогоне на Node 20 эталон падал с \`RangeError\` уже на цепочке из 5 000 вложенных объектов (порог зависит от движка и размера стека). Для таких данных нужен итеративный обход с явным стеком.
+- **Глубокое сравнение в горячем пути.** \`O(n)\` на **каждый** вызов: в обнаружении изменений, в \`OnPush\`, в мемоизации это дорого. Почти всегда лучше иммутабельность и сравнение ссылок — новый объект создаётся только при реальном изменении, и тогда \`===\` достаточно.
+
+**Плюсы:** отвечает на вопрос «изменилось ли по существу», не зависит от того, как создавались объекты; одна функция покрывает формы, фильтры, кэш и тесты.
+**Минусы:** \`O(n)\` на каждый вызов; множество краевых случаев (циклы, \`Set\` объектов, приватные поля, прототипы), в каждом из которых нужно принять решение о строгости; рекурсия ограничена глубиной стека.
+
+## Как это спрашивают на собеседовании
+
+**Главный вывод:** \`deepEqual\` начинается с \`Object.is\` (ссылки, примитивы, \`NaN\`), отсекает не-объекты и разные конструкторы, особо обрабатывает \`Date\`, \`RegExp\`, \`Map\`, \`Set\`, а объекты сравнивает по \`Reflect.ownKeys\` рекурсивно; для циклов нужен \`WeakMap\` посещённых пар, а в горячем пути — иммутабельность вместо глубокого сравнения.
+
+Типичные формулировки: «Напишите \`isEqual\` как в lodash», «Почему \`{a: 1} !== {a: 1}\`?», «Как сравнить два \`Map\`?», «Чем плох \`JSON.stringify\` для сравнения?».
+
+Что могут спросить следом:
+
+- *Как обработать циклические ссылки?* — Хранить в \`WeakMap\` пары, которые уже сравниваются выше по стеку, и при повторной встрече считать их равными.
+- *Почему не \`JSON.stringify\`?* — Порядок ключей, \`NaN\` превращается в \`null\`, \`undefined\` теряется, \`Map\` и \`Set\` становятся \`{}\`, на циклах \`TypeError\`.
+- *Почему не гонять \`deepEqual\` на каждый цикл \`OnPush\`?* — Это \`O(n)\` на каждую проверку; дешевле обновлять данные иммутабельно и сравнивать ссылки.
+- *Чем поверхностное сравнение отличается от глубокого?* — Сравнивает только верхний уровень через \`===\`: дешевле, но вложенный изменённый объект с той же ссылкой не заметит.
+- *Как сравнить \`Set\` объектов честно?* — Для каждого элемента искать глубоко равный во втором множестве, \`O(n²)\`.
+
+### Как вести себя во время кодинга
+
+Сначала договоритесь о правилах: \`NaN\`, \`-0\`, прототипы, циклы. Пишите проверки от дешёвых к дорогим и комментируйте каждую: «\`Object.is\` закрывает \`NaN\`», «размер до обхода — иначе лишний ключ не заметим». Закончив, сами пройдитесь по списку типов из условия и назовите, что эталон делает спорно: \`Set\` объектов, циклы, невалидные даты. Это показывает зрелость лучше, чем идеальный код.
+
+### Ответ на 1 минуту
+
+> Глубокое равенство сравнивает значения по содержимому, а не по ссылке. Первой строкой ставлю \`Object.is\`: он закрывает одинаковые ссылки, примитивы и \`NaN\`, ведь \`NaN === NaN\` даёт false. Дальше отсекаю не-объекты и \`null\`, сверяю конструкторы, чтобы массив не совпал с объектом, \`Date\` сравниваю по \`getTime\`, \`RegExp\` по \`toString\`. Для \`Map\` и \`Set\` сравниваю размер и содержимое без учёта порядка, массивы — по длине и поэлементно, объекты — через \`Reflect.ownKeys\`, чтобы не потерять символьные ключи. Время O(n) по узлам, память O(d) на стек. Из нюансов: \`Object.is\` различает \`0\` и \`-0\`, \`Set\` объектов эталон сравнивает по ссылке, две невалидные даты выходят неравными, а циклы без \`WeakMap\` посещённых пар дают переполнение стека. И главное: в горячем пути вроде change detection это дорого — там правильнее иммутабельность и сравнение ссылок, а \`deepEqual\` оставляю тестам, формам и фильтрам.`,
       en: `## In short
 
 Deep equality compares values **by content, not by reference**: two values are equal if everything inside matches recursively. \`{a: 1} === {a: 1}\` is \`false\` because they're two different objects, while \`deepEqual\` should say \`true\`.
@@ -8599,49 +13972,334 @@ function deepEqual(a: unknown, b: unknown): boolean {
       en: 'Implement polyfills for Promise.all and Promise.allSettled. What is their semantic difference?',
     },
     answer: {
-      ru: `## Коротко
+      ru: `## В чём суть
 
-Оба ждут группу промисов, но по-разному реагируют на провал. **\`Promise.all\`** — «всё или ничего»: первая же ошибка реджектит общий промис. **\`Promise.allSettled\`** — «доложить по каждому»: дожидается всех и никогда не реджектится.
+Нужно написать две функции: \`promiseAll\` и \`promiseAllSettled\`. Обе принимают массив промисов (или обычных значений), ждут их и возвращают результаты **в порядке входа**. Разница — в реакции на провал. \`Promise.all\` — «всё или ничего»: первая же ошибка отклоняет общий промис (**fail-fast**). \`Promise.allSettled\` — «доложить по каждому»: дожидается всех и **никогда не отклоняется**, возвращая статус каждого.
 
-Аналогия: \`all\` — это заказ на всю компанию в ресторане: не принесли одно блюдо — отменяем весь заказ. \`allSettled\` — перекличка в походе: отмечаем, кто пришёл, а кто нет, и в любом случае идём дальше со списком на руках.
+Аналогия: \`all\` — заказ на всю компанию в ресторане: не принесли одно блюдо — отменяем весь заказ и уходим. \`allSettled\` — перекличка в походе: отмечаем, кто пришёл, а кто нет, и в любом случае идём дальше со списком на руках. Важная деталь аналогии: «уйти из ресторана» не значит «остановить кухню» — повара доготовят остальные блюда, просто их никто не съест.
 
-## Как это работает по шагам
+**Какую проблему решает.** Почти любой экран грузит данные из нескольких источников параллельно: пользователь, настройки, права, справочники. Нужно дождаться всех и при этом не потерять порядок. Если без любого из ответов экран бессмыслен — нужен \`all\`, чтобы сразу показать ошибку. Если части независимы, как виджеты дашборда, — нужен \`allSettled\`, чтобы одна упавшая панель не роняла остальные.
 
-1. Общий каркас у обоих одинаковый: массив результатов **сразу нужной длины** и счётчик завершённых.
-2. Каждый элемент оборачиваем в \`Promise.resolve(item)\` — на вход могут прийти не только промисы, но и обычные значения, и они обязаны работать.
-3. Подписываемся на каждый и **пишем результат по индексу \`i\`**, который замкнулся в колбэке \`forEach\`. Поэтому порядок результатов равен порядку входа, хотя завершаются промисы вразнобой.
-4. Увеличиваем счётчик. Дошёл до длины массива — резолвим внешний промис.
-5. **Вся разница — во втором колбэке \`then\`.** У \`all\` там \`reject(err)\`: первая же ошибка немедленно отклоняет результат, остальные значения теряются — это **fail-fast**. У \`allSettled\` там запись \`{ status: 'rejected', reason }\`, и счётчик крутится дальше; отклониться он не может в принципе.
-6. \`allSettled\` возвращает массив объектов: \`{ status: 'fulfilled', value }\` либо \`{ status: 'rejected', reason }\`.
-7. **Граничный случай:** пустой массив. \`Promise.all([])\` резолвится немедленно с \`[]\` — если не обработать явно, счётчик никогда не сдвинется и промис зависнет навсегда.
-8. **Сложность:** \`O(n)\` на постановку плюс параллельное ожидание; память \`O(n)\` под результаты.
+## Словарик терминов
 
-## Пример
+- **Промис (Promise)** — объект-обещание результата асинхронной операции, который появится позже.
+- **Состояния промиса** — \`pending\` (ждёт), \`fulfilled\` (выполнен со значением), \`rejected\` (отклонён с причиной). Выполненный или отклонённый промис называют **settled** (завершённым); состояние меняется только один раз.
+- **Комбинатор (combinator)** — функция, которая собирает несколько промисов в один: \`all\`, \`allSettled\`, \`race\`, \`any\`.
+- **Fail-fast** — стратегия «упасть при первой ошибке, не дожидаясь остальных».
+- **\`Promise.resolve(x)\`** — превращает что угодно в промис: обычное значение — в выполненный промис, промис возвращает как есть, thenable «усыновляет».
+- **Thenable** — любой объект с методом \`then\`; промисы умеют работать с такими объектами из других библиотек.
+- **Микрозадача (microtask)** — очередь, в которой выполняются колбэки \`then\`; они запускаются сразу после текущего синхронного кода, раньше таймеров.
+- **Unhandled rejection** — отклонённый промис, на который никто не повесил обработчик ошибки; браузер пишет \`Uncaught (in promise)\`, Node по умолчанию завершает процесс.
+- **\`AggregateError\`** — ошибка, которая содержит массив других ошибок в поле \`errors\`; её бросает \`Promise.any\`, когда упали все.
+- **\`AbortController\`** — стандартный механизм отмены: \`controller.abort()\` прерывает все \`fetch\`, которым передан его \`signal\`.
+- **Разреженный массив (sparse array)** — массив с «дырками», например \`[1, , 3]\`.
 
-\`\`\`ts
-// нужны оба — без любого из них рендерить нечего
-const [user, settings] = await Promise.all([getUser(), getSettings()]);
+## Как это работает под капотом
 
-// дашборд: одна упавшая панель не должна ронять остальные
-const panels = await Promise.allSettled(ids.map(loadPanel));
-panels.forEach((p) => p.status === 'fulfilled' ? render(p.value) : renderError(p.reason));
+### Что уточнить у интервьюера до кода
+
+- На входе только массив или любой iterable (\`Set\`, генератор)?
+- Могут ли быть не-промисы и «чужие» thenable?
+- Что вернуть для пустого входа?
+- Нужно ли что-то делать с остальными промисами после первой ошибки в \`all\` (отменять их)?
+- Нужна ли типизация, сохраняющая типы элементов кортежа?
+
+### Идея алгоритма простыми словами
+
+1. Возвращаем новый промис — снаружи его будут \`await\`-ить.
+2. Заводим массив результатов **сразу нужной длины** и отдельный счётчик завершённых. Это «полки с номерами» и «сколько полок уже занято».
+3. Пустой вход сразу резолвим с \`[]\`, потому что иначе счётчик никогда не дойдёт до нуля элементов и промис зависнет.
+4. Каждый элемент оборачиваем в \`Promise.resolve(item)\` — поэтому обычные значения и thenable тоже работают.
+5. Подписываемся на каждый и пишем результат **по индексу \`i\`**, замкнутому в колбэке. Поэтому порядок результатов совпадает с порядком входа, хотя завершаются промисы вразнобой.
+6. Увеличиваем счётчик; когда он равен длине входа — резолвим общий промис.
+7. **Вся разница — во втором колбэке \`then\`.** У \`all\` там \`reject(err)\`: первая ошибка сразу отклоняет общий промис. У \`allSettled\` там запись \`{ status: 'rejected', reason }\`, и счётчик крутится дальше — отклониться он не может в принципе.
+
+### Версия 1. Наивная: \`await\` по очереди
+
+\`\`\`js
+// помощники для всех примеров ниже
+const delay = (value, ms) => new Promise((res) => setTimeout(() => res(value), ms));
+const fail = (msg, ms) => new Promise((_, rej) => setTimeout(() => rej(new Error(msg)), ms));
+
+async function naiveAll(items) {
+  const results = [];
+  for (const item of items) results.push(await item);
+  return results;
+}
+
+await naiveAll([delay('A', 30), 'B', delay('C', 10)]); // ['A', 'B', 'C'] через ~30 мс
 \`\`\`
 
-Почему так: \`all\` — когда частичный результат бесполезен. \`allSettled\` — когда операции независимы и частичный успех лучше полного отказа.
+Порядок правильный, и время даже не суммируется: промисы уже запущены, когда попали в массив, мы лишь ждём их по очереди. Но есть две беды:
 
-## Что сказать на собеседовании
+\`\`\`js
+naiveAll([delay('slow', 200), fail('boom', 10)]).catch((e) => console.log('caught', e.message));
+// через 10 мс 'boom' отклоняется, а на него ещё никто не подписан (мы ждём 'slow')
+// Node 20: процесс падает с Error: boom — до 'caught' дело не доходит
+// браузер: Uncaught (in promise) Error: boom в консоли
+\`\`\`
 
-> Разница семантическая. \`Promise.all\` — fail-fast: резолвится массивом результатов, когда выполнятся все, но реджектится сразу при первом отклонении, и остальные результаты теряются, это «всё или ничего». \`Promise.allSettled\` дожидается всех независимо от исхода, никогда не реджектится и возвращает массив со статусом fulfilled и значением либо rejected и причиной — для независимых операций, где частичный успех лучше полного отказа. В реализации три момента: пишем результаты по индексу, чтобы сохранить порядок входа; считаем отдельным счётчиком, а не длиной массива, которая на разреженном массиве врёт; и отдельно обрабатываем пустой массив, иначе промис зависнет навсегда. Нюанс: \`all\` при реджекте не отменяет уже запущенные промисы — для отмены нужен \`AbortController\`.
+Fail-fast не работает — об ошибке мы узнаём только через 200 мс. И это та самая ситуация unhandled rejection: на упавший промис обработчик повесили слишком поздно.
 
-## Ловушки
+### Версия 2. Эталонный \`promiseAll\`
 
-- **\`all\` ничего не отменяет.** При реджекте остальные запросы продолжают выполняться до конца, а их ошибки могут всплыть как unhandled rejection. Отмена — только через \`AbortController\`.
-- **Пустой массив.** Без явной проверки промис зависает навсегда — самый частый провал этой задачи.
-- **Считать по \`results.length\`, а не счётчиком.** Массив может быть разреженным, и длина соврёт. Нужен локальный счётчик.
-- **\`push\` вместо записи по индексу** — порядок станет порядком завершения.
-- **\`allSettled\` никогда не реджектится**, поэтому забытая проверка \`status\` означает тихо проглоченные ошибки: в \`try/catch\` вы не попадёте никогда.
-- **Не-промисы на входе** — без \`Promise.resolve\` вызов \`.then\` на обычном значении упадёт.
-- **Спросят следом:** чем от них отличаются \`Promise.race\` и \`Promise.any\` — \`race\` отдаёт первый **завершившийся** любым исходом, включая ошибку, а \`any\` — первый **успешный** и реджектится с \`AggregateError\`, только если упали все.`,
+\`\`\`ts
+// Both: Time O(n) schedule + parallel wait, Space O(n)
+function promiseAll<T>(items: Array<T | Promise<T>>): Promise<T[]> {
+  return new Promise((resolve, reject) => {
+    const results: T[] = new Array(items.length);
+    let completed = 0;
+    if (items.length === 0) return resolve(results);
+    items.forEach((item, i) => {
+      Promise.resolve(item).then(
+        value => {
+          results[i] = value;             // preserve order by index
+          if (++completed === items.length) resolve(results);
+        },
+        err => reject(err),               // fail-fast on first rejection
+      );
+    });
+  });
+}
+
+await promiseAll([1, Promise.resolve(2), delay(3, 30)]);   // [1, 2, 3]
+await promiseAll([delay('slow', 100), delay('fast', 10)]); // ['slow', 'fast'] — порядок входа
+await promiseAll([delay(1, 50), fail('boom', 10)]);        // reject: Error('boom') через ~10 мс
+\`\`\`
+
+Обработчики вешаются **на все элементы сразу**, синхронно, в \`forEach\`. Поэтому любая ошибка ловится немедленно, и ни один промис не остаётся без обработчика.
+
+### Версия 3. Эталонный \`promiseAllSettled\`
+
+\`\`\`ts
+type Settled<T> =
+  | { status: 'fulfilled'; value: T }
+  | { status: 'rejected'; reason: unknown };
+
+function promiseAllSettled<T>(items: Array<T | Promise<T>>): Promise<Settled<T>[]> {
+  return new Promise(resolve => {
+    const results: Settled<T>[] = new Array(items.length);
+    let completed = 0;
+    if (items.length === 0) return resolve(results);
+    items.forEach((item, i) => {
+      Promise.resolve(item).then(
+        value => { results[i] = { status: 'fulfilled', value }; },
+        reason => { results[i] = { status: 'rejected', reason }; },
+      ).finally(() => {
+        if (++completed === items.length) resolve(results);
+      });
+    });
+  });
+}
+
+await promiseAllSettled([1, fail('nope', 10), delay('ok', 20)]);
+// [
+//   { status: 'fulfilled', value: 1 },
+//   { status: 'rejected',  reason: Error('nope') },
+//   { status: 'fulfilled', value: 'ok' }
+// ]
+\`\`\`
+
+У внешнего промиса нет даже параметра \`reject\` — отклониться он не может. Счётчик увеличивается в \`finally\`, то есть при любом исходе. Тип \`Settled<T>\` — это размеченное объединение: проверив \`status\`, TypeScript знает, есть ли у элемента \`value\` или \`reason\`. Во встроенных типах TS то же самое называется \`PromiseSettledResult<T>\`.
+
+### Версия 4. \`allSettled\` через \`all\` — элегантная альтернатива
+
+\`\`\`js
+const allSettledViaAll = (items) =>
+  promiseAll(items.map((item) =>
+    Promise.resolve(item).then(
+      (value) => ({ status: 'fulfilled', value }),
+      (reason) => ({ status: 'rejected', reason }),
+    ),
+  ));
+
+await allSettledViaAll([1, fail('nope', 10)]);
+// [{ status: 'fulfilled', value: 1 }, { status: 'rejected', reason: Error('nope') }]
+\`\`\`
+
+Каждый элемент заранее «обезврежен»: его ошибка превращается в обычное значение-отчёт. Поэтому \`all\` никогда не видит отказов и всегда ждёт всех. Этот приём показывает, что семантическая разница между комбинаторами — только в обработке ошибки.
+
+### Трассировка \`promiseAll\` на конкретном входе
+
+Вход: \`promiseAll([delay('A', 30), 'B', delay('C', 10)])\`.
+
+\`\`\`text
+синхронно: results = [пусто, пусто, пусто], completed = 0
+           forEach подписался на все три, ни один ещё не завершён
+~0 мс  (микрозадача): i=1 'B' → results = [пусто, 'B', пусто], completed = 1
+~10 мс:               i=2 'C' → results = [пусто, 'B', 'C'],   completed = 2
+~30 мс:               i=0 'A' → results = ['A', 'B', 'C'],     completed = 3 === 3 → resolve
+Ответ: ['A', 'B', 'C']
+\`\`\`
+
+Завершились в порядке B, C, A, а результат — в порядке входа, потому что каждый пишет в свою ячейку \`results[i]\`.
+
+Теперь с ошибками: \`promiseAll([delay('A', 30), fail('E1', 10), fail('E2', 20)])\`.
+
+\`\`\`text
+~10 мс: i=1 reject E1 → внешний промис отклонён с E1, await бросает E1
+~20 мс: i=2 reject E2 → reject() вызван повторно — игнорируется, промис уже settled
+~30 мс: i=0 'A'       → results = ['A', пусто, пусто] — записали, но никто не слушает
+\`\`\`
+
+Повторные \`resolve\` и \`reject\` безопасны: промис фиксирует только первый вызов, поэтому флаг «уже завершились» не нужен.
+
+### Сложность простыми словами
+
+- **Время на постановку \`O(n)\`:** один проход \`forEach\`, на каждый элемент — одна подписка. Каждое завершение обрабатывается за \`O(1)\` благодаря счётчику.
+- **Время ожидания** — время **самого медленного** промиса для \`all\` при успехе (или первого упавшего при ошибке) и самого медленного для \`allSettled\`, а не сумма времён.
+- **Память \`O(n)\`:** массив результатов на \`n\` ячеек.
+- **Почему счётчик, а не проверка массива:** проверять «все ли ячейки заполнены» перебором — \`O(n)\` на каждое завершение и \`O(n²)\` в сумме.
+
+### Тест-кейсы
+
+\`\`\`js
+await promiseAll([]);                                     // [] — сразу
+await promiseAll([1, 2]);                                 // [1, 2] — не-промисы работают
+await promiseAll([{ then(res) { res(42); } }]);           // [42] — thenable
+await promiseAll([delay('slow', 100), delay('fast', 10)]); // ['slow', 'fast']
+await promiseAll([delay(1, 50), fail('boom', 10)]);       // reject Error('boom') через ~10 мс
+await promiseAll([1, new Promise(() => {})]);             // висит вечно — один «вечный» промис
+
+await promiseAllSettled([]);                              // []
+await promiseAllSettled([1, fail('nope', 10)]);
+// [{ status: 'fulfilled', value: 1 }, { status: 'rejected', reason: Error('nope') }]
+
+// расхождения полифила с нативным:
+await Promise.all([1, , 3]);                              // [1, undefined, 3]
+await promiseAll([1, , 3]);                               // висит вечно — forEach пропустил дырку
+await Promise.all(new Set([1, 2]));                       // [1, 2]
+await promiseAll(new Set([1, 2]));                        // висит вечно — у Set нет length
+\`\`\`
+
+### \`Promise.resolve\` и thenable
+
+\`Promise.resolve(x)\` нормализует вход: значение превращает в выполненный промис, настоящий промис возвращает как есть, а у thenable вызывает \`then\` и «усыновляет» его результат. Без этой обёртки \`(5).then\` — это \`undefined\`, и вызов упадёт с \`TypeError\`.
+
+\`\`\`js
+Promise.resolve(5).then(console.log);                     // 5
+const p = Promise.resolve(1); Promise.resolve(p) === p;   // true
+Promise.resolve({ then(res) { res('из чужой библиотеки'); } }).then(console.log);
+// из чужой библиотеки
+\`\`\`
+
+### Двухаргументный \`then\` и \`finally\`
+
+\`then(onFulfilled, onRejected)\` вешает оба обработчика на **исходный** промис. В отличие от \`.then(ok).catch(fail)\`, ошибка, брошенная внутри \`ok\`, во второй колбэк не попадёт — нам и нужен только провал исходного промиса. \`finally(fn)\` вызывается при любом исходе и не получает значения — поэтому счётчик \`allSettled\` стоит именно там.
+
+\`\`\`js
+Promise.reject(new Error('x')).then(
+  (v) => console.log('ok', v),
+  (e) => console.log('fail', e.message),
+); // fail x
+
+Promise.resolve(1).finally(() => console.log('finally')).then(console.log);
+// finally
+// 1 — finally пропускает значение дальше без изменений
+\`\`\`
+
+### \`Promise.race\` и \`Promise.any\` — для полноты картины
+
+- **\`Promise.race\`** — первый **завершившийся** любым исходом, включая ошибку. На пустом массиве висит вечно.
+- **\`Promise.any\`** — первый **успешный**; отклоняется с \`AggregateError\`, только если упали все. На пустом массиве сразу отклоняется.
+
+\`\`\`js
+await Promise.race([fail('a', 10), delay('b', 20)]); // reject Error('a') — ошибка пришла первой
+await Promise.any([fail('a', 10), delay('b', 20)]);  // 'b' — первый успех
+await Promise.any([fail('a', 10), fail('b', 20)]);   // reject AggregateError, errors: ['a', 'b']
+await Promise.any([]);                               // reject AggregateError: All promises were rejected
+\`\`\`
+
+### Отмена остальных через \`AbortController\`
+
+\`Promise.all\` ничего не отменяет: после первой ошибки остальные запросы продолжают выполняться до конца. Если это \`fetch\`, их можно прервать общим сигналом:
+
+\`\`\`js
+async function loadAll(urls) {
+  const ctrl = new AbortController();
+  try {
+    return await Promise.all(urls.map((u) =>
+      fetch(u, { signal: ctrl.signal }).then((r) => {
+        if (!r.ok) throw new Error(\`HTTP \${r.status}\`);
+        return r.json();
+      }),
+    ));
+  } catch (e) {
+    ctrl.abort();   // прерываем всё, что ещё летит
+    throw e;
+  }
+}
+// /fail отвечает 500 сразу, /slow — через секунду:
+// client: HTTP 500
+// server: slow request aborted by client
+\`\`\`
+
+### Angular: \`forkJoin\` как \`Promise.all\` для Observable
+
+В Angular \`HttpClient\` возвращает Observable, и аналог \`Promise.all\` — \`forkJoin\`: ждёт завершения всех потоков и выдаёт их последние значения. Ошибка любого — fail-fast, но, в отличие от промисов, \`forkJoin\` **отписывается** от остальных, а для \`HttpClient\` отписка означает отмену запроса.
+
+\`\`\`ts
+forkJoin({ user: this.api.user(), settings: this.api.settings() })
+  .subscribe(({ user, settings }) => this.render(user, settings));
+
+// аналог allSettled: каждый поток заранее превращает ошибку в отчёт
+const settled = <T>(src$: Observable<T>) => src$.pipe(
+  map((value) => ({ status: 'fulfilled' as const, value })),
+  catchError((reason) => of({ status: 'rejected' as const, reason })),
+);
+forkJoin(panelIds.map((id) => settled(this.api.panel(id))))
+  .subscribe((results) => this.renderPanels(results));
+\`\`\`
+
+Проверено на RxJS 7.8: при ошибке одного источника второй, ещё не завершённый, получает отписку (его \`finalize\` срабатывает). Нюанс: поток, завершившийся без значения, заставит \`forkJoin\` завершиться вообще без \`next\`.
+
+### Где это применяется на практике
+
+- **Загрузка экрана**: пользователь, права и настройки одновременно через \`all\` — без любого из ответов рендерить нечего.
+- **Дашборды и виджеты**: каждая панель грузится независимо через \`allSettled\`, упавшие показывают заглушку «не удалось загрузить».
+- **Массовые операции**: загрузить 20 файлов или отправить пачку изменений и показать отчёт «18 успешно, 2 с ошибкой» — это \`allSettled\`.
+- **Предзагрузка справочников при старте приложения** (\`provideAppInitializer\`): \`all\`, потому что без справочников формы не работают.
+- **Резервные источники**: запросить данные с двух зеркал и взять первый успешный ответ — \`any\`.
+
+## Важные нюансы и подводные камни
+
+- **\`all\` ничего не отменяет.** После первой ошибки остальные запросы выполняются до конца, нагружая сеть и сервер. Отмена — только через \`AbortController\` (или \`forkJoin\` с \`HttpClient\`, который отписывается сам).
+- **Ошибки остальных промисов не становятся unhandled.** \`all\` повесил обработчики на все элементы сразу, поэтому вторая и последующие ошибки просто молча игнорируются. Unhandled rejection возникает в наивной версии с последовательным \`await\`, где обработчик на упавший промис вешается слишком поздно.
+- **Пустой массив.** Без явной проверки счётчик никогда не дойдёт до нуля элементов, и промис зависнет навсегда — самый частый провал этой задачи. Нативный \`Promise.all([])\` резолвится сразу.
+- **Счётчик, а не \`results.length\`.** Массив создан через \`new Array(n)\`, и его длина равна \`n\` с самого начала, даже когда все ячейки пустые. Проверка по длине резолвила бы промис после первого же ответа.
+- **\`push\` вместо записи по индексу** — порядок станет порядком завершения: быстрый запрос обгонит медленный.
+- **\`allSettled\` никогда не отклоняется**, поэтому забытая проверка \`status\` означает тихо проглоченные ошибки: в \`try/catch\` вы не попадёте никогда.
+- **Не-промисы на входе** — без \`Promise.resolve\` вызов \`.then\` на обычном значении упадёт с \`TypeError\`.
+- **Дырки во входном массиве вешают эталонный полифил.** \`forEach\` пропускает отсутствующие индексы, счётчик не доходит до \`items.length\`, и \`promiseAll([1, , 3])\` не завершится никогда. Нативный вариант обходит вход итератором и даёт \`[1, undefined, 3]\`. Лечение — \`Array.from(items)\` в начале.
+- **Только массивы.** Нативные комбинаторы принимают любой iterable. Эталон с \`Set\` зависает (у \`Set\` есть \`forEach\`, но нет \`length\`), с генератором — падает с \`TypeError\`. Тот же \`Array.from\` решает и это.
+- **Один «вечный» промис вешает и \`all\`, и \`allSettled\`.** Для запросов без таймаута оборачивайте каждый в \`Promise.race\` с таймером или используйте \`AbortSignal.timeout\`.
+- **Типизация эталона теряет кортеж.** \`promiseAll([getUser(), getSettings()])\` без явного параметра типа даже не скомпилируется (TypeScript выведет \`T\` из первого элемента), а с \`<User | Settings>\` вернёт массив объединений. Нативный \`Promise.all\` типизирован через кортеж и знает, что первый элемент — \`User\`, а второй — \`Settings\`.
+- **Всё запускается сразу.** К моменту вызова \`all\` промисы уже выполняются; на 500 элементах это 500 одновременных запросов. Нужен лимит параллельности — пул из N «воркеров».
+
+**Плюсы:** \`all\` даёт простую семантику «всё или ничего» и быструю реакцию на ошибку; \`allSettled\` даёт полный отчёт и устойчивость к частичным сбоям; оба сохраняют порядок входа и ждут параллельно.
+**Минусы:** \`all\` теряет успешные результаты при одной ошибке и не отменяет остальные операции; \`allSettled\` легко превращается в молчаливое проглатывание ошибок; ни один не ограничивает параллельность и не защищает от вечных промисов.
+
+## Как это спрашивают на собеседовании
+
+**Главный вывод:** оба комбинатора — это массив результатов по индексу плюс счётчик; \`all\` отклоняется при первой ошибке и теряет остальное, \`allSettled\` ждёт всех и возвращает \`{ status, value | reason }\` по каждому. Обязательные детали реализации — \`Promise.resolve\`, запись по индексу, счётчик и пустой вход.
+
+Типичные формулировки: «Напишите полифил \`Promise.all\`», «Чем \`all\` отличается от \`allSettled\`?», «Что будет с остальными запросами, если один упал?», «Когда вы выберете \`allSettled\`?».
+
+Что могут спросить следом:
+
+- *Чем отличаются \`race\` и \`any\`?* — \`race\` отдаёт первый завершившийся любым исходом, \`any\` — первый успешный и отклоняется с \`AggregateError\`, только если упали все.
+- *Отменяются ли остальные промисы?* — Нет; для отмены нужен \`AbortController\`, а в RxJS \`forkJoin\` сам отписывается от остальных.
+- *Как ограничить параллельность?* — Пул: держим указатель на следующую задачу и запускаем не более N задач; каждая по завершении берёт следующую.
+- *Как реализовать \`allSettled\` через \`all\`?* — Заранее превратить каждую ошибку в значение-отчёт через двухаргументный \`then\`.
+- *Будут ли unhandled rejection от остальных промисов?* — Нет, \`all\` подписан на все; проблема возникает при последовательном \`await\`.
+
+### Как вести себя во время кодинга
+
+Начните с уточнений про iterable, не-промисы и пустой вход. Пишите \`promiseAll\` и проговаривайте каждую деталь: «оборачиваю в \`Promise.resolve\`, пишу по индексу, считаю отдельным счётчиком». Затем скажите: «\`allSettled\` отличается одной строкой — вместо \`reject\` записываю отчёт», и покажите это. В конце сами назовите ограничения: нет отмены, нет лимита параллельности, дырки и \`Set\` на входе.
+
+### Ответ на 1 минуту
+
+> Разница семантическая. \`Promise.all\` — fail-fast: резолвится массивом результатов, когда выполнятся все, но отклоняется при первой же ошибке, и остальные результаты теряются — это «всё или ничего». \`Promise.allSettled\` ждёт всех независимо от исхода, никогда не отклоняется и возвращает по каждому \`{ status: 'fulfilled', value }\` или \`{ status: 'rejected', reason }\` — для независимых операций вроде виджетов дашборда. Реализация у обоих одна: оборачиваю каждый элемент в \`Promise.resolve\`, пишу результат по индексу, чтобы сохранить порядок входа, считаю завершения отдельным счётчиком, а не длиной массива, и сразу резолвлю пустой вход, иначе промис зависнет. У \`allSettled\` вместо \`reject\` во втором колбэке — запись отчёта. Нюансы: \`all\` не отменяет уже запущенные запросы — для этого \`AbortController\`, а в Angular \`forkJoin\` сам отписывается; и \`allSettled\` легко проглатывает ошибки, если забыть проверить \`status\`.`,
       en: `## In short
 
 Both wait for a group of promises, but they react to failure differently. **\`Promise.all\`** is all-or-nothing: the first rejection rejects the combined promise. **\`Promise.allSettled\`** reports on every one: it waits for all of them and never rejects.
